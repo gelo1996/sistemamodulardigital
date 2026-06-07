@@ -252,7 +252,7 @@ function calculateLayout() {
         var sliderBoxCX = toolStartX + (14 * toolGapX);
         var sliderW = sliderBoxW - (24 * globalScale);
         var sliderX = sliderBoxCX - (sliderW / 2);
-        var sliderY = ty - 7;
+        var sliderY = ty - 0;
 
         tileSizeSlider.position(sliderX, sliderY);
         tileSizeSlider.size(sliderW);
