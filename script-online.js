@@ -3483,6 +3483,10 @@ function exportProjectJSON() {
     var a = document.createElement("a");
     a.href = url;
     a.download = "meu-alfabeto-modular.json";
+
+    a.setAttribute("data-no-ajax", "true");
+    a.target = "_blank";
+    
     document.body.appendChild(a); // Necessário no Firefox
     a.click();
 
@@ -3672,6 +3676,10 @@ function exportCharacterSVG(charToExport) {
     var a = document.createElement("a");
     a.href = url;
     a.download = "Letra_" + charToExport + "_Vetores.svg";
+
+    a.setAttribute("data-no-ajax", "true");
+    a.target = "_blank";
+    
     document.body.appendChild(a);
     a.click();
     setTimeout(function () {
@@ -3788,6 +3796,10 @@ function exportAlphabetSVG() {
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
+
+    a.setAttribute("data-no-ajax", "true");
+    a.target = "_blank";
+    
     a.download = "Alfabeto_Completo.svg";
     document.body.appendChild(a);
     a.click();
@@ -3907,6 +3919,10 @@ function exportAlphabetZIP() {
         var a = document.createElement("a");
         a.href = url;
         a.download = "Alfabeto_Modulos_Isolados.zip";
+        
+        a.setAttribute("data-no-ajax", "true");
+        a.target = "_blank";
+        
         document.body.appendChild(a);
         a.click();
         setTimeout(function () {
