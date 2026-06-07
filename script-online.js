@@ -3494,6 +3494,10 @@ function exportProjectJSON() {
     // 4. Força o navegador a descarregar o ficheiro
     var a = document.createElement("a");
     a.href = url;
+
+    a.setAttribute("data-no-ajax", "true");
+    a.target = "_blank";
+    
     a.download = "meu-alfabeto-modular.json";
     document.body.appendChild(a); // Necessário no Firefox
     a.click();
