@@ -57,7 +57,8 @@ var charButtonSize = 30;
 
 var centerX, centerY;
 var availableW, availableH;
-var tileSizeSlider;
+var uiSlider = { x: 0, y: 0, w: 100, min: 5, max: 60, step: 5 };
+var isDraggingSlider = false;
 var panX = 0; // NOVA: Movimento da câmara em X
 var panY = 0; // NOVA: Movimento da câmara em Y
 
@@ -117,12 +118,12 @@ function preload() {
     modulesDotted = []; moduleSVGStringsDotted = [];
 
     for (var i = 0; i < 21; i++) {
-        // Carrega as versões Fill (com link absoluto do GitHub)
+        // Carrega as versões Fill
         var fileFill = 'https://gelo1996.github.io/sistemamodulardigital/data/' + nf(i, 2) + '.svg';
         modulesFill[i] = loadImage(fileFill);
         moduleSVGStringsFill[i] = loadStrings(fileFill);
 
-        // Carrega as versões Dotted (com link absoluto do GitHub)
+        // Carrega as versões Dotted
         var fileDot = 'https://gelo1996.github.io/sistemamodulardigital/data/dot-' + nf(i, 2) + '.svg';
         modulesDotted[i] = loadImage(fileDot);
         moduleSVGStringsDotted[i] = loadStrings(fileDot);
@@ -179,19 +180,6 @@ function setup() {
     textAlign(CENTER, CENTER);
     angleMode(DEGREES);
 
-    tileSizeSlider = createSlider(5, 60, 15, 5);
-
-    var style = document.createElement('style');
-    style.innerHTML = `
-        .meu-slider { -webkit-appearance: none; appearance: none; background: transparent; outline: none; margin: 0; padding: 0; height: 14px; }
-        .meu-slider::-webkit-slider-runnable-track { height: 4px; background: #d0d0d0; border-radius: 2px; }
-        .meu-slider::-moz-range-track { height: 4px; background: #d0d0d0; border-radius: 2px; }
-        .meu-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #0082ff; cursor: pointer; margin-top: -4px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
-        .meu-slider::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #0082ff; cursor: pointer; border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
-    `;
-    document.head.appendChild(style);
-    tileSizeSlider.class('meu-slider');
-
     collisionMap = createCollisionMap();
 
     for (var i = 0; i < 21; i++) { 
@@ -242,37 +230,22 @@ function calculateLayout() {
     centerX = sidebarWidth + availableW / 2 + panX;
     centerY = topBarHeight + availableH / 2 + panY;
 
-    if (tileSizeSlider) {
-        var tBoxSize = 34 * globalScale;
-        var toolGapX = 45 * globalScale;
-        var toolStartX = 30 * globalScale;
-        var ty = 35 * globalScale;
+    var tBoxSize = 34 * globalScale;
+    var toolGapX = 45 * globalScale;
+    var toolStartX = 30 * globalScale;
+    var ty = 35 * globalScale;
 
-        var sliderBoxW = (4 * toolGapX) + tBoxSize;
-        var sliderBoxCX = toolStartX + (14 * toolGapX);
-        var sliderW = sliderBoxW - (24 * globalScale);
-        var sliderX = sliderBoxCX - (sliderW / 2);
-        var sliderY = ty - 0;
+    // Matemática base do nosso Novo Slider JS
+    var sliderBoxW = (4 * toolGapX) + tBoxSize;
+    var sliderBoxCX = toolStartX + (14 * toolGapX);
 
-        tileSizeSlider.position(sliderX, sliderY);
-        tileSizeSlider.size(sliderW);
-    }
+    uiSlider.w = sliderBoxW - (30 * globalScale); // A largura real da calha
+    uiSlider.x = sliderBoxCX - (uiSlider.w / 2); // Onde começa a calha
+    uiSlider.y = ty;
 }
 
 function draw() {
     background(220);
-
-    if (tileSizeSlider.value() !== tileSize) {
-        var oldTileSize = tileSize;
-        tileSize = tileSizeSlider.value();
-
-        if (placedObjects.length > 0) {
-            var dCenter = getDrawingCenterGrid();
-            panX -= (dCenter.x - GRID_CX) * (tileSize - oldTileSize);
-            panY -= (dCenter.y - GRID_CY) * (tileSize - oldTileSize);
-        }
-        calculateLayout();
-    }
 
     // LÓGICA DAS GUIAS
     if (draggedGuide) {
@@ -293,8 +266,6 @@ function draw() {
             guidesY[draggedGuide] = gY;
         }
     }
-
-    // O código do quadrado branco gigante (rect(gridStartX...)) estava aqui e foi apagado!
 
     try {
         drawGrid();
@@ -337,7 +308,6 @@ function draw() {
     drawUI();
     drawCustomCursor();
 
-    // NOVO: Desenha a janela flutuante no topo de tudo!
     drawShortcutsModal();
 }
 
@@ -403,10 +373,15 @@ function mousePressed() {
         }
 
         if (mouseY < topBarHeight) {
+            // Detetar Clique no Novo Slider JS
+            if (mouseX > uiSlider.x - 15 && mouseX < uiSlider.x + uiSlider.w + 15 && mouseY > uiSlider.y - 15 && mouseY < uiSlider.y + 15) {
+                isDraggingSlider = true;
+                updateSliderFromMouse();
+                return;
+            }
             checkTopBarClick();
         }
         else if (mouseX < sidebarWidth) {
-            // Verifica Cliques nos Botões Fixos do Rodapé
             if (mouseX > btnLetterpress.x - btnLetterpress.w / 2 && mouseX < btnLetterpress.x + btnLetterpress.w / 2 && mouseY > btnLetterpress.y - btnLetterpress.h / 2 && mouseY < btnLetterpress.y + btnLetterpress.h / 2) {
                 isOverlapMode = false;
                 return;
@@ -419,7 +394,6 @@ function mousePressed() {
                 showShortcutsModal = true;
                 return;
             }
-            // NOVO CLIQUE DO BOTÃO FLIP HORIZONTAL
             if (!isOverlapMode && mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2) {
                 flipCompositionHorizontal();
                 return;
@@ -461,6 +435,8 @@ function mousePressed() {
 }
 
 function mouseReleased() {
+    if (isDraggingSlider) { isDraggingSlider = false; return; } // Liberta o slider
+
     if (keyIsDown(32)) return; // BLOQUEIO DE CÂMARA
     if (draggedGuide) {
         draggedGuide = null;
@@ -475,10 +451,10 @@ function mouseReleased() {
         var minY = min(selectionBox.startY, selectionBox.currentY);
         var maxY = max(selectionBox.startY, selectionBox.currentY);
 
-        var gMinX = floor((minX - centerX) / tileSize) + GRID_CX;
-        var gMaxX = floor((maxX - centerX) / tileSize) + GRID_CX;
-        var gMinY = floor((minY - centerY) / tileSize) + GRID_CY;
-        var gMaxY = floor((maxY - centerY) / tileSize) + GRID_CY;
+        var gMinX = floor((minX - centerX) / tileSize);
+        var gMaxX = floor((maxX - centerX) / tileSize);
+        var gMinY = floor((minY - centerY) / tileSize);
+        var gMaxY = floor((maxY - centerY) / tileSize);
 
         for (var i = 0; i < placedObjects.length; i++) {
             var obj = placedObjects[i];
@@ -3027,8 +3003,40 @@ function drawUI() {
 
     // --- SLIDER E ROTAÇÃO (LINHA 1) ---
     var sliderBoxCX = toolStartX + (14 * toolGapX);
-    fill(250); stroke(220); strokeWeight(1.5 * globalScale); rect(sliderBoxCX, ty, (4 * toolGapX) + tBoxSize, tBoxSize, 6 * globalScale);
+    var sliderBoxW = (4 * toolGapX) + tBoxSize;
+    fill(250); stroke(220); strokeWeight(1.5 * globalScale); 
+    rect(sliderBoxCX, ty, sliderBoxW, tBoxSize, 6 * globalScale);
 
+    // O NOSSO NOVO SLIDER DESENHADO EM JS VETORIAL
+    var trackY = ty;
+    // Fundo da Calha
+    fill(208); noStroke(); rectMode(CENTER);
+    rect(sliderBoxCX, trackY, uiSlider.w, 4 * globalScale, 2 * globalScale);
+    
+    // Onde a bolinha está agora (matemática exata)
+    var thumbX = map(tileSize, uiSlider.min, uiSlider.max, uiSlider.x, uiSlider.x + uiSlider.w);
+    var fillW = thumbX - uiSlider.x;
+    
+    // Calha preenchida de azul (da esquerda até à bolinha)
+    if (fillW > 0) {
+        rectMode(CORNER); fill(0, 130, 255);
+        rect(uiSlider.x, trackY - 2 * globalScale, fillW, 4 * globalScale, 2 * globalScale);
+        rectMode(CENTER);
+    }
+
+    var isHoverSlider = !showShortcutsModal && (mouseX > uiSlider.x - 10 && mouseX < uiSlider.x + uiSlider.w + 10 && mouseY > ty - 15 && mouseY < ty + 15);
+    
+    // Bolinha
+    fill(0, 130, 255);
+    if (isHoverSlider || isDraggingSlider) { stroke(150, 200, 255); strokeWeight(3 * globalScale); } else { noStroke(); }
+    circle(thumbX, trackY, 12 * globalScale);
+
+    if (isHoverSlider || isDraggingSlider) { 
+        activeTooltip = "Scale: " + tileSize; 
+        tooltipX = sliderBoxCX; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; 
+    }
+
+    // A CAIXA DA ROTAÇÃO (Mantém-se igual)
     var rotBoxW = (2 * toolGapX) + tBoxSize;
     var rotBoxCX = toolStartX + (18 * toolGapX);
     fill(250); stroke(220); strokeWeight(1.5 * globalScale); rect(rotBoxCX, ty, rotBoxW, tBoxSize, 6 * globalScale);
@@ -3066,34 +3074,34 @@ function drawUI() {
     drawSegmentedControl(cx3, ly, styleBtnW, styleBtnH, ["F1", "F2", "F3"], currentArtboardIdx);
     drawSegmentedControl(cx4, ly, styleBtnW, styleBtnH, ["Portrait", "Landscape"], isLandscape ? 1 : 0);
 
-    if (mouseY > ly - styleBtnH/2 && mouseY < ly + styleBtnH/2 && !showShortcutsModal) {
-        if (mouseX > cx3 - styleBtnW/2 && mouseX < cx3 + styleBtnW/2) {
+    if (mouseY > ly - styleBtnH / 2 && mouseY < ly + styleBtnH / 2 && !showShortcutsModal) {
+        if (mouseX > cx3 - styleBtnW / 2 && mouseX < cx3 + styleBtnW / 2) {
             var segW = styleBtnW / 3;
-            var startX = cx3 - styleBtnW/2;
-            if (mouseX < startX + segW) { activeTooltip = "Format 1 (690x990px)"; tooltipX = startX + segW/2; tooltipY = ly + styleBtnH/2 + 15*globalScale; }
-            else if (mouseX < startX + 2*segW) { activeTooltip = "Format 2 (990x1410px)"; tooltipX =  startX + 1.5*segW; tooltipY = ly + styleBtnH/2 + 15*globalScale; }
-            else { activeTooltip = "Format 3 (1410x1980px)"; tooltipX = startX + 2.5*segW; tooltipY = ly + styleBtnH/2 + 15*globalScale; }
+            var startX = cx3 - styleBtnW / 2;
+            if (mouseX < startX + segW) { activeTooltip = "Format 1 (690x990px)"; tooltipX = startX + segW / 2; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
+            else if (mouseX < startX + 2 * segW) { activeTooltip = "Format 2 (990x1410px)"; tooltipX = startX + 1.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
+            else { activeTooltip = "Format 3 (1410x1980px)"; tooltipX = startX + 2.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
         }
     }
 
     // --- 4. BOTÕES DA DIREITA (DESENHO) ---
     var rightMargin = width - (35 * globalScale);
-    var row1R = [{ id: "importar", img: toolIcons.importar, tip: "Import Project" },{ id: "guardar", img: toolIcons.guardar, tip: "Save Project" },{ id: "eliminar", img: toolIcons.limparLetra, isDestructive: true, tip: "Clear Artboard" },{ id: "eliminarAlfa", img: toolIcons.limparAlfabeto, isDestructive: true, tip: "Clear Alphabet" }];
+    var row1R = [{ id: "importar", img: toolIcons.importar, tip: "Import Project" }, { id: "guardar", img: toolIcons.guardar, tip: "Save Project" }, { id: "eliminar", img: toolIcons.limparLetra, isDestructive: true, tip: "Clear Artboard" }, { id: "eliminarAlfa", img: toolIcons.limparAlfabeto, isDestructive: true, tip: "Clear Alphabet" }];
     for (var j = 0; j < row1R.length; j++) {
         var rx = rightMargin - (row1R.length - 1 - j) * toolGapX;
         var isH = (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2);
-        if (isH) { activeTooltip = row1R[j].tip; tooltipX = rx; tooltipY = ty + tBoxSize/2 + 15*globalScale; }
+        if (isH) { activeTooltip = row1R[j].tip; tooltipX = rx; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
         fill(row1R[j].isDestructive ? (isH ? [255, 200, 200] : [255, 230, 230]) : (isH ? 235 : 255));
         stroke(row1R[j].isDestructive ? [255, 50, 50] : 200); strokeWeight(1.5 * globalScale); rect(rx, ty, tBoxSize, tBoxSize, 6 * globalScale);
-        if (row1R[j].img) { tint(row1R[j].isDestructive ? [255, 50, 50] : (isH ? 40 : 80)); image(row1R[j].img, rx, ty, 20*globalScale, 20*globalScale); noTint(); }
+        if (row1R[j].img) { tint(row1R[j].isDestructive ? [255, 50, 50] : (isH ? 40 : 80)); image(row1R[j].img, rx, ty, 20 * globalScale, 20 * globalScale); noTint(); }
     }
-    var row2R = [{ id: "letra", img: toolIcons.exportarLetra, tip: "Export letter SVG" },{ id: "alfa", img: toolIcons.exportarAlfabeto, tip: "Export alphabet SVG" },{ id: "zip", img: toolIcons.exportarZip, tip: "Export alphabet ZIP" }];
+    var row2R = [{ id: "letra", img: toolIcons.exportarLetra, tip: "Export letter SVG" }, { id: "alfa", img: toolIcons.exportarAlfabeto, tip: "Export alphabet SVG" }, { id: "zip", img: toolIcons.exportarZip, tip: "Export alphabet ZIP" }];
     for (var j = 0; j < row2R.length; j++) {
         var rx = rightMargin - (row2R.length - 1 - j) * toolGapX;
         var isH = (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2);
-        if (isH) { activeTooltip = row2R[j].tip; tooltipX = rx; tooltipY = my + tBoxSize/2 + 15*globalScale; }
+        if (isH) { activeTooltip = row2R[j].tip; tooltipX = rx; tooltipY = my + tBoxSize / 2 + 15 * globalScale; }
         fill(isH ? [220, 255, 220] : 255); stroke(isH ? [0, 150, 0] : 200); strokeWeight(1.5 * globalScale); rect(rx, my, tBoxSize, tBoxSize, 6 * globalScale);
-        if (row2R[j].img) { tint(isH ? 40 : 80); image(row2R[j].img, rx, my, 20*globalScale, 20*globalScale); noTint(); }
+        if (row2R[j].img) { tint(isH ? 40 : 80); image(row2R[j].img, rx, my, 20 * globalScale, 20 * globalScale); noTint(); }
     }
 
     // --- BARRA LATERAL (ALFABETO EM SCROLL) ---
@@ -3126,13 +3134,13 @@ function drawUI() {
     stroke(220); strokeWeight(1.5 * globalScale); line(0, effectiveBottom - bottomPanelH, sidebarWidth, effectiveBottom - bottomPanelH);
 
     var btnW_largo = (2 * toolGapX) + cSize; var btnH = 34 * globalScale; var btnX_centro = toolStartX + toolGapX;
-    
+
     // Posicionamento
     btnLetterpress.x = btnX_centro; btnLetterpress.y = effectiveBottom - 115 * globalScale; btnLetterpress.w = btnW_largo; btnLetterpress.h = btnH;
     btnStencil.x = btnX_centro; btnStencil.y = effectiveBottom - 70 * globalScale; btnStencil.w = btnW_largo; btnStencil.h = btnH;
     btnAtalhos.w = btnH; btnAtalhos.h = btnH; btnAtalhos.x = toolStartX; btnAtalhos.y = effectiveBottom - 25 * globalScale;
     btnFlip.w = btnH; btnFlip.h = btnH; btnFlip.x = toolStartX + toolGapX; btnFlip.y = effectiveBottom - 25 * globalScale;
-    
+
     textSize(8.5 * globalScale); textStyle(BOLD); rectMode(CENTER);
 
     var isOffH = (mouseX > btnLetterpress.x - btnLetterpress.w / 2 && mouseX < btnLetterpress.x + btnLetterpress.w / 2 && mouseY > btnLetterpress.y - btnLetterpress.h / 2 && mouseY < btnLetterpress.y + btnLetterpress.h / 2);
@@ -3296,7 +3304,11 @@ function windowResized() {
 }
 
 function mouseDragged() {
-    // Agora o Mover Tela (-3) também arrasta o ecrã
+    if (isDraggingSlider) {
+        updateSliderFromMouse();
+        return false;
+    }
+
     if (keyIsDown(32) || mouseButton === CENTER || selectedModule === -3) {
         panX += mouseX - pmouseX;
         panY += mouseY - pmouseY;
@@ -3483,10 +3495,6 @@ function exportProjectJSON() {
     var a = document.createElement("a");
     a.href = url;
     a.download = "meu-alfabeto-modular.json";
-
-    a.setAttribute("data-no-ajax", "true");
-    a.target = "_blank";
-    
     document.body.appendChild(a); // Necessário no Firefox
     a.click();
 
@@ -4101,5 +4109,25 @@ function flipCompositionHorizontal() {
         placedObjects = backup;
         rebuildCollisionMap();
         alert("A composição espelhada bate nas margens do Artboard atual!");
+    }
+}
+
+function updateSliderFromMouse() {
+    var rawVal = map(mouseX, uiSlider.x, uiSlider.x + uiSlider.w, uiSlider.min, uiSlider.max);
+    rawVal = constrain(rawVal, uiSlider.min, uiSlider.max);
+
+    var steps = Math.round(rawVal / uiSlider.step);
+    var newVal = steps * uiSlider.step;
+
+    if (newVal !== tileSize) {
+        var oldTileSize = tileSize;
+        tileSize = newVal;
+
+        if (placedObjects.length > 0) {
+            var dCenter = getDrawingCenterGrid();
+            panX -= (dCenter.x - GRID_CX) * (tileSize - oldTileSize);
+            panY -= (dCenter.y - GRID_CY) * (tileSize - oldTileSize);
+        }
+        calculateLayout();
     }
 }
