@@ -1,0 +1,4089 @@
+// --- SISTEMA DE POP-UP (MODAL) E RODAPÉ ---
+var showShortcutsModal = false;
+var btnAtalhos = { x: 0, y: 0, w: 100, h: 30 };
+var btnLetterpress = { x: 0, y: 0, w: 100, h: 30 };
+var btnStencil = { x: 0, y: 0, w: 100, h: 30 };
+var btnFlip = { x: 0, y: 0, w: 30, h: 30 }; // <-- ADICIONAR AQUI
+var alphabetScrollY = 0;
+
+// --- SISTEMA DE ARTBOARD E UI ---
+var currentArtboardIdx = 0; // 0 = F1, 1 = F2, 2 = F3
+var isLandscape = false;    // Controla se a folha está deitada
+var artW = 46;
+var artH = 66;
+var artOffsetX = 0;
+var artOffsetY = 0;
+
+// --- SISTEMA DE ARTBOARD ---
+var artboardSelect;
+var currentArtboard = 'Formato 1 (690x990px)';
+
+// --- VARIÁVEIS BASE PARA O MODO FILL ---
+var modulesFill = [];
+var moduleSVGStringsFill = [];
+var redModulesFill = [];
+var blueModulesFill = [];
+
+// --- VARIÁVEIS BASE PARA O MODO DOTTED ---
+var modulesDotted = [];
+var moduleSVGStringsDotted = [];
+var redModulesDotted = [];
+var blueModulesDotted = [];
+
+// --- VARIÁVEIS ATIVAS (As que o P5 usa a cada frame) ---
+var modules = [];
+var moduleSVGStrings = [];
+var redModules = [];
+var blueModules = [];
+
+var currentVisualTheme = 'fill'; // Controla qual o array acima está ativo
+var currentGridStyle = 'lines'; // <-- NOVA VARIÁVEL: Pode ser 'lines' ou 'dots'
+var toolIcons = {};
+
+var tileSize = 15;
+
+// --- GRELHA INFINITA E CENTRADA ---
+var GRID_W = 200;
+var GRID_H = 200;
+var GRID_CX = 100;
+var GRID_CY = 100;
+
+// --- CONFIGURAÇÃO VISUAL ---
+var sidebarWidth = 220;
+var topBarHeight = 120;
+var ui = {}; // <-- NOVA VARIÁVEL QUE VAI CONTROLAR O LAYOUT
+var globalScale = 1; // <-- NOVA VARIÁVEL QUE SINCRONIZA TUDO
+var charButtonSize = 30;
+
+var centerX, centerY;
+var availableW, availableH;
+var tileSizeSlider;
+var panX = 0; // NOVA: Movimento da câmara em X
+var panY = 0; // NOVA: Movimento da câmara em Y
+
+// --- DADOS ---
+var placedObjects = [];
+var collisionMap = [];
+
+var storedCharacters = {};
+var characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+var currentChar = "A";
+
+// Opções e Modos
+var showSmallGrid = true;
+var isDebugMode = false;
+var isMirrorModeV = false;
+var isMirrorModeH = false;
+var showCenterV = false;
+var showCenterH = false;
+var isOverlapMode = false; // Por defeito, a colisão está ligada
+
+// --- SISTEMA DE POP-UP (MODAL) ---
+var showShortcutsModal = false;
+var btnAtalhos = { x: 0, y: 0, w: 100, h: 30 };
+var btnLetterpress = { x: 0, y: 0, w: 100, h: 30 }; // <-- FALTAVA ESTA VARIÁVEL
+var btnStencil = { x: 0, y: 0, w: 100, h: 30 };     // <-- FALTAVA ESTA VARIÁVEL
+var alphabetScrollY = 0; // <-- NOVA VARIÁVEL: Guarda a posição do scroll do alfabeto
+
+// --- SISTEMA DE GUIAS TIPOGRÁFICAS ---
+var showGuides = false;
+var draggedGuide = null;
+var guidesY = {
+    ascender: GRID_CY - 12,
+    capHeight: GRID_CY - 8,
+    xHeight: GRID_CY - 4,
+    baseline: GRID_CY + 4,
+    descender: GRID_CY + 10
+};
+var guidesX = {
+    left: GRID_CX - 6,
+    right: GRID_CX + 6
+};
+
+// Estado
+var selectedModule = 0;
+var currentRotation = 0;
+
+// --- VARIÁVEIS DE SELEÇÃO E DRAG & DROP ---
+var selectedObjects = [];
+var isDraggingSelection = false;
+var dragStartGrid = { x: 0, y: 0 };
+var dragOriginals = [];
+var selectionBox = { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0 };
+
+function preload() {
+    // Limpa os arrays todos
+    modulesFill = []; moduleSVGStringsFill = [];
+    modulesDotted = []; moduleSVGStringsDotted = [];
+
+    for (var i = 0; i < 21; i++) {
+        // Carrega as versões Fill (com link absoluto do GitHub)
+        var fileFill = 'https://gelo1996.github.io/sistemamodulardigital/data/' + nf(i, 2) + '.svg';
+        modulesFill[i] = loadImage(fileFill);
+        moduleSVGStringsFill[i] = loadStrings(fileFill);
+
+        // Carrega as versões Dotted (com link absoluto do GitHub)
+        var fileDot = 'https://gelo1996.github.io/sistemamodulardigital/data/dot-' + nf(i, 2) + '.svg';
+        modulesDotted[i] = loadImage(fileDot);
+        moduleSVGStringsDotted[i] = loadStrings(fileDot);
+    }
+
+    toolIcons.mover = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/mover.svg');
+    toolIcons.limpar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/limpar.svg');
+    toolIcons.espelhoV = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/espelho-vertical.svg');
+    toolIcons.espelhoH = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/espelho-horizontal.svg');
+    toolIcons.grelhaMenor = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/grelha-menor.svg');
+    toolIcons.centroV = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/centro-vertical.svg');
+    toolIcons.centroH = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/centro-horizontal.svg');
+    toolIcons.guias = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/guias.svg');
+    toolIcons.enquadrar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/enquadrar.svg');
+    toolIcons.voltar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/voltar.svg');
+    toolIcons.avancar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/avancar.svg');
+    toolIcons.limparLetra = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/limpar-letra.svg');
+    toolIcons.limparAlfabeto = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/limpar-alfabeto.svg'); // <-- ADICIONE AQUI
+    toolIcons.moverTela = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/mover-tela.svg');
+
+    toolIcons.importar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/importar.svg');
+    toolIcons.guardar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/guardar.svg');
+    toolIcons.exportarLetra = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/exportar-letra.svg');
+    toolIcons.exportarAlfabeto = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/exportar-alfabeto.svg');
+    toolIcons.exportarZip = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/exportar-zip.svg');
+
+    toolIcons.atalhos = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/atalhos.svg');
+
+    toolIcons.sobrepor = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/sobrepor.svg'); // Garante que tens este ficheiro
+}
+
+function updateArtboardBounds() {
+    if (currentArtboardIdx === 0) { artW = 46; artH = 66; }
+    else if (currentArtboardIdx === 1) { artW = 66; artH = 94; }
+    else if (currentArtboardIdx === 2) { artW = 94; artH = 132; }
+
+    // Inverte a orientação se estiver em Landscape
+    if (isLandscape) {
+        var temp = artW;
+        artW = artH;
+        artH = temp;
+    }
+
+    artOffsetX = GRID_CX - Math.floor(artW / 2);
+    artOffsetY = GRID_CY - Math.floor(artH / 2);
+}
+
+function setup() {
+    createCanvas(windowWidth, windowHeight);
+    rectMode(CENTER);
+    imageMode(CENTER);
+    strokeWeight(0.15);
+    textSize(8);
+    textAlign(CENTER, CENTER);
+    angleMode(DEGREES);
+
+    tileSizeSlider = createSlider(5, 60, 15, 5);
+
+    var style = document.createElement('style');
+    style.innerHTML = `
+        .meu-slider { -webkit-appearance: none; appearance: none; background: transparent; outline: none; margin: 0; padding: 0; height: 14px; }
+        .meu-slider::-webkit-slider-runnable-track { height: 4px; background: #d0d0d0; border-radius: 2px; }
+        .meu-slider::-moz-range-track { height: 4px; background: #d0d0d0; border-radius: 2px; }
+        .meu-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #0082ff; cursor: pointer; margin-top: -4px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+        .meu-slider::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #0082ff; cursor: pointer; border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+    `;
+    document.head.appendChild(style);
+    tileSizeSlider.class('meu-slider');
+
+    collisionMap = createCollisionMap();
+
+    for (var i = 0; i < 21; i++) { 
+        redModulesFill[i] = createRedVersion(modulesFill[i]);
+        blueModulesFill[i] = createBlueVersion(modulesFill[i]);
+        redModulesDotted[i] = createRedVersion(modulesDotted[i]);
+        blueModulesDotted[i] = createBlueVersion(modulesDotted[i]);
+    }
+
+    setVisualTheme('fill');
+    updateArtboardBounds(); // Inicia com o Formato 1 Vertical
+    calculateLayout();
+    
+    initAllCharacters();
+    loadCharacter("A");
+}
+
+function createRedVersion(img) {
+    var w = img.width > 10 ? img.width : 100;
+    var h = img.height > 10 ? img.height : 100;
+    var pg = createGraphics(w, h);
+    pg.image(img, 0, 0, w, h);
+    pg.drawingContext.globalCompositeOperation = 'source-in';
+    pg.background(255, 50, 50);
+    return pg;
+}
+
+function createBlueVersion(img) {
+    var w = img.width > 10 ? img.width : 100;
+    var h = img.height > 10 ? img.height : 100;
+    var pg = createGraphics(w, h);
+    pg.image(img, 0, 0, w, h);
+    pg.drawingContext.globalCompositeOperation = 'source-in';
+    pg.background(0, 130, 255);
+    return pg;
+}
+
+function calculateLayout() {
+    var idealTotalWidth = 1145;
+    globalScale = min(1.0, width / idealTotalWidth);
+
+    topBarHeight = 160 * globalScale;
+
+    sidebarWidth = 150 * globalScale;
+    availableW = width - sidebarWidth;
+    availableH = height - topBarHeight;
+
+    centerX = sidebarWidth + availableW / 2 + panX;
+    centerY = topBarHeight + availableH / 2 + panY;
+
+    if (tileSizeSlider) {
+        var tBoxSize = 34 * globalScale;
+        var toolGapX = 45 * globalScale;
+        var toolStartX = 30 * globalScale;
+        var ty = 35 * globalScale;
+
+        var sliderBoxW = (4 * toolGapX) + tBoxSize;
+        var sliderBoxCX = toolStartX + (14 * toolGapX);
+        var sliderW = sliderBoxW - (24 * globalScale);
+        var sliderX = sliderBoxCX - (sliderW / 2);
+        var sliderY = ty - 7;
+
+        tileSizeSlider.position(sliderX, sliderY);
+        tileSizeSlider.size(sliderW);
+    }
+}
+
+function draw() {
+    background(220);
+
+    if (tileSizeSlider.value() !== tileSize) {
+        var oldTileSize = tileSize;
+        tileSize = tileSizeSlider.value();
+
+        if (placedObjects.length > 0) {
+            var dCenter = getDrawingCenterGrid();
+            panX -= (dCenter.x - GRID_CX) * (tileSize - oldTileSize);
+            panY -= (dCenter.y - GRID_CY) * (tileSize - oldTileSize);
+        }
+        calculateLayout();
+    }
+
+    // LÓGICA DAS GUIAS
+    if (draggedGuide) {
+        if (draggedGuide === 'left' || draggedGuide === 'right') {
+            var localX = mouseX - centerX;
+            var gX = round(localX / tileSize) + GRID_CX;
+            if (draggedGuide === 'left') gX = constrain(gX, 0, guidesX.right - 1);
+            else if (draggedGuide === 'right') gX = constrain(gX, guidesX.left + 1, GRID_W - 1);
+            guidesX[draggedGuide] = gX;
+        } else {
+            var localY = mouseY - centerY;
+            var gY = round(localY / tileSize) + GRID_CY;
+            if (draggedGuide === 'ascender') gY = constrain(gY, 0, guidesY.capHeight - 1);
+            else if (draggedGuide === 'capHeight') gY = constrain(gY, guidesY.ascender + 1, guidesY.xHeight - 1);
+            else if (draggedGuide === 'xHeight') gY = constrain(gY, guidesY.capHeight + 1, guidesY.baseline - 1);
+            else if (draggedGuide === 'baseline') gY = constrain(gY, guidesY.xHeight + 1, guidesY.descender - 1);
+            else if (draggedGuide === 'descender') gY = constrain(gY, guidesY.baseline + 1, GRID_H - 1);
+            guidesY[draggedGuide] = gY;
+        }
+    }
+
+    // O código do quadrado branco gigante (rect(gridStartX...)) estava aqui e foi apagado!
+
+    try {
+        drawGrid();
+        drawModules();
+    } catch (e) {
+        console.error(e);
+    }
+
+    if (selectionBox.active) {
+        selectionBox.currentX = max(sidebarWidth, min(width, mouseX));
+        selectionBox.currentY = max(topBarHeight, min(height, mouseY));
+
+        var minX = min(selectionBox.startX, selectionBox.currentX);
+        var maxX = max(selectionBox.startX, selectionBox.currentX);
+        var minY = min(selectionBox.startY, selectionBox.currentY);
+        var maxY = max(selectionBox.startY, selectionBox.currentY);
+
+        var gMinX = floor((minX - centerX) / tileSize);
+        var gMaxX = floor((maxX - centerX) / tileSize);
+        var gMinY = floor((minY - centerY) / tileSize);
+        var gMaxY = floor((maxY - centerY) / tileSize);
+
+        var snapStartX = centerX + gMinX * tileSize;
+        var snapStartY = centerY + gMinY * tileSize;
+        var snapEndX = centerX + (gMaxX + 1) * tileSize;
+        var snapEndY = centerY + (gMaxY + 1) * tileSize;
+
+        push();
+        if (selectedModule == -1) stroke(255, 100, 100);
+        else stroke(100, 150, 255);
+        strokeWeight(3);
+        noFill();
+        drawingContext.setLineDash([8, 8]);
+        rectMode(CORNERS);
+        rect(snapStartX, snapStartY, snapEndX, snapEndY);
+        pop();
+    }
+
+    handleInteraction();
+    drawUI();
+    drawCustomCursor();
+
+    // NOVO: Desenha a janela flutuante no topo de tudo!
+    drawShortcutsModal();
+}
+
+function handleInteraction() {
+    // Bloqueia qualquer desenho se o pop-up estiver aberto!
+    if (showShortcutsModal) return;
+
+    if (keyIsDown(32) || selectedModule === -3) return;
+    if (mouseIsPressed && mouseButton == LEFT) {
+        if (draggedGuide) return;
+
+        if (mouseX > sidebarWidth && mouseY > topBarHeight) {
+            if (selectedModule >= 0 && !selectionBox.active && !isDraggingSelection) attemptSetTile(selectedModule);
+            else if (selectedModule == -1 && !selectionBox.active && !isDraggingSelection) attemptDeleteTile();
+        }
+    }
+}
+
+function getHoveredGuide() {
+    // A MAGIA ESTÁ AQUI: 
+    // Só permite interagir com as guias se a ferramenta "Mover" (-2) estiver ativa.
+    if (!showGuides || selectedModule !== -2) return null;
+
+    var closest = null;
+    var minDist = 10;
+
+    // Verificar Guias Horizontais (Y)
+    var orderY = ['ascender', 'capHeight', 'xHeight', 'baseline', 'descender'];
+    for (var i = 0; i < orderY.length; i++) {
+        var key = orderY[i];
+        var screenY = centerY + (guidesY[key] - GRID_CY) * tileSize;
+        var d = abs(mouseY - screenY);
+        if (d < minDist && mouseX > sidebarWidth) {
+            minDist = d;
+            closest = key;
+        }
+    }
+
+    // Verificar Guias Verticais (X)
+    var orderX = ['left', 'right'];
+    for (var i = 0; i < orderX.length; i++) {
+        var key = orderX[i];
+        var screenX = centerX + (guidesX[key] - GRID_CX) * tileSize;
+        var d = abs(mouseX - screenX);
+        if (d < minDist && mouseY > topBarHeight) {
+            minDist = d;
+            closest = key;
+        }
+    }
+
+    return closest;
+}
+
+function mousePressed() {
+    if (mouseButton == LEFT) {
+        if (showShortcutsModal) {
+            var mw = 550 * globalScale; var mh = 560 * globalScale;
+            var mx = width / 2; var myModal = height / 2;
+            if (mouseX < mx - mw / 2 || mouseX > mx + mw / 2 || mouseY < myModal - mh / 2 || mouseY > myModal + mh / 2) { showShortcutsModal = false; }
+            var closeX = mx + mw / 2 - 30 * globalScale; var closeY = myModal - mh / 2 + 30 * globalScale;
+            if (dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale) { showShortcutsModal = false; }
+            return;
+        }
+
+        if (mouseY < topBarHeight) {
+            checkTopBarClick();
+        }
+        else if (mouseX < sidebarWidth) {
+            // Verifica Cliques nos Botões Fixos do Rodapé
+            if (mouseX > btnLetterpress.x - btnLetterpress.w / 2 && mouseX < btnLetterpress.x + btnLetterpress.w / 2 && mouseY > btnLetterpress.y - btnLetterpress.h / 2 && mouseY < btnLetterpress.y + btnLetterpress.h / 2) {
+                isOverlapMode = false;
+                return;
+            }
+            if (mouseX > btnStencil.x - btnStencil.w / 2 && mouseX < btnStencil.x + btnStencil.w / 2 && mouseY > btnStencil.y - btnStencil.h / 2 && mouseY < btnStencil.y + btnStencil.h / 2) {
+                isOverlapMode = true;
+                return;
+            }
+            if (mouseX > btnAtalhos.x - btnAtalhos.w / 2 && mouseX < btnAtalhos.x + btnAtalhos.w / 2 && mouseY > btnAtalhos.y - btnAtalhos.h / 2 && mouseY < btnAtalhos.y + btnAtalhos.h / 2) {
+                showShortcutsModal = true;
+                return;
+            }
+            // NOVO CLIQUE DO BOTÃO FLIP HORIZONTAL
+            if (!isOverlapMode && mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2) {
+                flipCompositionHorizontal();
+                return;
+            }
+            checkSidebarClick();
+        }
+        else {
+            if (keyIsDown(32) || selectedModule === -3) return;
+            if (showGuides) {
+                var hGuide = getHoveredGuide();
+                if (hGuide) { draggedGuide = hGuide; return; }
+            }
+            if (selectedModule == -2 || selectedModule == -1) {
+                var localX = mouseX - centerX; var localY = mouseY - centerY;
+                var gX = floor(localX / tileSize) + GRID_CX; var gY = floor(localY / tileSize) + GRID_CY;
+                var clickedIdx = findObjectAt(gX, gY);
+                if (clickedIdx !== -1) {
+                    var clickedObj = placedObjects[clickedIdx];
+                    if (!selectedObjects.includes(clickedObj)) {
+                        if (!keyIsDown(SHIFT)) selectedObjects = [clickedObj]; else selectedObjects.push(clickedObj);
+                    }
+                    if (selectedModule == -2) {
+                        isDraggingSelection = true; dragStartGrid = { x: gX, y: gY }; currentRotation = 0;
+                        dragOriginals = JSON.parse(JSON.stringify(selectedObjects));
+                        for (var i = 0; i < selectedObjects.length; i++) {
+                            var idx = placedObjects.indexOf(selectedObjects[i]);
+                            if (idx > -1) placedObjects.splice(idx, 1);
+                            removeObjFromCollisionMap(selectedObjects[i]);
+                        }
+                    }
+                } else {
+                    selectionBox.active = true; selectionBox.startX = mouseX; selectionBox.startY = mouseY;
+                    selectionBox.currentX = mouseX; selectionBox.currentY = mouseY;
+                    if (!keyIsDown(SHIFT)) selectedObjects = [];
+                }
+            }
+        }
+    }
+}
+
+function mouseReleased() {
+    if (keyIsDown(32)) return; // BLOQUEIO DE CÂMARA
+    if (draggedGuide) {
+        draggedGuide = null;
+        return;
+    }
+
+    if (selectionBox.active) {
+        selectionBox.active = false;
+
+        var minX = min(selectionBox.startX, selectionBox.currentX);
+        var maxX = max(selectionBox.startX, selectionBox.currentX);
+        var minY = min(selectionBox.startY, selectionBox.currentY);
+        var maxY = max(selectionBox.startY, selectionBox.currentY);
+
+        var gMinX = floor((minX - centerX) / tileSize) + GRID_CX;
+        var gMaxX = floor((maxX - centerX) / tileSize) + GRID_CX;
+        var gMinY = floor((minY - centerY) / tileSize) + GRID_CY;
+        var gMaxY = floor((maxY - centerY) / tileSize) + GRID_CY;
+
+        for (var i = 0; i < placedObjects.length; i++) {
+            var obj = placedObjects[i];
+            if (obj.x >= gMinX && obj.x <= gMaxX && obj.y >= gMinY && obj.y <= gMaxY) {
+                if (!selectedObjects.includes(obj)) selectedObjects.push(obj);
+            }
+        }
+    } else if (isDraggingSelection) {
+        var localX = mouseX - centerX;
+        var localY = mouseY - centerY;
+        var gX = floor(localX / tileSize) + GRID_CX;
+        var gY = floor(localY / tileSize) + GRID_CY;
+
+        var dx = gX - dragStartGrid.x;
+        var dy = gY - dragStartGrid.y;
+
+        var objectsToPlace = [];
+
+        for (var i = 0; i < dragOriginals.length; i++) {
+            var o = dragOriginals[i];
+            objectsToPlace.push({ type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot });
+        }
+
+        var groupWithMirrors = [];
+        for (var i = 0; i < objectsToPlace.length; i++) {
+            var mirrors = getMirroredGroup(objectsToPlace[i]);
+            for (var m = 0; m < mirrors.length; m++) {
+                if (!containsObj(groupWithMirrors, mirrors[m])) {
+                    groupWithMirrors.push(mirrors[m]);
+                }
+            }
+        }
+
+        if (checkPlacementValidGroup(groupWithMirrors)) {
+            saveHistory();
+            for (var i = 0; i < groupWithMirrors.length; i++) {
+                placedObjects.push(groupWithMirrors[i]);
+                addObjToCollisionMap(groupWithMirrors[i]);
+            }
+            selectedObjects = groupWithMirrors.slice(0, dragOriginals.length);
+        } else {
+            for (var i = 0; i < dragOriginals.length; i++) {
+                var orig = dragOriginals[i];
+                placedObjects.push(orig);
+                addObjToCollisionMap(orig);
+                selectedObjects[i] = orig;
+            }
+        }
+
+        isDraggingSelection = false;
+        dragOriginals = [];
+    }
+}
+
+function findObjectAt(x, y) {
+    for (var k = placedObjects.length - 1; k >= 0; k--) {
+        if (doesObjectCover(placedObjects[k], x, y)) return k;
+    }
+    return -1;
+}
+
+// --- CORE: COLISÃO E OTIMIZAÇÃO ---
+
+function createCollisionMap() {
+    var map = [];
+    for (var x = 0; x < GRID_W; x++) {
+        map[x] = [];
+        for (var y = 0; y < GRID_H; y++) {
+            map[x][y] = [];
+        }
+    }
+    return map;
+}
+
+function rebuildCollisionMap() {
+    collisionMap = createCollisionMap();
+    for (var k = 0; k < placedObjects.length; k++) {
+        addObjToCollisionMap(placedObjects[k]);
+    }
+}
+
+function addObjToCollisionMap(obj) {
+    var dims = getModuleDims(obj.type);
+    var v = getFillVectors(obj.rot);
+    for (var i = 0; i < dims.len; i++) {
+        for (var j = 0; j < dims.wid; j++) {
+            if (isCollisionException(obj.type, i, j)) continue;
+            var px = obj.x + (v.p.x * i) + (v.s.x * j);
+            var py = obj.y + (v.p.y * i) + (v.s.y * j);
+            if (px >= 0 && px < GRID_W && py >= 0 && py < GRID_H) {
+                collisionMap[px][py].push(obj);
+            }
+        }
+    }
+}
+
+function removeObjFromCollisionMap(obj) {
+    var dims = getModuleDims(obj.type);
+    var v = getFillVectors(obj.rot);
+    for (var i = 0; i < dims.len; i++) {
+        for (var j = 0; j < dims.wid; j++) {
+            if (isCollisionException(obj.type, i, j)) continue;
+            var px = obj.x + (v.p.x * i) + (v.s.x * j);
+            var py = obj.y + (v.p.y * i) + (v.s.y * j);
+            if (px >= 0 && px < GRID_W && py >= 0 && py < GRID_H) {
+                var cell = collisionMap[px][py];
+                var idx = cell.indexOf(obj);
+                if (idx > -1) cell.splice(idx, 1);
+            }
+        }
+    }
+}
+
+function getMirroredPlacementV(type, x, y, rot) {
+    var W = GRID_W - 1;
+    var dims = getModuleDims(type);
+    if (isCurveGroup(type) || isDiagonalGroup(type)) { // <-- Categoria incluída
+        var rotM = { 0: 1, 1: 0, 2: 3, 3: 2 }[rot];
+        return { type: type, x: W - x, y: y, rot: rotM };
+    }
+    else if (isArchGroup(type)) {
+        var rotM, xM, yM;
+        if (rot == 0) { rotM = 0; xM = W - x - dims.len + 1; yM = y; }
+        else if (rot == 1) { rotM = 3; xM = W - x; yM = y + dims.len - 1; }
+        else if (rot == 2) { rotM = 2; xM = W - x + dims.len - 1; yM = y; }
+        else if (rot == 3) { rotM = 1; xM = W - x; yM = y - dims.len + 1; }
+        return { type: type, x: xM, y: yM, rot: rotM };
+    }
+    else {
+        var rotM = rot;
+        var xM = 0;
+        if (rot == 0) xM = W - x - dims.len + 1;
+        if (rot == 1) xM = W - x + dims.wid - 1;
+        if (rot == 2) xM = W - x + dims.len - 1;
+        if (rot == 3) xM = W - x - dims.wid + 1;
+        return { type: type, x: xM, y: y, rot: rotM };
+    }
+}
+
+function getMirroredPlacementH(type, x, y, rot) {
+    var H = GRID_H - 1;
+    var dims = getModuleDims(type);
+    if (isCurveGroup(type) || isDiagonalGroup(type)) { // <-- Categoria incluída
+        var rotM = { 0: 3, 1: 2, 2: 1, 3: 0 }[rot];
+        return { type: type, x: x, y: H - y, rot: rotM };
+    }
+    else if (isArchGroup(type)) {
+        var rotM, xM, yM;
+        if (rot == 0) { rotM = 2; xM = x + dims.len - 1; yM = H - y; }
+        else if (rot == 1) { rotM = 1; xM = x; yM = H - y - dims.len + 1; }
+        else if (rot == 2) { rotM = 0; xM = x - dims.len + 1; yM = H - y; }
+        else if (rot == 3) { rotM = 3; xM = x; yM = H - y + dims.len - 1; }
+        return { type: type, x: xM, y: yM, rot: rotM };
+    }
+    else {
+        var rotM = rot;
+        var yM = 0;
+        if (rot == 0) yM = H - y - dims.wid + 1;
+        if (rot == 1) yM = H - y - dims.len + 1;
+        if (rot == 2) yM = H - y + dims.wid - 1;
+        if (rot == 3) yM = H - y + dims.len - 1;
+        return { type: type, x: x, y: yM, rot: rotM };
+    }
+}
+
+function getMirroredGroup(baseObj) {
+    var group = [baseObj];
+
+    if (isMirrorModeV) {
+        var mV = getMirroredPlacementV(baseObj.type, baseObj.x, baseObj.y, baseObj.rot);
+        if (!containsObj(group, mV)) group.push(mV);
+    }
+
+    if (isMirrorModeH) {
+        var currentLen = group.length;
+        for (var i = 0; i < currentLen; i++) {
+            var mH = getMirroredPlacementH(group[i].type, group[i].x, group[i].y, group[i].rot);
+            if (!containsObj(group, mH)) group.push(mH);
+        }
+    }
+    return group;
+}
+
+function containsObj(arr, obj) {
+    for (var i = 0; i < arr.length; i++) {
+        if (arr[i].type === obj.type && arr[i].x === obj.x && arr[i].y === obj.y && arr[i].rot === obj.rot) return true;
+    }
+    return false;
+}
+
+function checkPlacementValidGroup(group) {
+    var added = [];
+    var allValid = true;
+    for (var i = 0; i < group.length; i++) {
+        if (canPlaceTile(group[i].x, group[i].y, group[i].type, group[i].rot)) {
+            placedObjects.push(group[i]);
+            addObjToCollisionMap(group[i]);
+            added.push(group[i]);
+        } else {
+            allValid = false;
+            break;
+        }
+    }
+    for (var i = 0; i < added.length; i++) {
+        placedObjects.pop();
+        removeObjFromCollisionMap(added[i]);
+    }
+    return allValid;
+}
+
+// --- DEFINIÇÕES DOS MÓDULOS E GEOMETRIA (OTIMIZADO) ---
+const MODULE_DIMS = [
+    { len: 2, wid: 2 },   // 00
+    { len: 4, wid: 2 },   // 01
+    { len: 6, wid: 2 },   // 02
+    { len: 8, wid: 2 },   // 03
+    { len: 10, wid: 2 },  // 04
+    { len: 12, wid: 2 },  // 05
+    { len: 2, wid: 2 },   // 06
+    { len: 4, wid: 4 },   // 07
+    { len: 6, wid: 6 },   // 08
+    { len: 8, wid: 8 },   // 09
+    { len: 10, wid: 10 }, // 10
+    { len: 12, wid: 12 }, // 11
+    { len: 10, wid: 5 },  // 12
+    { len: 6, wid: 3 },   // 13
+    { len: 2, wid: 1 },   // 14
+    { len: 2, wid: 2 },   // 15
+    { len: 2, wid: 2 },   // 16
+    { len: 3, wid: 2 },    // 17
+    { len: 3, wid: 2 },    // 18
+    { len: 3, wid: 2 },    // 19
+    { len: 3, wid: 2 }     // 20 <-- NOVO MÓDULO 20
+];
+
+function getModuleDims(id) {
+    return MODULE_DIMS[id] || { len: (id + 1) * 2, wid: 2 };
+}
+
+function isCurveGroup(id) { return id >= 6 && id <= 11; }
+function isArchGroup(id) { return id >= 12 && id <= 14; }
+function isDiagonalGroup(id) { return id >= 16 && id <= 20; } // <-- Atualizado para 20
+function hasGeneticMap(id) { return (id >= 0 && id <= 20); }  // <-- Atualizado para 20
+
+function getCurveCenter(gx, gy, type, rot) {
+    var dims = getModuleDims(type);
+    var L = dims.len;
+    var v = getFillVectors(rot);
+    return { cx: gx + (v.p.x * L) + (v.s.x * L), cy: gy + (v.p.y * L) + (v.s.y * L) };
+}
+
+function isCollisionException(id, i, j) {
+    if (id == 7) { if (i == 0 && j == 0) return true; if (i == 3 && j == 3) return true; }
+    if (id == 8) { if (i == 0 && j == 0) return true; if (i == 1 && j == 0) return true; if (i == 0 && j == 1) return true; if (i >= 4 && j == 3) return true; if (i >= 3 && j == 4) return true; if (i >= 3 && j == 5) return true; }
+    if (id == 9) { if (j == 0 && i <= 3) return true; if (j == 1 && i <= 1) return true; if (j == 2 && i == 0) return true; if (j == 3 && i == 0) return true; if (j == 3 && i >= 5) return true; if (j == 4 && i >= 4) return true; if (j == 5 && i >= 4) return true; if (j == 6 && i >= 4) return true; if (j == 7 && i >= 3) return true; }
+    if (id == 10) { if (j == 0 && i <= 4) return true; if (j == 1 && i <= 3) return true; if (j == 2 && i <= 1) return true; if (j == 3 && i <= 1) return true; if (j == 4 && i == 0) return true; if (j == 3 && i >= 7) return true; if (j == 4 && i >= 6) return true; if (j == 5 && i >= 5) return true; if (j == 6 && i >= 4) return true; if (j >= 7 && i >= 3) return true; }
+    if (id == 11) { if (j == 0 && i <= 6) return true; if (j == 1 && i <= 4) return true; if (j == 2 && i <= 3) return true; if (j == 3 && i <= 2) return true; if (j == 4 && i <= 1) return true; if (j == 5 && i == 0) return true; if (j == 6 && i == 0) return true; if (j == 3 && i >= 8) return true; if (j == 4 && i >= 6) return true; if (j == 5 && i >= 5) return true; if (j == 6 && i >= 4) return true; if (j == 7 && i >= 4) return true; if (j >= 8 && i >= 3) return true; }
+
+    if (id == 12) {
+        if (j == 0 && (i <= 1 || i >= 8)) return true;
+        if (j == 1 && (i == 0 || i == 9)) return true;
+        if (j >= 3 && (i >= 3 && i <= 6)) return true;
+    }
+    return false;
+}
+
+// --- MOTOR GENÉTICO DE CORES (OTIMIZADO) ---
+const MODULE_COLORS = [
+    /* 00 */[['Y', 'Y'], ['Y', 'Y']],
+    /* 01 */[['Y', 'Y', 'Y', 'Y'], ['Y', 'Y', 'Y', 'Y']],
+    /* 02 */[['Y', 'Y', 'Y', 'Y', 'Y', 'Y'], ['Y', 'Y', 'Y', 'Y', 'Y', 'Y']],
+    /* 03 */[['Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y'], ['Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y']],
+    /* 04 */[['Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y'], ['Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y']],
+    /* 05 */[['Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y'], ['Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y']],
+    /* 06 */[['B', 'G'], ['G', 'Y']],
+    /* 07 */[['T', 'B', 'B', 'G'], ['B', 'Y', 'Y', 'Y'], ['B', 'Y', 'B', 'B'], ['G', 'Y', 'B', 'T']],
+    /* 08 */[['T', 'T', 'B', 'B', 'B', 'G'], ['T', 'B', 'B', 'Y', 'Y', 'Y'], ['B', 'B', 'Y', 'Y', 'B', 'B'], ['B', 'Y', 'Y', 'B', 'T', 'T'], ['B', 'Y', 'B', 'T', 'T', 'T'], ['G', 'Y', 'B', 'T', 'T', 'T']],
+    /* 09 */[['T', 'T', 'T', 'T', 'B', 'B', 'G', 'G'], ['T', 'T', 'B', 'B', 'Y', 'Y', 'Y', 'Y'], ['T', 'B', 'B', 'Y', 'Y', 'B', 'B', 'B'], ['T', 'B', 'Y', 'Y', 'B', 'T', 'T', 'T'], ['B', 'Y', 'Y', 'B', 'T', 'T', 'T', 'T'], ['B', 'Y', 'B', 'T', 'T', 'T', 'T', 'T'], ['G', 'Y', 'B', 'T', 'T', 'T', 'T', 'T'], ['G', 'Y', 'B', 'T', 'T', 'T', 'T', 'T']],
+    /* 10 */[['T', 'T', 'T', 'T', 'T', 'B', 'B', 'B', 'G', 'G'], ['T', 'T', 'T', 'T', 'B', 'B', 'Y', 'Y', 'Y', 'Y'], ['T', 'T', 'B', 'B', 'Y', 'Y', 'B', 'B', 'B', 'B'], ['T', 'T', 'B', 'Y', 'Y', 'B', 'T', 'T', 'T', 'T'], ['T', 'B', 'Y', 'Y', 'B', 'T', 'T', 'T', 'T', 'T'], ['B', 'B', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T'], ['B', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T'], ['B', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T'], ['G', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T'], ['G', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T']],
+    /* 11 */[['T', 'T', 'T', 'T', 'T', 'T', 'T', 'B', 'B', 'B', 'Y', 'Y'], ['T', 'T', 'T', 'T', 'T', 'B', 'B', 'Y', 'Y', 'Y', 'Y', 'Y'], ['T', 'T', 'T', 'T', 'B', 'Y', 'Y', 'Y', 'B', 'B', 'B', 'B'], ['T', 'T', 'T', 'B', 'Y', 'Y', 'B', 'B', 'T', 'T', 'T', 'T'], ['T', 'T', 'B', 'Y', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T'], ['T', 'B', 'Y', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T'], ['T', 'B', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T'], ['B', 'Y', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T'], ['B', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T'], ['B', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T'], ['Y', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T'], ['Y', 'Y', 'B', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T']],
+    /* 12 */[['T', 'T', 'B', 'B', 'G', 'G', 'B', 'B', 'T', 'T'], ['T', 'B', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'B', 'T'], ['B', 'Y', 'Y', 'B', 'B', 'B', 'B', 'Y', 'Y', 'B'], ['G', 'Y', 'B', 'T', 'T', 'T', 'T', 'B', 'Y', 'G'], ['G', 'Y', 'B', 'T', 'T', 'T', 'T', 'B', 'Y', 'G']],
+    /* 13 */[['B', 'B', 'G', 'G', 'B', 'B'], ['B', 'Y', 'Y', 'Y', 'Y', 'B'], ['G', 'Y', 'B', 'B', 'Y', 'G']],
+    /* 14 */[['G', 'G']],
+    /* 15 */[['G', 'G'], ['G', 'G']],
+    /* 16 */[['T', 'B'], ['B', 'Y']],
+    /* 17 */[['B', 'Y', 'B'], ['Y', 'Y', 'B']], // ADN do 17: J0=[Azul,Amarelo,Azul], J1=[Amarelo,Amarelo,Azul]
+    /* 18 */[['B', 'Y', 'B'], ['B', 'Y', 'Y']], // <-- O ADN do 18
+    /* 19 */[['B', 'Y', 'G'], ['G', 'Y', 'B']], // <-- Adicionar vírgula aqui
+    /* 20 */[['Y', 'Y', 'B'], ['B', 'Y', 'Y']]  // <-- ADN DO 20 (Amarelo e Azul)
+];
+
+function getModuleColor(type, i, j) {
+    if (MODULE_COLORS[type] && MODULE_COLORS[type][j] && MODULE_COLORS[type][j][i]) {
+        return MODULE_COLORS[type][j][i];
+    }
+    return 'E';
+}
+
+function isAllowed14(typeBase, jBase, iBase, j14, i14, rotBase, rot14) {
+    var relRot = (rot14 - rotBase + 4) % 4;
+
+    if (typeBase == 7) {
+        if (j14 == 0 && i14 == 0 && (jBase == 3 && iBase == 2 || jBase == 2 && iBase == 3) && relRot == 0) return true;
+        if (j14 == 0 && i14 == 1 && (jBase == 3 && iBase == 2 || jBase == 2 && iBase == 3) && relRot == 3) return true;
+        return false;
+    }
+    if (typeBase == 8) {
+        if (j14 == 0 && i14 == 0 && ((jBase == 5 && iBase == 2) || (jBase == 3 && iBase == 3) || (jBase == 2 && iBase == 5)) && relRot == 0) return true;
+        if (j14 == 0 && i14 == 1 && ((jBase == 5 && iBase == 2) || (jBase == 3 && iBase == 3) || (jBase == 2 && iBase == 5)) && relRot == 3) return true;
+        if (j14 == 0 && i14 == 0 && ((jBase == 2 && iBase == 0) || (jBase == 1 && iBase == 1) || (jBase == 0 && iBase == 2)) && relRot == 2) return true;
+        if (j14 == 0 && i14 == 1 && ((jBase == 2 && iBase == 0) || (jBase == 1 && iBase == 1) || (jBase == 0 && iBase == 2)) && relRot == 1) return true;
+        return false;
+    }
+    if (typeBase == 9) {
+        if (j14 == 0 && i14 == 0 && ((jBase == 7 && iBase == 2) || (jBase == 4 && iBase == 3) || (jBase == 3 && iBase == 4) || (jBase == 2 && iBase == 7)) && relRot == 0) return true;
+        if (j14 == 0 && i14 == 1 && ((jBase == 7 && iBase == 2) || (jBase == 4 && iBase == 3) || (jBase == 3 && iBase == 4) || (jBase == 2 && iBase == 7)) && relRot == 3) return true;
+        if (j14 == 0 && i14 == 0 && ((jBase == 1 && iBase == 2) || (jBase == 2 && iBase == 1)) && relRot == 2) return true;
+        if (j14 == 0 && i14 == 1 && ((jBase == 1 && iBase == 2) || (jBase == 2 && iBase == 1)) && relRot == 1) return true;
+        return false;
+    }
+    if (typeBase == 10) {
+        if (j14 == 0 && i14 == 0 && ((jBase == 9 && iBase == 2) || (jBase == 2 && iBase == 9)) && relRot == 0) return true;
+        if (j14 == 0 && i14 == 1 && ((jBase == 9 && iBase == 2) || (jBase == 2 && iBase == 9)) && relRot == 3) return true;
+        if (j14 == 0 && i14 == 0 && ((jBase == 5 && iBase == 0) || (jBase == 2 && iBase == 2) || (jBase == 0 && iBase == 5)) && relRot == 2) return true;
+        if (j14 == 0 && i14 == 1 && ((jBase == 5 && iBase == 0) || (jBase == 2 && iBase == 2) || (jBase == 0 && iBase == 5)) && relRot == 1) return true;
+        return false;
+    }
+    if (typeBase == 11) {
+        if (j14 == 0 && i14 == 0 && ((jBase == 7 && iBase == 3) || (jBase == 3 && iBase == 7) || (jBase == 2 && iBase == 11) || (jBase == 11 && iBase == 2)) && relRot == 0) return true;
+        if (j14 == 0 && i14 == 1 && ((jBase == 7 && iBase == 3) || (jBase == 3 && iBase == 7) || (jBase == 2 && iBase == 11) || (jBase == 11 && iBase == 2)) && relRot == 3) return true;
+        if (j14 == 0 && i14 == 0 && ((jBase == 1 && iBase == 5) || (jBase == 5 && iBase == 1)) && relRot == 2) return true;
+        if (j14 == 0 && i14 == 1 && ((jBase == 1 && iBase == 5) || (jBase == 5 && iBase == 1)) && relRot == 1) return true;
+        return false;
+    }
+    if (typeBase == 12) {
+        if (j14 == 0 && i14 == 0 && ((jBase == 4 && iBase == 2) || (jBase == 2 && iBase == 4)) && relRot == 0) return true;
+        if (j14 == 0 && i14 == 0 && ((jBase == 4 && iBase == 7) || (jBase == 2 && iBase == 5)) && relRot == 1) return true;
+        if (j14 == 0 && i14 == 1 && ((jBase == 4 && iBase == 7) || (jBase == 2 && iBase == 5)) && relRot == 0) return true;
+        if (j14 == 0 && i14 == 1 && ((jBase == 4 && iBase == 2) || (jBase == 2 && iBase == 4)) && relRot == 3) return true;
+        return false;
+    }
+    if (typeBase == 13) {
+        if (j14 == 0 && i14 == 0 && jBase == 0 && iBase == 0 && relRot == 2) return true;
+        if (j14 == 0 && i14 == 1 && jBase == 0 && iBase == 5 && relRot == 2) return true;
+        if (j14 == 0 && i14 == 0 && jBase == 0 && iBase == 5 && relRot == 3) return true;
+        if (j14 == 0 && i14 == 1 && jBase == 0 && iBase == 0 && relRot == 1) return true;
+        if (j14 == 0 && i14 == 0 && jBase == 2 && iBase == 2 && relRot == 0) return true;
+        if (j14 == 0 && i14 == 0 && jBase == 2 && iBase == 3 && relRot == 1) return true;
+        if (j14 == 0 && i14 == 1 && jBase == 2 && iBase == 3 && relRot == 0) return true;
+        if (j14 == 0 && i14 == 1 && jBase == 2 && iBase == 2 && relRot == 3) return true;
+        return false;
+    }
+
+    return false;
+}
+
+function isAllowed15(typeBase, jBase, iBase, j15, i15, rotBase, rot15) {
+    if (typeBase == 7) {
+        if ((jBase == 3 && iBase == 2) || (jBase == 2 && iBase == 3)) return true;
+        return false;
+    }
+    if (typeBase == 8) {
+        if ((jBase == 5 && iBase == 2) || (jBase == 2 && iBase == 5) ||
+            (jBase == 3 && iBase == 3) || (jBase == 2 && iBase == 0) ||
+            (jBase == 0 && iBase == 2) || (jBase == 1 && iBase == 1)) return true;
+        return false;
+    }
+    if (typeBase == 9) {
+        if ((jBase == 2 && iBase == 7) || (jBase == 3 && iBase == 4) ||
+            (jBase == 4 && iBase == 3) || (jBase == 7 && iBase == 2) ||
+            (jBase == 1 && iBase == 2) || (jBase == 2 && iBase == 1)) return true;
+        return false;
+    }
+    if (typeBase == 10) {
+        if ((jBase == 9 && iBase == 2) || (jBase == 2 && iBase == 9) ||
+            (jBase == 5 && iBase == 0) || (jBase == 2 && iBase == 2) ||
+            (jBase == 0 && iBase == 5)) return true;
+        return false;
+    }
+    if (typeBase == 11) {
+        if ((jBase == 7 && iBase == 3) || (jBase == 3 && iBase == 7) ||
+            (jBase == 2 && iBase == 11) || (jBase == 11 && iBase == 2) ||
+            (jBase == 1 && iBase == 5) || (jBase == 5 && iBase == 1)) return true;
+        return false;
+    }
+    if (typeBase == 12) {
+        if ((jBase == 4 && iBase == 2) || (jBase == 2 && iBase == 4) ||
+            (jBase == 4 && iBase == 7) || (jBase == 2 && iBase == 5)) return true;
+        return false;
+    }
+    if (typeBase == 13) {
+        if ((jBase == 2 && iBase == 2) || (jBase == 2 && iBase == 3) ||
+            (jBase == 0 && iBase == 0) || (jBase == 0 && iBase == 5)) return true;
+        return false;
+    }
+    return false;
+}
+
+function check13Override(t1, j1, i1, r1, t2, j2, i2, r2) {
+    if (t1 !== 13 && t2 !== 13) return 0;
+
+    var isT1_13 = (t1 == 13);
+    var baseT = isT1_13 ? t2 : t1;
+    var j13 = isT1_13 ? j1 : j2;
+    var i13 = isT1_13 ? i1 : i2;
+    var r13 = isT1_13 ? r1 : r2;
+    var jB = isT1_13 ? j2 : j1;
+    var iB = isT1_13 ? i2 : i1;
+    var rB = isT1_13 ? r2 : r1;
+
+    var relRot = (r13 - rB + 4) % 4;
+
+    if (baseT == 7) {
+        if (j13 == 2 && i13 == 5 && ((jB == 1 && iB == 0) || (jB == 2 && iB == 0) || (jB == 0 && iB == 1))) return -1;
+        if (j13 == 0 && i13 == 0 && jB == 1 && iB == 1) return 1;
+        if (j13 == 0 && i13 == 5 && jB == 1 && iB == 1) return 1;
+    }
+    else if (baseT == 8) {
+        if (j13 == 2 && i13 == 0 && jB == 5 && iB == 2 && relRot == 0) return 1;
+        if (j13 == 0 && i13 == 0 && ((jB == 2 && iB == 3) || (jB == 3 && iB == 2)) && relRot == 0) return 1;
+        if (j13 == 0 && i13 == 2 && jB == 2 && iB == 5 && relRot == 0) return 1;
+        if (j13 == 2 && i13 == 5 && jB == 2 && iB == 5 && relRot == 3) return 1;
+        if (j13 == 0 && i13 == 5 && ((jB == 2 && iB == 3) || (jB == 3 && iB == 2)) && relRot == 3) return 1;
+        if (j13 == 0 && i13 == 3 && jB == 5 && iB == 2 && relRot == 3) return 1;
+    }
+    else if (baseT == 9) {
+        if (j13 == 2 && i13 == 0 && jB == 7 && iB == 2 && relRot == 0) return 1;
+        if (j13 == 0 && i13 == 0 && jB == 3 && iB == 3 && relRot == 0) return 1;
+        if (j13 == 0 && i13 == 2 && jB == 2 && iB == 7 && relRot == 0) return 1;
+        if (j13 == 2 && i13 == 5 && jB == 2 && iB == 7 && relRot == 3) return 1;
+        if (j13 == 0 && i13 == 5 && jB == 3 && iB == 3 && relRot == 3) return 1;
+        if (j13 == 0 && i13 == 3 && jB == 7 && iB == 2 && relRot == 3) return 1;
+    }
+    else if (baseT == 10) {
+        if (j13 == 0 && i13 == 0 && ((jB == 2 && iB == 6) || (jB == 6 && iB == 2))) return -1;
+        if (j13 == 2 && i13 == 0 && jB == 9 && iB == 2 && relRot == 0) return 1;
+        if (j13 == 0 && i13 == 0 && ((jB == 4 && iB == 3) || (jB == 3 && iB == 4)) && relRot == 0) return 1;
+        if (j13 == 0 && i13 == 2 && jB == 2 && iB == 9 && relRot == 0) return 1;
+        if (j13 == 2 && i13 == 5 && jB == 2 && iB == 9 && relRot == 3) return 1;
+        if (j13 == 0 && i13 == 5 && ((jB == 4 && iB == 3) || (jB == 3 && iB == 4)) && relRot == 3) return 1;
+        if (j13 == 0 && i13 == 3 && jB == 9 && iB == 2 && relRot == 3) return 1;
+    }
+    else if (baseT == 11) {
+        if (j13 == 0 && i13 == 0 && ((jB == 8 && iB == 2) || (jB == 2 && iB == 8))) return -1;
+        if (j13 == 2 && i13 == 0 && jB == 11 && iB == 2 && relRot == 0) return 1;
+        if (j13 == 0 && i13 == 2 && jB == 2 && iB == 11 && relRot == 0) return 1;
+        if (j13 == 2 && i13 == 5 && jB == 2 && iB == 11 && relRot == 3) return 1;
+        if (j13 == 0 && i13 == 3 && jB == 11 && iB == 2 && relRot == 3) return 1;
+    }
+    else if (baseT == 12) {
+        // NOVAS LIGAÇÕES 12 vs 13
+        if (relRot == 0) {
+            if (jB == 2 && iB == 2 && j13 == 0 && i13 == 0) return 2;
+            if (jB == 2 && iB == 7 && j13 == 0 && i13 == 5) return 2;
+        }
+        else if (relRot == 1) {
+            if (jB == 3 && iB == 0 && j13 == 0 && i13 == 5) return 2;
+            if (jB == 2 && iB == 7 && j13 == 0 && i13 == 0) return 2;
+            if (jB == 2 && iB == 5 && j13 == 2 && i13 == 0) return 2;
+            if (jB == 4 && iB == 7 && j13 == 0 && i13 == 2) return 2;
+        }
+        else if (relRot == 2) {
+            if (jB == 3 && iB == 0 && j13 == 0 && i13 == 0) return 2;
+            if (jB == 3 && iB == 9 && j13 == 0 && i13 == 5) return 2;
+        }
+        else if (relRot == 3) {
+            if (jB == 3 && iB == 9 && j13 == 0 && i13 == 0) return 2;
+            if (jB == 2 && iB == 2 && j13 == 0 && i13 == 5) return 2;
+            if (jB == 2 && iB == 4 && j13 == 2 && i13 == 5) return 2;
+            if (jB == 4 && iB == 2 && j13 == 0 && i13 == 3) return 2;
+        }
+    }
+    return 0;
+}
+
+function check07Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 7 && t2 !== 7) return 0;
+
+    var isT1_07 = (t1 == 7);
+    var baseT = isT1_07 ? t2 : t1;
+    var j07 = isT1_07 ? j1 : j2;
+    var i07 = isT1_07 ? i1 : i2;
+    var r07 = isT1_07 ? r1 : r2;
+    var jB = isT1_07 ? j2 : j1;
+    var iB = isT1_07 ? i2 : i1;
+    var rB = isT1_07 ? r2 : r1;
+    var cB = isT1_07 ? c2 : c1;
+
+    var relRot = (r07 - rB + 4) % 4;
+
+    if (baseT == 9) {
+        if (j07 == 1 && i07 == 1 && (jB == 1 && iB == 2 || jB == 2 && iB == 1) && relRot == 2) return 1;
+    }
+    else if (baseT == 10) {
+        if (j07 == 1 && i07 == 1 && jB == 2 && iB == 2 && relRot == 2) return 1;
+    }
+    else if (baseT == 11) {
+        if (j07 == 3 && i07 == 0 && cB !== 'T') {
+            if (jB == 11 && iB == 2 && relRot == 0) return 1;
+            return -1;
+        }
+        if (j07 == 0 && i07 == 3 && cB !== 'T') {
+            if (jB == 2 && iB == 11 && relRot == 0) return 1;
+            return -1;
+        }
+    }
+    else if (baseT == 12) {
+        if (j07 == 0 && i07 == 3 && (jB == 2 && iB == 5 || jB == 2 && iB == 6 || jB == 4 && iB == 7)) return -1;
+        if (j07 == 0 && i07 == 1 && jB == 0 && iB == 3) return -1;
+        if (j07 == 1 && i07 == 0 && jB == 0 && iB == 6) return -1;
+    }
+    return 0;
+}
+
+function check08Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 8 && t2 !== 8) return 0;
+
+    var isT1_08 = (t1 == 8);
+    var baseT = isT1_08 ? t2 : t1;
+    var j08 = isT1_08 ? j1 : j2;
+    var i08 = isT1_08 ? i1 : i2;
+    var r08 = isT1_08 ? r1 : r2;
+    var c08 = isT1_08 ? c1 : c2;
+    var jB = isT1_08 ? j2 : j1;
+    var iB = isT1_08 ? i2 : i1;
+    var rB = isT1_08 ? r2 : r1;
+    var cB = isT1_08 ? c2 : c1;
+
+    var relRot = (r08 - rB + 4) % 4;
+
+    if (baseT == 11) {
+        if (c08 === 'B' && cB === 'Y' && j08 == 2 && i08 == 0 && jB == 5 && iB == 2 && relRot == 2) return 2;
+        if (c08 === 'B' && cB === 'Y' && j08 == 0 && i08 == 2 && jB == 2 && iB == 5 && relRot == 2) return 2;
+    }
+    else if (baseT == 12) {
+        if (c08 === 'G' && j08 == 0 && i08 == 5 && jB == 4 && iB == 7) return -1;
+        if (c08 === 'B' && cB === 'G' && j08 == 2 && i08 == 0 && jB == 3 && iB == 0 && relRot == 2) return 1;
+        if (c08 === 'B' && cB === 'G' && j08 == 0 && i08 == 2 && jB == 3 && iB == 9 && relRot == 3) return 1;
+    }
+    return 0;
+}
+
+function check09Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 9 && t2 !== 9) return 0;
+
+    var isT1_09 = (t1 == 9);
+    var baseT = isT1_09 ? t2 : t1;
+    var j09 = isT1_09 ? j1 : j2;
+    var i09 = isT1_09 ? i1 : i2;
+    var r09 = isT1_09 ? r1 : r2;
+    var c09 = isT1_09 ? c1 : c2;
+    var jB = isT1_09 ? j2 : j1;
+    var iB = isT1_09 ? i2 : i1;
+    var rB = isT1_09 ? r2 : r1;
+    var cB = isT1_09 ? c2 : c1;
+
+    var relRot = (r09 - rB + 4) % 4;
+
+    if (baseT == 10) {
+        if (c09 === 'G' && cB === 'B' && j09 == 6 && i09 == 0 && jB == 5 && iB == 0 && relRot == 2) return 2;
+        if (c09 === 'G' && cB === 'B' && j09 == 0 && i09 == 6 && jB == 0 && iB == 5 && relRot == 2) return 2;
+    }
+    else if (baseT == 12) {
+        if (c09 === 'G' && cB === 'B' && j09 == 0 && i09 == 7 && jB == 4 && iB == 7) return -1;
+        if (c09 === 'B' && cB === 'B' && j09 == 0 && i09 == 4 && jB == 0 && iB == 3 && relRot == 2) return -1;
+        if (c09 === 'B' && cB === 'B' && j09 == 4 && i09 == 0 && jB == 0 && iB == 6 && relRot == 3) return -1;
+
+        if (c09 === 'B' && cB === 'G') {
+            if (j09 == 7 && i09 == 3 && jB == 0 && iB == 4 && relRot == 1) return 2;
+            if (j09 == 2 && i09 == 7 && jB == 0 && iB == 4 && relRot == 0) return 2;
+            if (j09 == 7 && i09 == 2 && jB == 0 && iB == 5 && relRot == 1) return 2;
+            if (j09 == 2 && i09 == 7 && jB == 4 && iB == 9 && relRot == 1) return 2;
+            if (j09 == 2 && i09 == 6 && jB == 3 && iB == 9 && relRot == 1) return 2;
+            if (j09 == 2 && i09 == 1 && jB == 3 && iB == 0 && relRot == 2) return 2;
+            if (j09 == 1 && i09 == 2 && jB == 3 && iB == 9 && relRot == 3) return 2;
+        }
+    }
+
+    return 0;
+}
+
+function check10Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 10 && t2 !== 10) return 0;
+
+    var isT1_10 = (t1 == 10);
+    var baseT = isT1_10 ? t2 : t1;
+    var j10 = isT1_10 ? j1 : j2;
+    var i10 = isT1_10 ? i1 : i2;
+    var r10 = isT1_10 ? r1 : r2;
+    var c10 = isT1_10 ? c1 : c2;
+    var jB = isT1_10 ? j2 : j1;
+    var iB = isT1_10 ? i2 : i1;
+    var rB = isT1_10 ? r2 : r1;
+    var cB = isT1_10 ? c2 : c1;
+
+    var relRot = (r10 - rB + 4) % 4;
+
+    if (baseT == 10) {
+        if (c10 === 'B' && cB === 'B' && relRot == 2) {
+            if ((j10 == 3 && i10 == 2 && jB == 4 && iB == 1) || (j10 == 4 && i10 == 1 && jB == 3 && iB == 2)) return -1;
+            if ((j10 == 2 && i10 == 3 && jB == 1 && iB == 4) || (j10 == 1 && i10 == 4 && jB == 2 && iB == 3)) return -1;
+        }
+    }
+    else if (baseT == 11) {
+        if (c10 === 'B' && cB === 'Y' && j10 == 2 && i10 == 2 && jB == 2 && iB == 5 && relRot == 2) return 2;
+        if (c10 === 'B' && cB === 'Y' && j10 == 2 && i10 == 2 && jB == 5 && iB == 2 && relRot == 2) return 2;
+    }
+    else if (baseT == 12) {
+        if (c10 === 'G' && cB === 'B' && j10 == 0 && i10 == 9 && jB == 4 && iB == 7) return -1;
+        if (c10 === 'B' && cB === 'B' && j10 == 2 && i10 == 2 && jB == 0 && iB == 3 && relRot == 2) return -1;
+        if (c10 === 'B' && cB === 'B' && j10 == 2 && i10 == 2 && jB == 0 && iB == 6 && relRot == 3) return -1;
+        if (c10 === 'B' && cB === 'G' && j10 == 8 && i10 == 2 && jB == 4 && iB == 0) return -1;
+        if (c10 === 'B' && cB === 'G' && j10 == 2 && i10 == 9 && jB == 0 && iB == 5) return -1;
+
+        if (c10 === 'B' && cB === 'G') {
+            if (j10 == 2 && i10 == 9 && jB == 0 && iB == 4 && relRot == 0) return 2;
+            if (j10 == 9 && i10 == 2 && jB == 0 && iB == 5 && relRot == 1) return 2;
+            if (j10 == 2 && i10 == 9 && jB == 4 && iB == 9 && relRot == 1) return 2;
+            if (j10 == 2 && i10 == 8 && jB == 3 && iB == 9 && relRot == 1) return 2;
+            if (j10 == 5 && i10 == 0 && jB == 3 && iB == 0 && relRot == 2) return 2;
+            if (j10 == 0 && i10 == 5 && jB == 3 && iB == 9 && relRot == 3) return 2;
+        }
+    }
+
+    return 0;
+}
+
+function check11Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 11 && t2 !== 11) return 0;
+
+    var isT1_11 = (t1 == 11);
+    var baseT = isT1_11 ? t2 : t1;
+    var j11 = isT1_11 ? j1 : j2;
+    var i11 = isT1_11 ? i1 : i2;
+    var r11 = isT1_11 ? r1 : r2;
+    var c11 = isT1_11 ? c1 : c2;
+    var jB = isT1_11 ? j2 : j1;
+    var iB = isT1_11 ? i2 : i1;
+    var rB = isT1_11 ? r2 : r1;
+    var cB = isT1_11 ? c2 : c1;
+
+    var relRot = (r11 - rB + 4) % 4;
+
+    if (baseT == 12) {
+        if (c11 === 'B' && cB === 'G' && j11 == 2 && i11 == 11 && jB == 0 && iB == 5 && relRot == 0) return -1;
+        if (c11 === 'B' && cB === 'G' && j11 == 10 && i11 == 2 && jB == 4 && iB == 0 && relRot == 0) return -1;
+
+        if (c11 === 'B' && cB === 'B' && j11 == 3 && i11 == 3 && jB == 1 && iB == 1 && relRot == 2) return -1;
+        if (c11 === 'B' && cB === 'B' && j11 == 1 && i11 == 6 && jB == 0 && iB == 2 && relRot == 2) return -1;
+
+        if (c11 === 'B' && cB === 'B' && j11 == 3 && i11 == 3 && jB == 1 && iB == 8 && relRot == 3) return -1;
+        if (c11 === 'B' && cB === 'B' && j11 == 6 && i11 == 1 && jB == 0 && iB == 7 && relRot == 3) return -1;
+
+        if (c11 === 'B' && cB === 'G') {
+            if (j11 == 11 && i11 == 2 && jB == 0 && iB == 5 && relRot == 1) return 2;
+            if (j11 == 3 && i11 == 7 && jB == 3 && iB == 9 && relRot == 1) return 2;
+            if (j11 == 2 && i11 == 10 && jB == 3 && iB == 9 && relRot == 1) return 2;
+            if (j11 == 2 && i11 == 11 && jB == 4 && iB == 9 && relRot == 1) return 2;
+
+            if (j11 == 7 && i11 == 0 && jB == 3 && iB == 0 && relRot == 2) return 2;
+
+            if (j11 == 0 && i11 == 7 && jB == 3 && iB == 9 && relRot == 3) return 2;
+        }
+    }
+    return 0;
+}
+
+function check12Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 12 && t2 !== 12) return 0;
+
+    var isT1_12 = (t1 == 12);
+    var baseT = isT1_12 ? t2 : t1;
+    var j12 = isT1_12 ? j1 : j2;
+    var i12 = isT1_12 ? i1 : i2;
+    var r12 = isT1_12 ? r1 : r2;
+    var c12 = isT1_12 ? c1 : c2;
+    var jB = isT1_12 ? j2 : j1;
+    var iB = isT1_12 ? i2 : i1;
+    var rB = isT1_12 ? r2 : r1;
+    var cB = isT1_12 ? c2 : c1;
+
+    var relRot = (r12 - rB + 4) % 4;
+
+    if (baseT == 12) {
+        if (c12 === 'B' && cB === 'B') {
+            if (relRot == 2) {
+                if ((j12 == 1 && i12 == 1 && jB == 2 && iB == 0) || (j12 == 2 && i12 == 0 && jB == 1 && iB == 1)) return -1;
+                if ((j12 == 0 && i12 == 2 && jB == 1 && iB == 1) || (j12 == 1 && i12 == 1 && jB == 0 && iB == 2)) return -1;
+                if ((j12 == 0 && i12 == 2 && jB == 0 && iB == 3) || (j12 == 0 && i12 == 3 && jB == 0 && iB == 2)) return -1;
+
+                if ((j12 == 0 && i12 == 7 && jB == 0 && iB == 6) || (j12 == 0 && i12 == 6 && jB == 0 && iB == 7)) return -1;
+                if ((j12 == 0 && i12 == 7 && jB == 1 && iB == 8) || (j12 == 1 && i12 == 8 && jB == 0 && iB == 7)) return -1;
+                if ((j12 == 1 && i12 == 8 && jB == 2 && iB == 9) || (j12 == 2 && i12 == 9 && jB == 1 && iB == 8)) return -1;
+            }
+            if (relRot == 1) {
+                if (j12 == 1 && i12 == 8 && jB == 2 && iB == 0) return -1;
+                if (j12 == 1 && i12 == 8 && jB == 1 && iB == 1) return -1;
+                if (j12 == 1 && i12 == 8 && jB == 0 && iB == 2) return -1;
+
+                if (jB == 1 && iB == 1 && j12 == 2 && i12 == 9) return -1;
+                if (jB == 1 && iB == 1 && j12 == 1 && i12 == 8) return -1;
+                if (jB == 1 && iB == 1 && j12 == 0 && i12 == 7) return -1;
+            }
+            if (relRot == 3) {
+                if (jB == 1 && iB == 8 && j12 == 2 && i12 == 0) return -1;
+                if (jB == 1 && iB == 8 && j12 == 1 && i12 == 1) return -1;
+                if (jB == 1 && iB == 8 && j12 == 0 && i12 == 2) return -1;
+
+                if (j12 == 1 && i12 == 1 && jB == 2 && iB == 9) return -1;
+                if (j12 == 1 && i12 == 1 && jB == 1 && iB == 8) return -1;
+                if (j12 == 1 && i12 == 1 && jB == 0 && iB == 7) return -1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+function check16Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 16 && t2 !== 16) return 0;
+
+    var isT1_16 = (t1 == 16);
+    var baseT = isT1_16 ? t2 : t1;
+    var j16 = isT1_16 ? j1 : j2;
+    var i16 = isT1_16 ? i1 : i2;
+    var r16 = isT1_16 ? r1 : r2;
+    var c16 = isT1_16 ? c1 : c2;
+    var jB = isT1_16 ? j2 : j1;
+    var iB = isT1_16 ? i2 : i1;
+    var rB = isT1_16 ? r2 : r1;
+    var cB = isT1_16 ? c2 : c1;
+
+    var relRot = (r16 - rB + 4) % 4;
+
+    // Relação 16 com 16
+    if (baseT == 16) {
+        if (c16 === 'B' && cB === 'B') {
+            if (relRot == 2) {
+                if ((j16 == 1 && i16 == 0 && jB == 0 && iB == 1) || (j16 == 0 && i16 == 1 && jB == 1 && iB == 0)) return 1;
+                if (j16 == 0 && i16 == 1 && jB == 0 && iB == 1) return 1;
+                if (j16 == 1 && i16 == 0 && jB == 1 && iB == 0) return 1;
+            }
+            return -1;
+        }
+    }
+
+    // Relação 16 com 13
+    if (baseT == 13) {
+        if (relRot == 0) {
+            if (j16 == 0 && i16 == 1 && jB == 2 && iB == 3) return -1;
+            if (j16 == 0 && i16 == 1 && jB == 2 && iB == 0) return -1;
+            if (j16 == 0 && i16 == 1 && jB == 2 && iB == 5) return -1;
+
+            if (j16 == 1 && i16 == 0 && jB == 0 && iB == 5) return -1;
+            if (j16 == 1 && i16 == 0 && jB == 1 && iB == 5) return -1;
+            if (j16 == 1 && i16 == 0 && jB == 2 && iB == 5) return -1;
+        }
+        else if (relRot == 1) {
+            if (j16 == 0 && i16 == 1 && jB == 1 && iB == 0) return -1;
+            if (j16 == 0 && i16 == 1 && jB == 0 && iB == 0) return -1;
+            if (j16 == 1 && i16 == 0 && jB == 2 && iB == 2) return -1;
+        }
+        else if (relRot == 2) {
+            if (j16 == 1 && i16 == 0 && jB == 1 && iB == 0) return -1;
+            if (j16 == 0 && i16 == 1 && jB == 0 && iB == 1) return -1;
+            if (j16 == 0 && i16 == 1 && jB == 0 && iB == 4) return -1;
+            if (j16 == 0 && i16 == 1 && jB == 0 && iB == 5) return -1;
+        }
+        else if (relRot == 3) {
+            if (j16 == 0 && i16 == 1 && jB == 1 && iB == 5) return -1;
+            if (j16 == 1 && i16 == 0 && jB == 0 && iB == 4) return -1;
+            if (j16 == 1 && i16 == 0 && jB == 0 && iB == 1) return -1;
+            if (j16 == 1 && i16 == 0 && jB == 0 && iB == 0) return -1;
+        }
+    }
+
+    // Relação 16 com 07
+    if (baseT == 7) {
+        if (relRot == 0) {
+            if (j16 == 1 && i16 == 0 && jB == 0 && iB == 3) return -1;
+            if (j16 == 0 && i16 == 1 && jB == 3 && iB == 0) return -1;
+        }
+        else if (relRot == 1) {
+            if (j16 == 1 && i16 == 0 && (jB == 3 && iB == 2 || jB == 2 && iB == 3)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 2 && iB == 0 || jB == 1 && iB == 0 || jB == 0 && iB == 1)) return -1;
+        }
+        else if (relRot == 2) {
+            if (j16 == 0 && i16 == 1 && jB == 0 && iB == 2) return -1;
+            if (j16 == 1 && i16 == 0 && jB == 2 && iB == 0) return -1;
+        }
+        else if (relRot == 3) {
+            if (j16 == 0 && i16 == 1 && (jB == 3 && iB == 2 || jB == 2 && iB == 3)) return -1;
+            if (j16 == 1 && i16 == 0 && (jB == 0 && iB == 2 || jB == 1 && iB == 0 || jB == 0 && iB == 1)) return -1;
+        }
+    }
+
+    // Relação 16 com 08
+    if (baseT == 8) {
+        if (relRot == 0) {
+            if (j16 == 1 && i16 == 0 && jB == 4 && iB == 2) return -1;
+            if (j16 == 0 && i16 == 1 && jB == 2 && iB == 4) return -1;
+            if (j16 == 0 && i16 == 1 && jB == 5 && iB == 0) return -1;
+            if (j16 == 1 && i16 == 0 && jB == 0 && iB == 5) return -1;
+        }
+        else if (relRot == 1) {
+            if (j16 == 0 && i16 == 1 && (jB == 4 && iB == 0 || jB == 3 && iB == 0 || jB == 2 && iB == 0 || jB == 1 && iB == 1 || jB == 0 && iB == 2)) return -1;
+            if (j16 == 1 && i16 == 0 && (jB == 3 && iB == 3 || jB == 2 && iB == 4 || jB == 2 && iB == 5 || jB == 5 && iB == 2)) return -1;
+        }
+        else if (relRot == 2) {
+            if (j16 == 1 && i16 == 0 && (jB == 4 && iB == 0 || jB == 3 && iB == 0 || jB == 2 && iB == 0)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 0 && iB == 3 || jB == 0 && iB == 4)) return -1;
+        }
+        else if (relRot == 3) {
+            if (j16 == 1 && i16 == 0 && (jB == 2 && iB == 0 || jB == 1 && iB == 1 || jB == 0 && iB == 2 || jB == 0 && iB == 3 || jB == 0 && iB == 4)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 5 && iB == 2 || jB == 4 && iB == 2 || jB == 3 && iB == 3 || jB == 2 && iB == 5)) return -1;
+        }
+    }
+
+
+    // Relação 16 com 09
+    if (baseT == 9) {
+        if (relRot == 0) {
+            if (j16 == 1 && i16 == 0 && (jB == 6 && iB == 2 || jB == 5 && iB == 2 || jB == 0 && iB == 7)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 7 && iB == 0 || jB == 2 && iB == 6 || jB == 2 && iB == 5)) return -1;
+        }
+        else if (relRot == 1) {
+            if (j16 == 1 && i16 == 0 && (jB == 7 && iB == 2 || jB == 4 && iB == 3 || jB == 3 && iB == 4 || jB == 2 && iB == 5 || jB == 2 && iB == 6 || jB == 2 && iB == 7)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 5 && iB == 0 || jB == 4 && iB == 0 || jB == 3 && iB == 1 || jB == 2 && iB == 1 || jB == 1 && iB == 2 || jB == 0 && iB == 4)) return -1;
+        }
+        else if (relRot == 2) {
+            if (j16 == 1 && i16 == 0 && (jB == 5 && iB == 0 || jB == 3 && iB == 1)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 0 && iB == 5 || jB == 1 && iB == 3)) return -1;
+        }
+        else if (relRot == 3) {
+            if (j16 == 0 && i16 == 1 && (jB == 7 && iB == 2 || jB == 6 && iB == 2 || jB == 5 && iB == 2 || jB == 4 && iB == 3 || jB == 3 && iB == 4 || jB == 2 && iB == 7)) return -1;
+            if (j16 == 1 && i16 == 0 && (jB == 4 && iB == 0 || jB == 2 && iB == 1 || jB == 1 && iB == 2 || jB == 1 && iB == 3 || jB == 0 && iB == 4 || jB == 0 && iB == 5)) return -1;
+        }
+    }
+
+    // Relação 16 com 10
+    if (baseT == 10) {
+        if (relRot == 0) {
+            if (j16 == 1 && i16 == 0 && (jB == 8 && iB == 2 || jB == 7 && iB == 2 || jB == 6 && iB == 2 || jB == 5 && iB == 3 || jB == 4 && iB == 4 || jB == 0 && iB == 9)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 2 && iB == 8 || jB == 2 && iB == 7 || jB == 2 && iB == 6 || jB == 3 && iB == 5 || jB == 4 && iB == 4 || jB == 9 && iB == 0)) return -1;
+        }
+        else if (relRot == 1) {
+            if (j16 == 0 && i16 == 1 && (jB == 7 && iB == 0 || jB == 6 && iB == 0 || jB == 5 && iB == 0 || jB == 4 && iB == 1 || jB == 3 && iB == 2 || jB == 2 && iB == 2 || jB == 1 && iB == 4 || jB == 0 && iB == 5)) return -1;
+            if (j16 == 1 && i16 == 0 && (jB == 9 && iB == 2 || jB == 5 && iB == 3 || jB == 4 && iB == 4 || jB == 3 && iB == 5 || jB == 2 && iB == 6 || jB == 2 && iB == 7 || jB == 2 && iB == 8 || jB == 2 && iB == 9 || jB == 3 && iB == 6 || jB == 6 && iB == 3)) return -1;
+        }
+        else if (relRot == 2) {
+            if (j16 == 1 && i16 == 0 && (jB == 6 && iB == 0 || jB == 7 && iB == 0 || jB == 3 && iB == 2)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 0 && iB == 6 || jB == 0 && iB == 7 || jB == 2 && iB == 3)) return -1;
+        }
+        else if (relRot == 3) {
+            if (j16 == 0 && i16 == 1 && (jB == 9 && iB == 2 || jB == 8 && iB == 2 || jB == 7 && iB == 2 || jB == 6 && iB == 2 || jB == 5 && iB == 3 || jB == 4 && iB == 4 || jB == 3 && iB == 5 || jB == 2 && iB == 9 || jB == 3 && iB == 6 || jB == 6 && iB == 3)) return -1;
+            if (j16 == 1 && i16 == 0 && (jB == 0 && iB == 7 || jB == 0 && iB == 6 || jB == 0 && iB == 5 || jB == 1 && iB == 4 || jB == 2 && iB == 3 || jB == 2 && iB == 2 || jB == 4 && iB == 1 || jB == 5 && iB == 0)) return -1;
+        }
+    }
+
+    // Relação 16 com 11
+    if (baseT == 11) {
+        if (relRot == 0) {
+            if (j16 == 1 && i16 == 0 && (jB == 10 && iB == 2 || jB == 9 && iB == 2 || jB == 8 && iB == 2 || jB == 6 && iB == 3)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 2 && iB == 10 || jB == 2 && iB == 9 || jB == 2 && iB == 8 || jB == 3 && iB == 6)) return -1;
+        }
+        else if (relRot == 1) {
+            if (j16 == 0 && i16 == 1 && (jB == 9 && iB == 0 || jB == 8 && iB == 0 || jB == 7 && iB == 0 || jB == 6 && iB == 1 || jB == 5 && iB == 1 || jB == 4 && iB == 2 || jB == 3 && iB == 3 || jB == 2 && iB == 4 || jB == 1 && iB == 5 || jB == 0 && iB == 7)) return -1;
+            if (j16 == 1 && i16 == 0 && (jB == 11 && iB == 2 || jB == 7 && iB == 3 || jB == 5 && iB == 4 || jB == 4 && iB == 5 || jB == 3 && iB == 6 || jB == 3 && iB == 7 || jB == 2 && iB == 8 || jB == 2 && iB == 9 || jB == 2 && iB == 10 || jB == 2 && iB == 11)) return -1;
+        }
+        else if (relRot == 2) {
+            if (j16 == 1 && i16 == 0 && (jB == 9 && iB == 0 || jB == 8 && iB == 0 || jB == 6 && iB == 1)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 0 && iB == 9 || jB == 0 && iB == 8 || jB == 1 && iB == 6)) return -1;
+        }
+        else if (relRot == 3) {
+            if (j16 == 0 && i16 == 1 && (jB == 11 && iB == 2 || jB == 10 && iB == 2 || jB == 9 && iB == 2 || jB == 8 && iB == 2 || jB == 7 && iB == 3 || jB == 6 && iB == 3 || jB == 5 && iB == 4 || jB == 4 && iB == 5 || jB == 3 && iB == 7 || jB == 2 && iB == 11)) return -1;
+            if (j16 == 1 && i16 == 0 && (jB == 0 && iB == 9 || jB == 0 && iB == 8 || jB == 0 && iB == 7 || jB == 1 && iB == 6 || jB == 1 && iB == 5 || jB == 2 && iB == 4 || jB == 3 && iB == 3 || jB == 4 && iB == 2 || jB == 5 && iB == 1 || jB == 7 && iB == 0)) return -1;
+        }
+    }
+
+    // Relação 16 com 12
+    if (baseT == 12) {
+        if (relRot == 0) {
+            if (j16 == 1 && i16 == 0 && (jB == 3 && iB == 2 || jB == 2 && iB == 9 || jB == 1 && iB == 8 || jB == 0 && iB == 7 || jB == 4 && iB == 9 || jB == 3 && iB == 9)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 2 && iB == 5 || jB == 2 && iB == 6 || jB == 4 && iB == 7 || jB == 0 && iB == 7 || jB == 4 && iB == 0 || jB == 4 && iB == 9)) return -1;
+        }
+        else if (relRot == 1) {
+            if (j16 == 0 && i16 == 1 && (jB == 3 && iB == 7 || jB == 2 && iB == 0 || jB == 1 && iB == 1 || jB == 0 && iB == 2 || jB == 3 && iB == 0 || jB == 4 && iB == 0)) return -1;
+            if (j16 == 1 && i16 == 0 && (jB == 4 && iB == 2 || jB == 2 && iB == 3 || jB == 2 && iB == 4)) return -1;
+        }
+        else if (relRot == 2) {
+            if (j16 == 1 && i16 == 0 && (jB == 3 && iB == 7 || jB == 4 && iB == 7 || jB == 1 && iB == 1 || jB == 0 && iB == 2)) return -1;
+            if (j16 == 0 && i16 == 1 && (jB == 0 && iB == 3 || jB == 0 && iB == 6 || jB == 0 && iB == 7 || jB == 1 && iB == 8 || jB == 2 && iB == 9)) return -1;
+        }
+        else if (relRot == 3) {
+            if (j16 == 0 && i16 == 1 && (jB == 4 && iB == 2 || jB == 3 && iB == 2 || jB == 1 && iB == 8 || jB == 0 && iB == 7)) return -1;
+            if (j16 == 1 && i16 == 0 && (jB == 0 && iB == 6 || jB == 0 && iB == 3 || jB == 0 && iB == 2 || jB == 1 && iB == 1 || jB == 2 && iB == 0)) return -1;
+        }
+    }
+
+    return 0;
+}
+
+function check17Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 17 && t2 !== 17) return 0;
+
+    var isT1_17 = (t1 == 17);
+    var otherT = isT1_17 ? t2 : t1;
+
+    var m17_j = isT1_17 ? j1 : j2;
+    var m17_i = isT1_17 ? i1 : i2;
+    var m17_r = isT1_17 ? r1 : r2;
+
+    var other_j = isT1_17 ? j2 : j1;
+    var other_i = isT1_17 ? i2 : i1;
+    var other_r = isT1_17 ? r2 : r1;
+
+    var relRot = (m17_r - other_r + 4) % 4;
+
+    // --- REGRA E [17 \ 17] ---
+    if (otherT == 17) {
+        if (relRot == 0) {
+            if (j1 == 1 && i1 == 0 && j2 == 1 && i2 == 2) return 1;
+            if (j2 == 1 && i2 == 0 && j1 == 1 && i1 == 2) return 1;
+        }
+        if (relRot == 2) {
+            if (j1 == 0 && i1 == 0 && j2 == 0 && i2 == 0) return -1;
+        }
+        if (relRot == 1 || relRot == 3) {
+            if (j1 == 0 && i1 == 2 && j2 == 0 && i2 == 0) return -1;
+            if (j1 == 1 && i1 == 2 && j2 == 0 && i2 == 2) return -1;
+            if (j2 == 0 && i2 == 0 && j1 == 0 && i1 == 2) return -1;
+            if (j2 == 0 && i2 == 2 && j1 == 1 && i1 == 2) return -1;
+        }
+    }
+
+    // --- REGRA E [17 \ 06] (CORRIGIDA) ---
+    if (otherT == 6) {
+        // Apenas aplica a exceção e o bloqueio se as cores em contacto forem ambas Azuis
+        if (c1 === 'B' && c2 === 'B') {
+            if (relRot == 0 && m17_j == 1 && m17_i == 2 && other_j == 0 && other_i == 0) return 1;
+            return -1;
+        }
+    }
+
+    // --- REGRA E [17 \ 16] ---
+    if (otherT == 16) {
+        if (c1 === 'B' && c2 === 'B') {
+            if (relRot == 0 && m17_j == 1 && m17_i == 2 && other_j == 1 && other_i == 0) return 1;
+            return -1;
+        }
+    }
+
+    // --- REGRA E [17 \ 07] ---
+    if (otherT == 7) {
+        if (relRot == 0) {
+            if (m17_j == 0 && m17_i == 0 && other_j == 2 && other_i == 3) return -1;
+            if (m17_j == 0 && m17_i == 2 && (other_j == 2 && other_i == 0 || other_j == 3 && other_i == 0)) return -1;
+        } else if (relRot == 2) {
+            if (m17_j == 0 && m17_i == 0 && other_j == 0 && other_i == 1) return -1;
+        } else if (relRot == 1 || relRot == 3) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 0 && other_i == 2 || other_j == 1 && other_i == 0 || other_j == 3 && other_i == 2)) return -1;
+        }
+    }
+
+    // --- REGRA E [17 \ 08] ---
+    if (otherT == 8) {
+        if (relRot == 0) {
+            if (m17_j == 0 && m17_i == 0 && other_j == 2 && other_i == 5) return -1;
+            if (m17_j == 0 && m17_i == 2 && (other_j == 5 && other_i == 0 || other_j == 4 && other_i == 0)) return -1;
+        } else if (relRot == 1) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 0 && (other_i == 3 || other_i == 4))) return -1;
+        } else if (relRot == 3) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 2 && other_i == 4 || other_j == 5 && other_i == 2)) return -1;
+        }
+    }
+
+    // --- REGRA E [17 \ 09] ---
+    if (otherT == 9) {
+        if (relRot == 0) {
+            if (m17_j == 0 && m17_i == 0 && (other_j == 4 && other_i == 3 || other_j == 3 && other_i == 4 || other_j == 2 && other_i == 7)) return -1;
+            if (m17_j == 0 && m17_i == 2 && (other_j == 7 && other_i == 0 || other_j == 6 && other_i == 0)) return -1;
+            if (m17_j == 1 && m17_i == 0 && other_j == 7 && other_i == 2) return 1;
+        } else if (relRot == 1) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 0 && other_i == 5 || other_j == 1 && other_i == 3 || other_j == 4 && other_i == 0)) return -1;
+        } else if (relRot == 2) {
+            if (m17_j == 0 && m17_i == 0 && other_j == 0 && other_i == 4) return -1;
+        } else if (relRot == 3) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 2 && other_i == 5 || other_j == 3 && other_i == 4 || other_j == 4 && other_i == 3 || other_j == 7 && other_i == 2)) return -1;
+        }
+    }
+
+    // --- REGRA E [17 \ 10] ---
+    if (otherT == 10) {
+        if (relRot == 0) {
+            if (m17_j == 0 && m17_i == 0 && (other_j == 5 && other_i == 3 || other_j == 4 && other_i == 4 || other_j == 3 && other_i == 5 || other_j == 2 && other_i == 9)) return -1;
+            if (m17_j == 0 && m17_i == 2 && (other_j == 8 && other_i == 0 || other_j == 9 && other_i == 0 || other_j == 7 && other_i == 0)) return -1;
+            if (m17_j == 1 && m17_i == 0 && other_j == 9 && other_i == 2) return 1;
+        } else if (relRot == 1) {
+            if (m17_j == 1 && m17_i == 0 && (other_j == 6 && other_i == 3 || other_j == 3 && other_i == 6)) return -1;
+            if (m17_j == 0 && m17_i == 2 && (other_j == 0 && other_i == 7 || other_j == 0 && other_i == 6 || other_j == 1 && other_i == 4 || other_j == 2 && other_i == 3 || other_j == 4 && other_i == 1)) return -1;
+        } else if (relRot == 2) {
+            if (m17_j == 1 && m17_i == 1 && (other_j == 6 && other_i == 3 || other_j == 3 && other_i == 6)) return -1;
+            if (m17_j == 0 && m17_i == 0 && (other_j == 4 && other_i == 1 || other_j == 1 && other_i == 4)) return -1;
+        } else if (relRot == 3) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 2 && other_i == 6 || other_j == 2 && other_i == 7 || other_j == 3 && other_i == 5 || other_j == 4 && other_i == 4 || other_j == 5 && other_i == 3 || other_j == 9 && other_i == 2)) return -1;
+        }
+    }
+
+    // --- REGRA E [17 \ 11] ---
+    if (otherT == 11) {
+        if (relRot == 0) {
+            if (m17_j == 0 && m17_i == 0 && (other_j == 5 && other_i == 4 || other_j == 4 && other_i == 5 || other_j == 3 && other_i == 7 || other_j == 2 && other_i == 11)) return -1;
+            if (m17_j == 1 && m17_i == 0 && other_j == 11 && other_i == 2) return 1;
+        } else if (relRot == 1) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 7 && other_i == 0 || other_j == 6 && other_i == 1 || other_j == 4 && other_i == 2 || other_j == 3 && other_i == 3 || other_j == 2 && other_i == 4 || other_j == 5 && other_i == 1 || other_j == 1 && other_i == 6 || other_j == 0 && other_i == 8 || other_j == 0 && other_i == 9)) return -1;
+        } else if (relRot == 2) {
+            if (m17_j == 0 && m17_i == 0 && (other_j == 4 && other_i == 2 || other_j == 3 && other_i == 3 || other_j == 2 && other_i == 4 || other_j == 1 && other_i == 5 || other_j == 0 && other_i == 7)) return -1;
+        } else if (relRot == 3) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 11 && other_i == 2 || other_j == 7 && other_i == 3 || other_j == 5 && other_i == 4 || other_j == 4 && other_i == 5 || other_j == 3 && other_i == 6 || other_j == 2 && other_i == 8)) return -1;
+        }
+    }
+
+    // --- REGRA E [17 \ 12] ---
+    if (otherT == 12) {
+        if (relRot == 0) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 3 && other_i == 7 || other_j == 3 && other_i == 0 || other_j == 4 && other_i == 0)) return -1;
+            if (m17_j == 0 && m17_i == 0 && other_j == 4 && other_i == 9) return -1;
+        } else if (relRot == 1) {
+            if (m17_j == 0 && m17_i == 0 && other_j == 4 && other_i == 7) return -1;
+            if (m17_j == 0 && m17_i == 2 && (other_j == 0 && other_i == 3 || other_j == 0 && other_i == 2 || other_j == 1 && other_i == 1 || other_j == 2 && other_i == 0)) return -1;
+        } else if (relRot == 2) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 2 && other_i == 9 || other_j == 1 && other_i == 8 || other_j == 0 && other_i == 7)) return -1;
+            if (m17_j == 0 && m17_i == 0 && (other_j == 2 && other_i == 0 || other_j == 1 && other_i == 1 || other_j == 0 && other_i == 2)) return -1;
+        } else if (relRot == 3) {
+            if (m17_j == 0 && m17_i == 2 && (other_j == 4 && other_i == 2 || other_j == 2 && other_i == 3)) return -1;
+            if (m17_j == 0 && m17_i == 0 && (other_j == 2 && other_i == 9 || other_j == 1 && other_i == 8 || other_j == 0 && other_i == 7)) return -1;
+        }
+    }
+
+    // --- REGRA E [17 \ 13] ---
+    if (otherT == 13) {
+        if (relRot == 1) {
+            if (m17_j == 0 && m17_i == 2 && other_j == 0 && other_i == 1) return -1;
+        } else if (relRot == 2) {
+            if (m17_j == 0 && m17_i == 2 && other_j == 1 && other_i == 5) return -1;
+        } else if (relRot == 3) {
+            if (m17_j == 0 && m17_i == 2 && other_j == 2 && other_i == 2) return -1;
+        }
+    }
+
+    return 0;
+}
+
+function check18Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 18 && t2 !== 18) return 0;
+
+    var isT1_18 = (t1 == 18);
+    var otherT = isT1_18 ? t2 : t1;
+
+    // Normalização das coordenadas para leitura direta
+    var m18_j = isT1_18 ? j1 : j2;
+    var m18_i = isT1_18 ? i1 : i2;
+    var m18_r = isT1_18 ? r1 : r2;
+
+    var other_j = isT1_18 ? j2 : j1;
+    var other_i = isT1_18 ? i2 : i1;
+    var other_r = isT1_18 ? r2 : r1;
+
+    // Diferença de rotação entre o Módulo 18 e a outra peça
+    var relRot = (m18_r - other_r + 4) % 4;
+
+    // --- NOVA REGRA E [18 \ 18] (Auto-colisão) ---
+    if (otherT == 18) {
+        if (relRot == 0) {
+            // Permissão especial (Azul com Amarelo)
+            if (j1 == 1 && i1 == 0 && j2 == 1 && i2 == 2) return 1;
+            if (j2 == 1 && i2 == 0 && j1 == 1 && i1 == 2) return 1; // Espelho da ação
+        }
+        else if (relRot == 1) {
+            // Bloqueios a 90º
+            if (j1 == 0 && i1 == 0 && j2 == 1 && i2 == 0) return -1;
+            if (j1 == 0 && i1 == 2 && j2 == 0 && i2 == 0) return -1;
+        }
+        else if (relRot == 2) {
+            // Bloqueio a 180º
+            if (j1 == 0 && i1 == 2 && j2 == 0 && i2 == 2) return -1;
+        }
+        else if (relRot == 3) {
+            // Bloqueios a 270º (Espelhos exatos dos 90º)
+            if (j1 == 0 && i1 == 0 && j2 == 0 && i2 == 2) return -1;
+            if (j1 == 1 && i1 == 0 && j2 == 0 && i2 == 0) return -1;
+        }
+    }
+
+    // --- REGRA E [18 \ 06] ---
+    if (otherT == 6) {
+        if (relRot == 1) {
+            if (m18_j == 0 && m18_i == 2 && other_j == 0 && other_i == 0) return -1;
+        }
+        if (relRot == 2) {
+            if (m18_j == 0 && m18_i == 0 && other_j == 0 && other_i == 0) return -1;
+        }
+    }
+
+    // --- REGRA E [18 \ 07] ---
+    if (otherT == 7) {
+        if (relRot == 0) {
+            if (m18_j == 0 && m18_i == 0 && other_j == 2 && other_i == 3) return -1;
+        }
+        else if (relRot == 1) {
+            if (m18_j == 0 && m18_i == 2 && other_j == 1 && other_i == 0) return -1;
+        }
+        else if (relRot == 2) {
+            if (m18_j == 0 && m18_i == 0 && (other_j == 2 && other_i == 0 || other_j == 0 && other_i == 1)) return -1;
+        }
+        else if (relRot == 3) {
+            if (m18_j == 0 && m18_i == 2 && other_j == 3 && other_i == 2) return -1;
+        }
+    }
+
+    // --- REGRA E [18 \ 08] ---
+    if (otherT == 8) {
+        if (relRot == 0) {
+            if (m18_j == 0 && m18_i == 0 && (other_j == 4 && other_i == 2 || other_j == 2 && other_i == 5)) return -1;
+        }
+        else if (relRot == 2) {
+            if (m18_j == 0 && m18_i == 0 && (other_j == 4 && other_i == 0 || other_j == 3 && other_i == 0)) return -1;
+        }
+        else if (relRot == 3) {
+            if (m18_j == 0 && m18_i == 2 && other_j == 5 && other_i == 2) return -1;
+        }
+    }
+
+    // --- REGRA E [18 \ 09] ---
+    if (otherT == 9) {
+        if (relRot == 0) {
+            if (m18_j == 0 && m18_i == 0 && (other_j == 5 && other_i == 2 || other_j == 4 && other_i == 3 || other_j == 3 && other_i == 4 || other_j == 2 && other_i == 7)) return -1;
+        }
+        else if (relRot == 1) {
+            if (m18_j == 0 && m18_i == 2 && other_j == 4 && other_i == 0) return -1;
+        }
+        else if (relRot == 2) {
+            if (m18_j == 0 && m18_i == 0 && (other_j == 5 && other_i == 0 || other_j == 3 && other_i == 1 || other_j == 0 && other_i == 4)) return -1;
+        }
+        else if (relRot == 3) {
+            if (m18_j == 0 && m18_i == 2 && (other_j == 7 && other_i == 2 || other_j == 4 && other_i == 3 || other_j == 3 && other_i == 4)) return -1;
+            if (m18_j == 1 && m18_i == 0 && other_j == 0 && other_i == 6) return 1;
+            if (m18_j == 1 && m18_i == 2 && other_j == 2 && other_i == 7) return 1;
+        }
+    }
+
+    // --- REGRA E [18 \ 10] ---
+    if (otherT == 10) {
+        if (relRot == 0) {
+            if (m18_j == 0 && m18_i == 0 && (other_j == 7 && other_i == 2 || other_j == 6 && other_i == 2 || other_j == 5 && other_i == 3 || other_j == 4 && other_i == 4 || other_j == 3 && other_i == 5 || other_j == 2 && other_i == 9)) return -1;
+        }
+        else if (relRot == 1) {
+            if (m18_j == 1 && m18_i == 0 && (other_j == 5 && other_i == 3 || other_j == 2 && other_i == 6)) return -1;
+            if (m18_j == 0 && m18_i == 2 && (other_j == 4 && other_i == 1 || other_j == 1 && other_i == 4)) return -1;
+        }
+        else if (relRot == 2) {
+            if (m18_j == 1 && m18_i == 2 && (other_j == 6 && other_i == 3 || other_j == 3 && other_i == 6)) return -1;
+            if (m18_j == 0 && m18_i == 0 && (other_j == 7 && other_i == 0 || other_j == 6 && other_i == 0 || other_j == 4 && other_i == 1 || other_j == 3 && other_i == 2 || other_j == 1 && other_i == 4)) return -1;
+        }
+        else if (relRot == 3) {
+            if (m18_j == 0 && m18_i == 2 && (other_j == 9 && other_i == 2 || other_j == 5 && other_i == 3 || other_j == 4 && other_i == 4 || other_j == 3 && other_i == 5)) return -1;
+            if (m18_j == 1 && m18_i == 2 && other_j == 2 && other_i == 9) return 1;
+        }
+    }
+
+    // --- REGRA E [18 \ 11] ---
+    if (otherT == 11) {
+        if (relRot == 0) {
+            if (m18_j == 0 && m18_i == 0 && (other_j == 8 && other_i == 2 || other_j == 6 && other_i == 3 || other_j == 5 && other_i == 4 || other_j == 4 && other_i == 5 || other_j == 3 && other_i == 7 || other_j == 2 && other_i == 11)) return -1;
+        }
+        else if (relRot == 1) {
+            if (m18_j == 0 && m18_i == 2 && (other_j == 5 && other_i == 1 || other_j == 4 && other_i == 2 || other_j == 3 && other_i == 3 || other_j == 2 && other_i == 4)) return -1;
+        }
+        else if (relRot == 2) {
+            if (m18_j == 0 && m18_i == 0 && (other_j == 9 && other_i == 0 || other_j == 8 && other_i == 0 || other_j == 6 && other_i == 1 || other_j == 4 && other_i == 2 || other_j == 3 && other_i == 3 || other_j == 2 && other_i == 4 || other_j == 1 && other_i == 5 || other_j == 0 && other_i == 7)) return -1;
+        }
+        else if (relRot == 3) {
+            if (m18_j == 0 && m18_i == 2 && (other_j == 11 && other_i == 2 || other_j == 7 && other_i == 3 || other_j == 5 && other_i == 4 || other_j == 4 && other_i == 5)) return -1;
+            if (m18_j == 1 && m18_i == 2 && other_j == 2 && other_i == 11) return 1;
+        }
+    }
+
+    // --- REGRA E [18 \ 12] ---
+    if (otherT == 12) {
+        if (relRot == 0) {
+            if (m18_j == 0 && m18_i == 0 && (other_j == 3 && other_i == 2 || other_j == 4 && other_i == 9 || other_j == 3 && other_i == 9)) return -1;
+        }
+        else if (relRot == 1) {
+            if (m18_j == 0 && m18_i == 0 && (other_j == 2 && other_i == 6 || other_j == 4 && other_i == 7)) return -1;
+            if (m18_j == 0 && m18_i == 2 && (other_j == 2 && other_i == 0 || other_j == 1 && other_i == 1 || other_j == 0 && other_i == 2)) return -1;
+        }
+        else if (relRot == 2) {
+            if (m18_j == 0 && m18_i == 2 && (other_j == 2 && other_i == 9 || other_j == 1 && other_i == 8 || other_j == 0 && other_i == 7)) return -1;
+            if (m18_j == 0 && m18_i == 0 && (other_j == 2 && other_i == 0 || other_j == 1 && other_i == 1 || other_j == 0 && other_i == 2)) return -1;
+        }
+        else if (relRot == 3) {
+            if (m18_j == 0 && m18_i == 2 && other_j == 4 && other_i == 2) return -1;
+            if (m18_j == 0 && m18_i == 0 && (other_j == 2 && other_i == 9 || other_j == 1 && other_i == 8 || other_j == 0 && other_i == 7)) return -1;
+        }
+    }
+
+    // --- REGRA E [18 \ 13] ---
+    if (otherT == 13) {
+        if (relRot == 0) {
+            if ((m18_j == 1 && m18_i == 0 || m18_j == 0 && m18_i == 0) && other_j == 2 && other_i == 5) return -1;
+        }
+        else if (relRot == 1) {
+            if (m18_j == 0 && m18_i == 0 && other_j == 2 && other_i == 3) return -1;
+        }
+        else if (relRot == 2) {
+            if (m18_j == 0 && m18_i == 0 && other_j == 1 && other_i == 0) return -1;
+        }
+        else if (relRot == 3) {
+            if (m18_j == 0 && m18_i == 0 && other_j == 0 && other_i == 4) return -1;
+        }
+    }
+
+    // --- REGRA E [18 \ 16] ---
+    if (otherT == 16) {
+        if (c1 === 'B' && c2 === 'B') {
+            if (relRot == 3 && m18_j == 1 && m18_i == 0 && (other_j == 1 && other_i == 0 || other_j == 0 && other_i == 1)) {
+                return 1;
+            }
+            return -1;
+        }
+    }
+
+    // --- REGRA E [18 \ 17] ---
+    if (otherT == 17) {
+        if (relRot == 1) {
+            if (m18_j == 0 && m18_i == 2 && other_j == 0 && other_i == 0) return -1;
+        }
+        else if (relRot == 2) {
+            if (m18_j == 0 && m18_i == 0 && other_j == 0 && other_i == 0) return -1;
+            if (m18_j == 0 && m18_i == 2 && other_j == 0 && other_i == 2) return -1;
+        }
+        else if (relRot == 3) {
+            if (m18_j == 1 && m18_i == 0 && other_j == 0 && other_i == 0) return -1;
+            if (m18_j == 0 && m18_i == 2 && other_j == 1 && other_i == 2) return -1;
+            if (m18_j == 0 && m18_i == 0 && other_j == 0 && other_i == 2) return -1;
+        }
+    }
+
+    return 0;
+}
+
+function check19Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 19 && t2 !== 19) return 0;
+
+    var isT1_19 = (t1 == 19);
+    var otherT = isT1_19 ? t2 : t1;
+
+    var m19_j = isT1_19 ? j1 : j2;
+    var m19_i = isT1_19 ? i1 : i2;
+    var m19_r = isT1_19 ? r1 : r2;
+    var m19_c = isT1_19 ? c1 : c2;
+
+    var other_j = isT1_19 ? j2 : j1;
+    var other_i = isT1_19 ? i2 : i1;
+    var other_r = isT1_19 ? r2 : r1;
+    var other_c = isT1_19 ? c2 : c1;
+
+    var relRot = (m19_r - other_r + 4) % 4;
+
+    // --- REGRAS 07 a 11 ---
+    if (otherT == 7) {
+        if (relRot == 0) { if (m19_j == 1 && m19_i == 2 && other_j == 3 && other_i == 0) return -1; }
+        else if (relRot == 2) { if (m19_j == 1 && m19_i == 0 && other_j == 1 && other_i == 0) return 1; }
+    }
+    if (otherT == 8) {
+        if (relRot == 0) { if (m19_j == 0 && m19_i == 2 && (other_j == 4 && other_i == 0 || other_j == 3 && other_i == 0)) return -1; }
+        else if (relRot == 2) {
+            if (m19_j == 0 && m19_i == 2 && other_j == 5 && other_i == 2) return 1;
+            if (m19_j == 1 && m19_i == 0 && other_j == 2 && other_i == 0) return 1;
+        }
+    }
+    if (otherT == 9) {
+        if (relRot == 0) {
+            if (m19_j == 1 && m19_i == 0 && other_j == 6 && other_i == 2) return -1;
+            if (m19_j == 0 && m19_i == 2 && other_j == 5 && other_i == 0) return -1;
+        }
+        else if (relRot == 2) {
+            if (m19_j == 0 && m19_i == 2 && other_j == 7 && other_i == 2) return 1;
+            if (m19_j == 1 && m19_i == 0 && (other_j == 4 && other_i == 0 || other_j == 2 && other_i == 1)) return 1;
+        }
+    }
+    if (otherT == 10) {
+        if (relRot == 0) {
+            if (m19_j == 1 && m19_i == 0 && (other_j == 8 && other_i == 2 || other_j == 7 && other_i == 2)) return -1;
+            if (m19_j == 0 && m19_i == 2 && (other_j == 7 && other_i == 0 || other_j == 6 && other_i == 0)) return -1;
+            if (m19_j == 0 && m19_i == 1 && other_j == 3 && other_i == 6) return -1;
+        }
+        else if (relRot == 1) { if (m19_j == 1 && m19_i == 0 && (other_j == 3 && other_i == 6 || other_j == 6 && other_i == 3)) return -1; }
+        else if (relRot == 2) {
+            if (m19_j == 0 && m19_i == 2 && other_j == 9 && other_i == 2) return 1;
+            if (m19_j == 1 && m19_i == 0 && (other_j == 5 && other_i == 0 || other_j == 2 && other_i == 2)) return 1;
+        }
+    }
+    if (otherT == 11) {
+        if (relRot == 0) {
+            if (m19_j == 1 && m19_i == 0 && (other_j == 10 && other_i == 2 || other_j == 9 && other_i == 2)) return -1;
+            if (m19_j == 0 && m19_i == 2 && other_j == 8 && other_i == 0) return -1;
+        }
+        else if (relRot == 2) {
+            if (m19_j == 0 && m19_i == 2 && other_j == 11 && other_i == 2) return 1;
+            if (m19_j == 1 && m19_i == 0 && (other_j == 7 && other_i == 0 || other_j == 5 && other_i == 1)) return 1;
+        }
+    }
+
+    // --- BLOCO ATUALIZADO E [19 \ 12] ---
+    if (otherT == 12) {
+        if (relRot == 0) {
+            if (m19_j == 1 && m19_i == 0 && (other_j == 2 && other_i == 9 || other_j == 1 && other_i == 8 || other_j == 0 && other_i == 7)) return -1;
+            if (m19_j == 0 && m19_i == 2 && (other_j == 3 && other_i == 7 || other_j == 4 && other_i == 7 || other_j == 2 && other_i == 0)) return -1;
+        }
+        else if (relRot == 1) { if (m19_j == 1 && m19_i == 0 && other_j == 2 && other_i == 5) return 1; }
+        else if (relRot == 2) { if (m19_j == 0 && m19_i == 2 && other_j == 4 && other_i == 2) return 1; }
+        else if (relRot == 3) { if (m19_j == 0 && m19_i == 2 && other_j == 2 && other_i == 5) return 1; }
+    }
+
+    // --- BLOCO ATUALIZADO E [19 \ 13] ---
+    if (otherT == 13) {
+        if (relRot == 0) {
+            if (m19_j == 1 && m19_i == 0 && (other_j == 0 && other_i == 5 || other_j == 1 && other_i == 5)) return -1;
+            if (m19_j == 0 && m19_i == 2 && other_j == 1 && other_i == 0) return -1;
+            if (m19_j == 0 && m19_i == 0 && other_j == 2 && other_i == 5) return -1; // Nova restrição Azul no Verde adicionada aqui
+        }
+        else if (relRot == 1) { if (m19_j == 0 && m19_i == 2 && other_j == 0 && other_i == 5) return 1; }
+        else if (relRot == 2) { if (m19_j == 1 && m19_i == 0 && other_j == 0 && other_i == 0) return 1; }
+        else if (relRot == 3) { if (m19_j == 1 && m19_i == 0 && other_j == 0 && other_i == 5) return 1; }
+    }
+
+    // --- REGRAS RESTANTES ---
+    if (otherT == 16) {
+        if (m19_c === 'B' && other_c === 'B') { if (relRot == 0 || relRot == 2) return 1; return -1; }
+        if (relRot == 0 && m19_j == 0 && m19_i == 2 && other_j == 1 && other_i == 0) return -1;
+    }
+    if (otherT == 17) {
+        if (relRot == 0) { if (m19_j == 1 && m19_i == 0 && other_j == 0 && other_i == 2) return -1; }
+        else if (relRot == 1) { if (m19_j == 1 && m19_i == 2 && other_j == 0 && other_i == 2) return -1; }
+        else if (relRot == 2) { if (m19_j == 0 && m19_i == 2 && other_j == 1 && other_i == 2) return 1; }
+        else if (relRot == 3) { if (m19_j == 0 && m19_i == 0 && other_j == 0 && other_i == 2) return -1; }
+    }
+    if (otherT == 18) {
+        if (relRot == 0 && m19_c === 'G' && other_c === 'B') return -1;
+        if (m19_c === 'B' && other_j == 0 && other_i == 2 && other_c === 'B') return -1;
+    }
+    if (otherT == 19) {
+        if (relRot == 2) { if (m19_c === 'G' && other_c === 'B') return 1; if (m19_c === 'B' && other_c === 'G') return 1; }
+    }
+
+    return 0;
+}
+
+function check20Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
+    if (t1 !== 20 && t2 !== 20) return 0;
+
+    var isT1_20 = (t1 == 20);
+    var otherT = isT1_20 ? t2 : t1;
+
+    var m20_j = isT1_20 ? j1 : j2;
+    var m20_i = isT1_20 ? i1 : i2;
+    var m20_r = isT1_20 ? r1 : r2;
+    var m20_c = isT1_20 ? c1 : c2;
+
+    var other_j = isT1_20 ? j2 : j1;
+    var other_i = isT1_20 ? i2 : i1;
+    var other_r = isT1_20 ? r2 : r1;
+    var other_c = isT1_20 ? c2 : c1;
+
+    var relRot = (m20_r - other_r + 4) % 4;
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 20 (AUTO-COLISÃO) ---
+    if (otherT == 20) {
+        if (relRot == 0) {
+            if ((j1 == 1 && i1 == 0 && j2 == 1 && i2 == 2) || (j2 == 1 && i2 == 0 && j1 == 1 && i1 == 2)) return 1;
+            if ((j1 == 0 && i1 == 2 && j2 == 0 && i2 == 0) || (j2 == 0 && i2 == 2 && j1 == 0 && i1 == 0)) return 1;
+        }
+        else if (relRot == 2) {
+            if ((j1 == 1 && i1 == 0 && j2 == 0 && i2 == 0) || (j2 == 1 && i2 == 0 && j1 == 0 && i1 == 0)) return 1;
+            if ((j1 == 0 && i1 == 2 && j2 == 1 && i2 == 2) || (j2 == 0 && i2 == 2 && j1 == 1 && i1 == 2)) return 1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 07 ---
+    if (otherT == 7) {
+        if (relRot == 0) {
+            if (m20_j == 1 && m20_i == 0 && other_j == 0 && other_i == 3) return -1;
+            if (m20_j == 0 && m20_i == 2 && other_j == 3 && other_i == 0) return -1;
+        }
+        else if (relRot == 1) {
+            if (m20_j == 1 && m20_i == 2 && other_j == 0 && other_i == 1) return 1;
+        }
+        else if (relRot == 3) {
+            if (m20_j == 0 && m20_i == 0 && other_j == 0 && other_i == 1) return 1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 08 ---
+    if (otherT == 8) {
+        if (relRot == 0) {
+            if (m20_j == 1 && m20_i == 0 && other_j == 0 && other_i == 5) return -1;
+            if (m20_j == 0 && m20_i == 2 && other_j == 5 && other_i == 0) return -1;
+        }
+        else if (relRot == 1) {
+            if (m20_j == 1 && m20_i == 2 && other_j == 0 && other_i == 2) return 1;
+            if (m20_j == 0 && m20_i == 0 && other_j == 2 && other_i == 5) return 1;
+        }
+        else if (relRot == 3) {
+            if (m20_j == 0 && m20_i == 0 && other_j == 0 && other_i == 2) return 1;
+            if (m20_j == 1 && m20_i == 2 && other_j == 2 && other_i == 5) return 1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 09 ---
+    if (otherT == 9) {
+        if (relRot == 0) {
+            if (m20_j == 1 && m20_i == 0 && other_j == 0 && other_i == 7) return -1;
+            if (m20_j == 0 && m20_i == 2 && other_j == 7 && other_i == 0) return -1;
+        }
+        else if (relRot == 1) {
+            if (m20_j == 1 && m20_i == 2 && (other_j == 0 && other_i == 4 || other_j == 1 && other_i == 2)) return 1;
+            if (m20_j == 0 && m20_i == 0 && other_j == 2 && other_i == 7) return 1;
+        }
+        else if (relRot == 3) {
+            if (m20_j == 0 && m20_i == 0 && (other_j == 0 && other_i == 4 || other_j == 1 && other_i == 2)) return 1;
+            if (m20_j == 1 && m20_i == 2 && other_j == 2 && other_i == 7) return 1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 10 ---
+    if (otherT == 10) {
+        if (m20_c === 'Y' && (other_j == 6 && other_i == 3 || other_j == 3 && other_i == 6)) {
+            return -1;
+        }
+
+        if (relRot == 0) {
+            if (m20_j == 1 && m20_i == 0 && other_j == 0 && other_i == 9) return -1;
+            if (m20_j == 0 && m20_i == 2 && other_j == 9 && other_i == 0) return -1;
+        }
+        else if (relRot == 1) {
+            if (m20_j == 1 && m20_i == 2 && (other_j == 0 && other_i == 5 || other_j == 2 && other_i == 2)) return 1;
+            if (m20_j == 0 && m20_i == 0 && other_j == 2 && other_i == 9) return 1;
+        }
+        else if (relRot == 3) {
+            if (m20_j == 0 && m20_i == 0 && (other_j == 0 && other_i == 5 || other_j == 2 && other_i == 2)) return 1;
+            if (m20_j == 1 && m20_i == 2 && other_j == 2 && other_i == 9) return 1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 11 ---
+    if (otherT == 11) {
+        if (relRot == 1) {
+            if (m20_j == 1 && m20_i == 2 && (other_j == 0 && other_i == 7 || other_j == 1 && other_i == 5)) return 1;
+            if (m20_j == 0 && m20_i == 0 && (other_j == 2 && other_i == 11 || other_j == 3 && other_i == 7)) return 1;
+        }
+        else if (relRot == 3) {
+            if (m20_j == 0 && m20_i == 0 && (other_j == 0 && other_i == 7 || other_j == 1 && other_i == 5)) return 1;
+            if (m20_j == 1 && m20_i == 2 && (other_j == 2 && other_i == 11 || other_j == 3 && other_i == 7)) return 1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 12 ---
+    if (otherT == 12) {
+        if (relRot == 0) {
+            if (m20_j == 0 && m20_i == 2 && other_j == 4 && other_i == 0) return -1;
+            if (m20_j == 1 && m20_i == 2 && other_j == 4 && other_i == 7) return 1;
+        }
+        else if (relRot == 1) {
+            if (m20_j == 0 && m20_i == 0 && other_j == 2 && other_i == 4) return 1;
+        }
+        else if (relRot == 2) {
+            if (m20_j == 0 && m20_i == 0 && other_j == 4 && other_i == 7) return 1;
+        }
+        else if (relRot == 3) {
+            if (m20_j == 1 && m20_i == 2 && other_j == 2 && other_i == 4) return 1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 13 ---
+    if (otherT == 13) {
+        if (relRot == 0) {
+            if (m20_j == 0 && m20_i == 2 && other_j == 2 && other_i == 0) return -1;
+            if (m20_j == 0 && m20_i == 0 && other_j == 0 && other_i == 5) return 1;
+        }
+        else if (relRot == 1) {
+            if (m20_j == 1 && m20_i == 2 && other_j == 0 && other_i == 0) return 1;
+        }
+        else if (relRot == 2) {
+            if (m20_j == 1 && m20_i == 2 && other_j == 0 && other_i == 5) return 1;
+        }
+        else if (relRot == 3) {
+            if (m20_j == 0 && m20_i == 0 && other_j == 0 && other_i == 0) return 1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 16 ---
+    if (otherT == 16) {
+        if (m20_c === 'B' && other_c === 'B') {
+            if (relRot == 1 || relRot == 3) return 1;
+            return -1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 17 ---
+    if (otherT == 17) {
+        if (relRot == 1) {
+            if (m20_j == 0 && m20_i == 2 && other_j == 0 && other_i == 0) return -1;
+        }
+        else if (relRot == 3) {
+            if (m20_j == 1 && m20_i == 0 && other_j == 0 && other_i == 0) return -1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 18 ---
+    if (otherT == 18) {
+        if (relRot == 0) {
+            if (m20_j == 1 && m20_i == 2 && other_j == 1 && other_i == 0) return 1;
+        }
+        else if (relRot == 1) {
+            if (m20_j == 0 && m20_i == 2 && other_j == 0 && other_i == 0) return -1;
+        }
+        else if (relRot == 2) {
+            if (m20_j == 0 && m20_i == 0 && other_j == 1 && other_i == 0) return 1;
+        }
+        else if (relRot == 3) {
+            if (m20_j == 1 && m20_i == 0 && other_j == 0 && other_i == 0) return -1;
+        }
+    }
+
+    // --- REGRAS DO MÓDULO 20 COM O MÓDULO 19 ---
+    if (otherT == 19) {
+        if (relRot == 0) {
+            if (m20_j == 1 && m20_i == 0 && other_j == 0 && other_i == 2) return -1;
+            if (m20_j == 0 && m20_i == 2 && other_j == 1 && other_i == 0) return -1;
+        }
+    }
+
+    return 0;
+}
+
+function checkColorCollision(type1, x1, y1, rot1, type2, x2, y2, rot2) {
+    var v1 = getFillVectors(rot1);
+    var v2 = getFillVectors(rot2);
+    var dims1 = getModuleDims(type1);
+    var dims2 = getModuleDims(type2);
+
+    // --- FASE 1: ÂNCORAS GLOBAIS E BLOQUEIOS ---
+    var global_bypass = false;
+    for (var i1 = 0; i1 < dims1.len; i1++) {
+        for (var j1 = 0; j1 < dims1.wid; j1++) {
+            var worldX1 = x1 + (v1.p.x * i1) + (v1.s.x * j1);
+            var worldY1 = y1 + (v1.p.y * i1) + (v1.s.y * j1);
+            for (var i2 = 0; i2 < dims2.len; i2++) {
+                for (var j2 = 0; j2 < dims2.wid; j2++) {
+                    var worldX2 = x2 + (v2.p.x * i2) + (v2.s.x * j2);
+                    var worldY2 = y2 + (v2.p.y * i2) + (v2.s.y * j2);
+
+                    if (worldX1 === worldX2 && worldY1 === worldY2) {
+                        var c1 = getModuleColor(type1, i1, j1);
+                        var c2 = getModuleColor(type2, i2, j2);
+
+                        var o13 = check13Override(type1, j1, i1, rot1, type2, j2, i2, rot2);
+                        var o07 = check07Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o08 = check08Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o09 = check09Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o10 = check10Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o11 = check11Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o12 = check12Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o16 = check16Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o17 = check17Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o18 = check18Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o19 = check19Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o20 = check20Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2); // <-- LIGAÇÃO DO 20
+
+                        if (o13 === -1 || o07 === -1 || o08 === -1 || o09 === -1 || o10 === -1 || o11 === -1 || o12 === -1 || o16 === -1 || o17 === -1 || o18 === -1 || o19 === -1 || o20 === -1) return false;
+                        if (o13 === 2 || o07 === 2 || o08 === 2 || o09 === 2 || o10 === 2 || o11 === 2 || o12 === 2 || o16 === 2 || o17 === 2 || o18 === 2 || o19 === 2 || o20 === 2) global_bypass = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if (global_bypass) return true;
+
+    // --- FASE 2: VERIFICAÇÃO PIXEL A PIXEL PADRÃO ---
+    for (var i1 = 0; i1 < dims1.len; i1++) {
+        for (var j1 = 0; j1 < dims1.wid; j1++) {
+            var worldX1 = x1 + (v1.p.x * i1) + (v1.s.x * j1);
+            var worldY1 = y1 + (v1.p.y * i1) + (v1.s.y * j1);
+
+            for (var i2 = 0; i2 < dims2.len; i2++) {
+                for (var j2 = 0; j2 < dims2.wid; j2++) {
+                    var worldX2 = x2 + (v2.p.x * i2) + (v2.s.x * j2);
+                    var worldY2 = y2 + (v2.p.y * i2) + (v2.s.y * j2);
+
+                    if (worldX1 === worldX2 && worldY1 === worldY2) {
+                        var c1 = getModuleColor(type1, i1, j1);
+                        var c2 = getModuleColor(type2, i2, j2);
+
+                        if (c1 === 'R' || c2 === 'R') return false;
+
+                        var o13 = check13Override(type1, j1, i1, rot1, type2, j2, i2, rot2);
+                        var o07 = check07Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o08 = check08Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o09 = check09Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o10 = check10Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o11 = check11Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o12 = check12Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o16 = check16Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o17 = check17Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o18 = check18Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o19 = check19Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2);
+                        var o20 = check20Override(type1, j1, i1, rot1, c1, type2, j2, i2, rot2, c2); // <-- LIGAÇÃO DO 20
+
+                        var special_bypass = false;
+                        if (o13 === 1 || o07 === 1 || o08 === 1 || o09 === 1 || o10 === 1 || o11 === 1 || o12 === 1 || o16 === 1 || o17 === 1 || o18 === 1 || o19 === 1 || o20 === 1) special_bypass = true;
+
+                        if (!special_bypass) {
+                            if (c1 === 'Y' && (c2 === 'Y' || c2 === 'B' || c2 === 'G')) return false;
+                            if (c2 === 'Y' && (c1 === 'Y' || c1 === 'B' || c1 === 'G')) return false;
+                        }
+
+                        if (type1 == 12 && type2 == 12) {
+                            if (j1 === 1 && i1 === 1 && j2 === 1 && i2 === 1) return false;
+                            if (j1 === 1 && i1 === 8 && j2 === 1 && i2 === 8) return false;
+                        }
+
+                        var isG1_from_06 = (type1 == 6 && c1 === 'G');
+                        var isG2_from_06 = (type2 == 6 && c2 === 'G');
+                        var isG1_from_14 = (type1 == 14 && c1 === 'G');
+                        var isG2_from_14 = (type2 == 14 && c2 === 'G');
+                        var isG1_from_15 = (type1 == 15 && c1 === 'G');
+                        var isG2_from_15 = (type2 == 15 && c2 === 'G');
+
+                        if (isG1_from_14 && c2 !== 'T') {
+                            if (isAllowed14(type2, j2, i2, j1, i1, rot2, rot1)) special_bypass = true;
+                            else if (!special_bypass) return false;
+                        }
+                        if (isG2_from_14 && c1 !== 'T') {
+                            if (isAllowed14(type1, j1, i1, j2, i2, rot1, rot2)) special_bypass = true;
+                            else if (!special_bypass) return false;
+                        }
+
+                        if (isG1_from_15 && c2 !== 'T') {
+                            if (isAllowed15(type2, j2, i2, j1, i1, rot2, rot1)) special_bypass = true;
+                            else if (!special_bypass) return false;
+                        }
+                        if (isG2_from_15 && c1 !== 'T') {
+                            if (isAllowed15(type1, j1, i1, j2, i2, rot1, rot2)) special_bypass = true;
+                            else if (!special_bypass) return false;
+                        }
+
+                        if (isG1_from_06 && c2 !== 'T') {
+                            var is_06_ok = false;
+                            var relRot = (rot1 - rot2 + 4) % 4;
+
+                            if (type2 == 8) {
+                                if (relRot == 0 && j1 == 1 && i1 == 0 && j2 == 5 && i2 == 2) is_06_ok = true;
+                                if (relRot == 0 && j1 == 0 && i1 == 1 && j2 == 2 && i2 == 5) is_06_ok = true;
+                                if (relRot == 2 && (j1 == 1 && i1 == 0 || j1 == 0 && i1 == 1) && (j2 == 0 && i2 == 2 || j2 == 2 && i2 == 0)) is_06_ok = true;
+                            }
+                            else if (type2 == 9) {
+                                if (relRot == 0 && j1 == 1 && i1 == 0 && j2 == 7 && i2 == 2) is_06_ok = true;
+                                if (relRot == 0 && j1 == 0 && i1 == 1 && j2 == 2 && i2 == 7) is_06_ok = true;
+                            }
+                            else if (type2 == 10) {
+                                if (relRot == 0 && j1 == 1 && i1 == 0 && (j2 == 9 && i2 == 2 || j2 == 6 && i2 == 3)) is_06_ok = true;
+                                if (relRot == 0 && j1 == 0 && i1 == 1 && (j2 == 2 && i2 == 9 || j2 == 3 && i2 == 6)) is_06_ok = true;
+                                if (relRot == 2 && (j1 == 1 && i1 == 0 || j1 == 0 && i1 == 1) && (j2 == 0 && i2 == 5 || j2 == 2 && i2 == 2 || j2 == 5 && i2 == 0)) is_06_ok = true;
+                            }
+                            else if (type2 == 11) {
+                                if (relRot == 0 && j1 == 1 && i1 == 0 && j2 == 11 && i2 == 2) is_06_ok = true;
+                                if (relRot == 0 && j1 == 0 && i1 == 1 && j2 == 2 && i2 == 11) is_06_ok = true;
+                            }
+                            else if (type2 == 12) {
+                                if (relRot == 0 && j1 == 1 && i1 == 0 && j2 == 4 && i2 == 2) is_06_ok = true;
+                                if (relRot == 0 && j1 == 0 && i1 == 1 && j2 == 2 && i2 == 4) is_06_ok = true;
+                                if (relRot == 1 && j1 == 1 && i1 == 0 && j2 == 2 && i2 == 5) is_06_ok = true;
+                                if (relRot == 1 && j1 == 0 && i1 == 1 && j2 == 4 && i2 == 7) is_06_ok = true;
+                            }
+
+                            if (is_06_ok) special_bypass = true;
+                            else if (!special_bypass) return false;
+                        }
+
+                        if (isG2_from_06 && c1 !== 'T') {
+                            var is_06_ok = false;
+                            var relRot = (rot2 - rot1 + 4) % 4;
+
+                            if (type1 == 8) {
+                                if (relRot == 0 && j2 == 1 && i2 == 0 && j1 == 5 && i1 == 2) is_06_ok = true;
+                                if (relRot == 0 && j2 == 0 && i2 == 1 && j1 == 2 && i1 == 5) is_06_ok = true;
+                                if (relRot == 2 && (j2 == 1 && i2 == 0 || j2 == 0 && i2 == 1) && (j1 == 0 && i1 == 2 || j1 == 2 && i1 == 0)) is_06_ok = true;
+                            }
+                            else if (type1 == 9) {
+                                if (relRot == 0 && j2 == 1 && i2 == 0 && j1 == 7 && i1 == 2) is_06_ok = true;
+                                if (relRot == 0 && j2 == 0 && i2 == 1 && j1 == 2 && i1 == 7) is_06_ok = true;
+                            }
+                            else if (type1 == 10) {
+                                if (relRot == 0 && j2 == 1 && i2 == 0 && (j1 == 9 && i1 == 2 || j1 == 6 && i1 == 3)) is_06_ok = true;
+                                if (relRot == 0 && j2 == 0 && i2 == 1 && (j1 == 2 && i1 == 9 || j1 == 3 && i1 == 6)) is_06_ok = true;
+                                if (relRot == 2 && (j2 == 1 && i2 == 0 || j2 == 0 && i2 == 1) && (j1 == 0 && i1 == 5 || j1 == 2 && i1 == 2 || j1 == 5 && i1 == 0)) is_06_ok = true;
+                            }
+                            else if (type1 == 11) {
+                                if (relRot == 0 && j2 == 1 && i2 == 0 && j1 == 11 && i1 == 2) is_06_ok = true;
+                                if (relRot == 0 && j2 == 0 && i2 == 1 && j1 == 2 && i1 == 11) is_06_ok = true;
+                            }
+                            else if (type1 == 12) {
+                                if (relRot == 0 && j2 == 1 && i2 == 0 && j1 == 4 && i1 == 2) is_06_ok = true;
+                                if (relRot == 0 && j2 == 0 && i2 == 1 && j1 == 2 && i1 == 4) is_06_ok = true;
+                                if (relRot == 1 && j2 == 1 && i2 == 0 && j1 == 2 && i1 == 5) is_06_ok = true;
+                                if (relRot == 1 && j2 == 0 && i2 == 1 && j1 == 4 && i1 == 7) is_06_ok = true;
+                            }
+
+                            if (is_06_ok) special_bypass = true;
+                            else if (!special_bypass) return false;
+                        }
+
+                        if (c1 === 'G' && c2 === 'G') {
+                            if (!special_bypass) return false;
+                        }
+
+                        if (!special_bypass) {
+                            if ((c1 === 'G' && c2 === 'B') || (c2 === 'G' && c1 === 'B')) {
+                                if (rot1 !== rot2) return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+function canPlaceTile(gx, gy, type, rot) {
+    var dims = getModuleDims(type);
+    var v = getFillVectors(rot);
+
+    // 1. LIMITES DO ARTBOARD (Nova Restrição Rígida)
+    var minX = artOffsetX;
+    var maxX = artOffsetX + artW;
+    var minY = artOffsetY;
+    var maxY = artOffsetY + artH;
+
+    for (var i = 0; i < dims.len; i++) {
+        for (var j = 0; j < dims.wid; j++) {
+            if (isCollisionException(type, i, j)) continue;
+            var checkX = gx + (v.p.x * i) + (v.s.x * j);
+            var checkY = gy + (v.p.y * i) + (v.s.y * j);
+
+            // Se algum "pixel" da peça sair do quadrado branco, o clique é cancelado!
+            if (checkX < minX || checkX >= maxX || checkY < minY || checkY >= maxY) {
+                return false;
+            }
+        }
+    }
+
+    // Se o modo Free/Stencil estiver ligado, e passou a fronteira acima, permite!
+    if (isOverlapMode) return true;
+
+    // 2. TESTES DE COR E COLISÃO (O resto mantém-se)
+    if (hasGeneticMap(type)) {
+        for (var k = 0; k < placedObjects.length; k++) {
+            var occupant = placedObjects[k];
+            if (hasGeneticMap(occupant.type)) {
+                if (isCurveGroup(type) && isCurveGroup(occupant.type)) {
+                    var c1 = getCurveCenter(gx, gy, type, rot);
+                    var c2 = getCurveCenter(occupant.x, occupant.y, occupant.type, occupant.rot);
+                    if (c1.cx === c2.cx && c1.cy === c2.cy) continue;
+                }
+                if (!checkColorCollision(type, gx, gy, rot, occupant.type, occupant.x, occupant.y, occupant.rot)) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    for (var i = 0; i < dims.len; i++) {
+        for (var j = 0; j < dims.wid; j++) {
+            var checkX = gx + (v.p.x * i) + (v.s.x * j);
+            var checkY = gy + (v.p.y * i) + (v.s.y * j);
+
+            if (isCollisionException(type, i, j)) continue;
+
+            var occupants = collisionMap[checkX][checkY];
+            if (occupants && occupants.length > 0) {
+                for (var o = 0; o < occupants.length; o++) {
+                    var occupant = occupants[o];
+                    if (hasGeneticMap(type) && hasGeneticMap(occupant.type)) continue;
+
+                    var isAllowed = false;
+                    if (isCurveGroup(type) && isCurveGroup(occupant.type)) {
+                        var c1 = getCurveCenter(gx, gy, type, rot);
+                        var c2 = getCurveCenter(occupant.x, occupant.y, occupant.type, occupant.rot);
+                        if (c1.cx === c2.cx && c1.cy === c2.cy) isAllowed = true;
+                    }
+                    if (!isAllowed) return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+
+function attemptSetTile(type) {
+    var localX = mouseX - centerX;
+    var localY = mouseY - centerY;
+    var gridX = floor(localX / tileSize) + GRID_CX;
+    var gridY = floor(localY / tileSize) + GRID_CY;
+
+    if (gridX < 0 || gridX >= GRID_W || gridY < 0 || gridY >= GRID_H) return;
+
+    for (var i = 0; i < placedObjects.length; i++) {
+        var obj = placedObjects[i];
+        if (obj.x == gridX && obj.y == gridY && obj.type == type && obj.rot == currentRotation) return;
+    }
+
+    var baseObj = { type: type, x: gridX, y: gridY, rot: currentRotation };
+    var groupToTest = getMirroredGroup(baseObj);
+
+    if (checkPlacementValidGroup(groupToTest)) {
+        saveHistory();
+        for (var i = 0; i < groupToTest.length; i++) {
+            placedObjects.push(groupToTest[i]);
+            addObjToCollisionMap(groupToTest[i]);
+        }
+    }
+}
+
+function attemptDeleteTile() {
+    var localX = mouseX - centerX;
+    var localY = mouseY - centerY;
+    var gridX = floor(localX / tileSize) + GRID_CX;
+    var gridY = floor(localY / tileSize) + GRID_CY;
+
+    if (gridX < 0 || gridX >= GRID_W || gridY < 0 || gridY >= GRID_H) return;
+
+    var foundIndex = -1;
+    for (var k = placedObjects.length - 1; k >= 0; k--) {
+        if (doesObjectCover(placedObjects[k], gridX, gridY)) {
+            foundIndex = k;
+            break;
+        }
+    }
+
+    if (foundIndex != -1) {
+        var objToDelete = placedObjects[foundIndex];
+        saveHistory();
+
+        // Se clicou numa peça que já faz parte da seleção, apaga TODOS os selecionados
+        var objectsToDelete = [];
+        if (selectedObjects.includes(objToDelete)) {
+            objectsToDelete = selectedObjects.slice();
+        } else {
+            objectsToDelete = [objToDelete];
+        }
+
+        for (var s = 0; s < objectsToDelete.length; s++) {
+            var groupToDelete = getMirroredGroup(objectsToDelete[s]);
+
+            for (var g = 0; g < groupToDelete.length; g++) {
+                var m = groupToDelete[g];
+                for (var j = placedObjects.length - 1; j >= 0; j--) {
+                    var p = placedObjects[j];
+                    if (p.type == m.type && p.x == m.x && p.y == m.y && p.rot == m.rot) {
+                        placedObjects.splice(j, 1);
+                        removeObjFromCollisionMap(p);
+                        break;
+                    }
+                }
+            }
+        }
+        selectedObjects = []; // Limpa a seleção depois de apagar
+    }
+}
+
+function doesObjectCover(obj, targetX, targetY) {
+    var dims = getModuleDims(obj.type);
+    var v = getFillVectors(obj.rot);
+
+    for (var i = 0; i < dims.len; i++) {
+        for (var j = 0; j < dims.wid; j++) {
+            var isHead = (i == 0 && j == 0);
+            if (!isHead && isCollisionException(obj.type, i, j)) continue;
+            var px = obj.x + (v.p.x * i) + (v.s.x * j);
+            var py = obj.y + (v.p.y * i) + (v.s.y * j);
+            if (px == targetX && py == targetY) return true;
+        }
+    }
+    return false;
+}
+
+function getFillVectors(rot) {
+    if (rot == 0) return { p: { x: 1, y: 0 }, s: { x: 0, y: 1 } };
+    if (rot == 1) return { p: { x: 0, y: 1 }, s: { x: -1, y: 0 } };
+    if (rot == 2) return { p: { x: -1, y: 0 }, s: { x: 0, y: -1 } };
+    if (rot == 3) return { p: { x: 0, y: -1 }, s: { x: 1, y: 0 } };
+    return { p: { x: 0, y: 0 }, s: { x: 0, y: 0 } };
+}
+
+function drawGrid() {
+    // 0. OS LIMITES GLOBAIS SÃO AGORA LIDOS DIRETAMENTE
+    var gridStartX = centerX + (artOffsetX - GRID_CX) * tileSize;
+    var gridStartY = centerY + (artOffsetY - GRID_CY) * tileSize;
+    var gridEndX = gridStartX + (artW * tileSize);
+    var gridEndY = gridStartY + (artH * tileSize);
+    var gridPixW = artW * tileSize;
+    var gridPixH = artH * tileSize;
+
+    // Fundo branco restrito à zona ativa do Artboard
+    fill(255); noStroke(); rectMode(CORNER);
+    rect(gridStartX, gridStartY, gridPixW, gridPixH);
+
+    // Contorno cinza do Artboard
+    push(); stroke(160); strokeWeight(1.5); noFill();
+    rect(gridStartX, gridStartY, gridPixW, gridPixH); pop();
+
+    // 1. Grelha Fina (Linhas ou Pontos)
+    if (showSmallGrid) {
+        push();
+        if (currentGridStyle === 'lines') {
+            strokeWeight(0.5); stroke(220); drawingContext.setLineDash([4, 4]);
+
+            // As linhas só são desenhadas dentro da largura e altura do artboard (artW / artH)
+            for (var i = 0; i <= artW; i++) {
+                var px = gridStartX + (i * tileSize);
+                line(px, gridStartY, px, gridEndY);
+            }
+            for (var j = 0; j <= artH; j++) {
+                var py = gridStartY + (j * tileSize);
+                line(gridStartX, py, gridEndX, py);
+            }
+        } else if (currentGridStyle === 'dots') {
+            fill(210); noStroke(); // Cor do círculo
+
+            // A tua matemática exata de escalonamento para 5.811pt
+            var dotSize = tileSize * (5.811 / 15);
+
+            // Limitado visualmente às fronteiras do Artboard ativo E ao ecrã (otimização de FPS)
+            var startI = max(0, Math.floor((sidebarWidth - gridStartX) / tileSize));
+            var endI = min(artW, Math.ceil((width - gridStartX) / tileSize));
+            var startJ = max(0, Math.floor((topBarHeight - gridStartY) / tileSize));
+            var endJ = min(artH, Math.ceil((height - gridStartY) / tileSize));
+
+            for (var i = startI; i < endI; i++) {
+                var px = gridStartX + (i * tileSize) + (tileSize / 2);
+                for (var j = startJ; j < endJ; j++) {
+                    var py = gridStartY + (j * tileSize) + (tileSize / 2);
+                    ellipse(px, py, dotSize, dotSize);
+                }
+            }
+        }
+        drawingContext.setLineDash([]); pop();
+    }
+
+    // 2. GUIAS TIPOGRÁFICAS E LATERAIS
+    if (showGuides) {
+        var guideColors = {
+            ascender: [220, 100, 150], capHeight: [180, 120, 200], xHeight: [100, 150, 220],
+            baseline: [0, 200, 150], descender: [220, 150, 80], left: [255, 150, 0], right: [255, 150, 0]
+        };
+        var labels = {
+            ascender: "ASCENDER", capHeight: "CAP HEIGHT", xHeight: "X-HEIGHT",
+            baseline: "BASELINE", descender: "DESCENDER", left: "ESQUERDA", right: "DIREITA"
+        };
+
+        for (var keyY in guidesY) {
+            var screenY = centerY + (guidesY[keyY] - GRID_CY) * tileSize;
+            var colY = guideColors[keyY];
+            stroke(colY[0], colY[1], colY[2]); strokeWeight(1.5); drawingContext.setLineDash([8, 4]); line(sidebarWidth, screenY, width, screenY); drawingContext.setLineDash([]);
+            noStroke(); fill(colY[0], colY[1], colY[2]); textAlign(LEFT, BOTTOM); textSize(9); text(labels[keyY], sidebarWidth + 10, screenY - 2);
+        }
+
+        for (var keyX in guidesX) {
+            var screenX = centerX + (guidesX[keyX] - GRID_CX) * tileSize;
+            var colX = guideColors[keyX];
+            stroke(colX[0], colX[1], colX[2]); strokeWeight(1.5); drawingContext.setLineDash([8, 4]); line(screenX, topBarHeight, screenX, height); drawingContext.setLineDash([]);
+            noStroke(); fill(colX[0], colX[1], colX[2]); textAlign(LEFT, TOP); textSize(9); text(labels[keyX], screenX + 5, topBarHeight + 10);
+        }
+    }
+
+    if (showCenterV) { push(); stroke(200, 50, 255, 180); strokeWeight(1.5); drawingContext.setLineDash([10, 5]); line(centerX, topBarHeight, centerX, height); pop(); }
+    if (showCenterH) { push(); stroke(200, 50, 255, 180); strokeWeight(1.5); drawingContext.setLineDash([10, 5]); line(sidebarWidth, centerY, width, centerY); pop(); }
+
+    if (isMirrorModeV || isMirrorModeH) {
+        stroke(255, 50, 50, 180); strokeWeight(1.5); drawingContext.setLineDash([5, 5]);
+        if (isMirrorModeV) line(centerX, topBarHeight, centerX, height);
+        if (isMirrorModeH) line(sidebarWidth, centerY, width, centerY);
+        drawingContext.setLineDash([]);
+        noStroke(); fill(255, 50, 50, 180); textSize(9);
+        if (isMirrorModeV) { textAlign(LEFT, TOP); text("SIMETRIA VERTICAL", centerX + 10, topBarHeight + 15); }
+        if (isMirrorModeH) { textAlign(RIGHT, BOTTOM); text("SIMETRIA HORIZONTAL", width - 15, centerY - 5); }
+    }
+
+    rectMode(CENTER);
+}
+
+function drawModules() {
+    for (var k = 0; k < placedObjects.length; k++) {
+        var obj = placedObjects[k];
+        var isSelected = selectedObjects.includes(obj);
+
+        var cornerX = centerX + (obj.x - GRID_CX) * tileSize;
+        var cornerY = centerY + (obj.y - GRID_CY) * tileSize;
+        var cellCenterX = cornerX + tileSize / 2;
+        var cellCenterY = cornerY + tileSize / 2;
+
+        var dims = getModuleDims(obj.type);
+        var offX = (dims.len - 1) * (tileSize / 2);
+        var offY = (dims.wid - 1) * (tileSize / 2);
+
+        push();
+        translate(cellCenterX, cellCenterY);
+        rotate(obj.rot * 90);
+
+        if (isSelected && (selectedModule == -2 || selectedModule == -1)) {
+            if (selectedModule == -1) {
+                // BORRACHA - Ficam Vermelhos
+                if (redModules[obj.type] && redModules[obj.type].width > 1) {
+                    image(redModules[obj.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                } else {
+                    fill(255, 50, 50); noStroke();
+                    rect(offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                }
+            } else {
+                // MOVER - Ficam Azuis
+                if (blueModules[obj.type] && blueModules[obj.type].width > 1) {
+                    image(blueModules[obj.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                } else {
+                    fill(0, 130, 255); noStroke();
+                    rect(offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                }
+            }
+        } else {
+            if (modules[obj.type] && modules[obj.type].width > 1) {
+                image(modules[obj.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+            } else {
+                fill(150); noStroke();
+                rect(offX, offY, tileSize * dims.len, tileSize * dims.wid);
+            }
+        }
+        pop();
+    }
+}
+
+function drawCustomCursor() {
+    if (showShortcutsModal) { cursor(ARROW); return; } // <-- ADICIONE ESTA LINHA AQUI!
+
+    if (mouseX > sidebarWidth && mouseY > topBarHeight) {
+
+        // Cursor de Câmara atualizado para o Módulo -3
+        if (keyIsDown(32) || mouseButton === CENTER || selectedModule === -3) {
+            if (mouseIsPressed) cursor('grabbing');
+            else cursor('grab');
+            return;
+        }
+
+        var hGuide = getHoveredGuide();
+        if (showGuides && (hGuide || draggedGuide)) {
+            var currentGuide = draggedGuide || hGuide;
+            if (currentGuide === 'left' || currentGuide === 'right') cursor('col-resize');
+            else cursor('row-resize');
+            return;
+        }
+
+        var localX = mouseX - centerX;
+        var localY = mouseY - centerY;
+        var gX = floor(localX / tileSize) + GRID_CX;
+        var gY = floor(localY / tileSize) + GRID_CY;
+
+        if (selectedModule == -2) {
+            if (isDraggingSelection) {
+                noCursor();
+                // ... (O código do fantasma a arrastar mantém-se igualzinho ao que já tinha aqui)
+                var dx = gX - dragStartGrid.x;
+                var dy = gY - dragStartGrid.y;
+                var groupToTest = [];
+                for (var i = 0; i < dragOriginals.length; i++) {
+                    var o = dragOriginals[i];
+                    var baseMoved = { type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot };
+                    var mirroredBase = getMirroredGroup(baseMoved);
+                    for (var m = 0; m < mirroredBase.length; m++) {
+                        var isDup = false;
+                        for (var j = 0; j < groupToTest.length; j++) {
+                            if (groupToTest[j].type == mirroredBase[m].type && groupToTest[j].x == mirroredBase[m].x && groupToTest[j].y == mirroredBase[m].y && groupToTest[j].rot == mirroredBase[m].rot) {
+                                isDup = true; break;
+                            }
+                        }
+                        if (!isDup) groupToTest.push(mirroredBase[m]);
+                    }
+                }
+                var allValid = checkPlacementValidGroup(groupToTest);
+                for (var i = 0; i < groupToTest.length; i++) {
+                    var ghost = groupToTest[i];
+                    var gSnapX = centerX + (ghost.x - GRID_CX) * tileSize + (tileSize / 2);
+                    var gSnapY = centerY + (ghost.y - GRID_CY) * tileSize + (tileSize / 2);
+                    var dims = getModuleDims(ghost.type);
+                    var offX = (dims.len - 1) * (tileSize / 2);
+                    var offY = (dims.wid - 1) * (tileSize / 2);
+
+                    push();
+                    translate(gSnapX, gSnapY);
+                    rotate(ghost.rot * 90);
+                    if (allValid) {
+                        tint(255, 180);
+                        if (blueModules[ghost.type]) image(blueModules[ghost.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                    } else {
+                        tint(255, 180);
+                        if (redModules[ghost.type]) image(redModules[ghost.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                        else { fill(255, 50, 50, 180); noStroke(); rect(offX, offY, tileSize * dims.len, tileSize * dims.wid); }
+                    }
+                    pop();
+                }
+            } else if (!selectionBox.active) {
+                var hIdx = findObjectAt(gX, gY);
+                if (hIdx != -1) {
+                    cursor('grab');
+                    var hObj = placedObjects[hIdx];
+                    var dims = getModuleDims(hObj.type);
+                    var offX = (dims.len - 1) * (tileSize / 2);
+                    var offY = (dims.wid - 1) * (tileSize / 2);
+                    var cx = centerX + (hObj.x - GRID_CX) * tileSize + (tileSize / 2);
+                    var cy = centerY + (hObj.y - GRID_CY) * tileSize + (tileSize / 2);
+
+                    push();
+                    translate(cx, cy);
+                    rotate(hObj.rot * 90);
+                    if (blueModules[hObj.type] && blueModules[hObj.type].width > 1) {
+                        image(blueModules[hObj.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                    }
+                    pop();
+                } else {
+                    cursor(ARROW);
+                }
+            }
+        } else if (selectedModule >= 0) {
+            noCursor();
+            var baseObj = { type: selectedModule, x: gX, y: gY, rot: currentRotation };
+            var groupToTest = getMirroredGroup(baseObj);
+            var overallValid = checkPlacementValidGroup(groupToTest);
+
+            for (var i = 0; i < groupToTest.length; i++) {
+                var ghost = groupToTest[i];
+                var mSnapX = centerX + (ghost.x - GRID_CX) * tileSize + (tileSize / 2);
+                var mSnapY = centerY + (ghost.y - GRID_CY) * tileSize + (tileSize / 2);
+                var dims = getModuleDims(ghost.type);
+                var offX = (dims.len - 1) * (tileSize / 2);
+                var offY = (dims.wid - 1) * (tileSize / 2);
+
+                push();
+                translate(mSnapX, mSnapY);
+                rotate(ghost.rot * 90);
+                if (overallValid) {
+                    tint(255, 127);
+                    if (modules[ghost.type]) image(modules[ghost.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                } else {
+                    if (redModules[ghost.type]) image(redModules[ghost.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                    else { fill(255, 0, 0); rect(offX, offY, tileSize * dims.len, tileSize * dims.wid); }
+                }
+                pop();
+            }
+        } else if (selectedModule == -1) {
+            var hIdx = findObjectAt(gX, gY);
+            if (hIdx != -1) {
+                cursor(CROSS);
+                var hObj = placedObjects[hIdx];
+                var dims = getModuleDims(hObj.type);
+                var offX = (dims.len - 1) * (tileSize / 2);
+                var offY = (dims.wid - 1) * (tileSize / 2);
+                var cx = centerX + (hObj.x - GRID_CX) * tileSize + (tileSize / 2);
+                var cy = centerY + (hObj.y - GRID_CY) * tileSize + (tileSize / 2);
+
+                push();
+                translate(cx, cy);
+                rotate(hObj.rot * 90);
+                tint(255, 200);
+                if (redModules[hObj.type] && redModules[hObj.type].width > 1) {
+                    image(redModules[hObj.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                } else {
+                    fill(255, 50, 50, 200); noStroke();
+                    rect(offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                }
+                pop();
+            } else {
+                cursor(CROSS);
+            }
+        } else {
+            cursor(ARROW);
+        }
+    } else {
+        cursor(ARROW);
+    }
+}
+
+function initAllCharacters() {
+    for (var i = 0; i < characters.length; i++) {
+        var char = characters[i];
+        if (!storedCharacters[char]) {
+            // Agora guardamos também o histórico do "Avançar"
+            storedCharacters[char] = { objects: [], history: [], redoHistory: [] };
+        }
+    }
+}
+
+function saveHistory() {
+    var hist = storedCharacters[currentChar].history;
+    if (hist.length >= 15) hist.shift(); // Histórico aumentado para 15 passos
+    var snapshot = JSON.parse(JSON.stringify(placedObjects));
+    hist.push(snapshot);
+
+    // Se o autor fizer algo novo, apaga o futuro (como num software real)
+    storedCharacters[currentChar].redoHistory = [];
+}
+
+function undo() {
+    var hist = storedCharacters[currentChar].history;
+    var redoHist = storedCharacters[currentChar].redoHistory;
+
+    if (hist.length > 0) {
+        redoHist.push(JSON.parse(JSON.stringify(placedObjects))); // Guarda para o "Avançar"
+        var previousState = hist.pop();
+        placedObjects = JSON.parse(JSON.stringify(previousState));
+        rebuildCollisionMap();
+        saveCharacter(currentChar);
+        selectedObjects = [];
+    }
+}
+
+function redo() {
+    var hist = storedCharacters[currentChar].history;
+    var redoHist = storedCharacters[currentChar].redoHistory;
+
+    if (redoHist.length > 0) {
+        hist.push(JSON.parse(JSON.stringify(placedObjects))); // Guarda para o "Voltar"
+        var nextState = redoHist.pop();
+        placedObjects = JSON.parse(JSON.stringify(nextState));
+        rebuildCollisionMap();
+        saveCharacter(currentChar);
+        selectedObjects = [];
+    }
+}
+
+function saveCharacter(char) {
+    if (!storedCharacters[char]) {
+        storedCharacters[char] = { objects: [], history: [], redoHistory: [] };
+    }
+    storedCharacters[char].objects = JSON.parse(JSON.stringify(placedObjects));
+}
+
+function loadCharacter(char) {
+    if (!storedCharacters[char]) initAllCharacters();
+    placedObjects = JSON.parse(JSON.stringify(storedCharacters[char].objects));
+    rebuildCollisionMap();
+    currentChar = char;
+    selectedObjects = [];
+}
+
+function switchCharacter(newChar) {
+    if (newChar == currentChar) return;
+    saveCharacter(currentChar);
+    loadCharacter(newChar);
+}
+
+function isGridEmpty(char) {
+    if (!storedCharacters[char]) return true;
+    return storedCharacters[char].objects.length == 0;
+}
+
+// --- SISTEMA DE ESCALA E LIMITES GLOBAIS ---
+var _cachedGlobalBounds = null;
+var _cachedFrameBounds = -1;
+
+function getGlobalBounds() {
+    // Re-calcula apenas 1 vez por frame para manter a plataforma rápida
+    if (frameCount === _cachedFrameBounds && _cachedGlobalBounds) return _cachedGlobalBounds;
+
+    var minX = 0, maxX = 0, minY = 0, maxY = 0;
+    var hasContent = false;
+
+    for (var i = 0; i < characters.length; i++) {
+        var c = characters[i];
+        var objs = (c == currentChar) ? placedObjects : (storedCharacters[c] ? storedCharacters[c].objects : []);
+        if (!objs || objs.length == 0) continue;
+
+        for (var k = 0; k < objs.length; k++) {
+            var o = objs[k];
+            var dims = getModuleDims(o.type);
+            var v = getFillVectors(o.rot);
+
+            // Mapear as distâncias ao centro (Baseline)
+            var p1x = o.x - GRID_CX;
+            var p1y = o.y - GRID_CY;
+            var p2x = p1x + (v.p.x * (dims.len - 1)) + (v.s.x * (dims.wid - 1));
+            var p2y = p1y + (v.p.y * (dims.len - 1)) + (v.s.y * (dims.wid - 1));
+
+            if (!hasContent) {
+                minX = min(p1x, p2x); maxX = max(p1x, p2x);
+                minY = min(p1y, p2y); maxY = max(p1y, p2y);
+                hasContent = true;
+            } else {
+                minX = min(minX, p1x, p2x); maxX = max(maxX, p1x, p2x);
+                minY = min(minY, p1y, p2y); maxY = max(maxY, p1y, p2y);
+            }
+        }
+    }
+
+    if (hasContent) { maxX += 1; maxY += 1; }
+
+    _cachedGlobalBounds = { minX: minX, maxX: maxX, minY: minY, maxY: maxY, hasContent: hasContent };
+    _cachedFrameBounds = frameCount;
+    return _cachedGlobalBounds;
+}
+
+// --- DESENHO DA MINIATURA ---
+function drawThumbnail(char, x, y, size) {
+    var objs = (char == currentChar) ? placedObjects : (storedCharacters[char] ? storedCharacters[char].objects : []);
+    if (!objs || objs.length == 0) return;
+
+    // 1. Vai buscar a caixa que contém o alfabeto inteiro
+    var bounds = getGlobalBounds();
+    if (!bounds.hasContent) return;
+
+    var bW = bounds.maxX - bounds.minX;
+    var bH = bounds.maxY - bounds.minY;
+    var maxDim = max(bW, bH);
+    if (maxDim < 4) maxDim = 4;
+
+    // 2. Aplica a escala com a margem de segurança que querias (30%)
+    var marginFactor = 1.3;
+    var miniSize = size / (maxDim * marginFactor);
+
+    // 3. A MAGIA: Encontrar o centro visual do alfabeto inteiro
+    var globalMidX = (bounds.minX + bounds.maxX) / 2;
+    var globalMidY = (bounds.minY + bounds.maxY) / 2;
+
+    var thumbCenterX = x + size / 2;
+    var thumbCenterY = y + size / 2;
+
+    // A linha de base é empurrada exatamente para o local onde as pernas cabem!
+    var thumbnailBaselineY = thumbCenterY - (globalMidY * miniSize);
+    var thumbnailCenterX = thumbCenterX - (globalMidX * miniSize);
+
+    push();
+    for (var k = 0; k < objs.length; k++) {
+        var o = objs[k];
+        var dims = getModuleDims(o.type);
+
+        var cx = thumbnailCenterX + ((o.x - GRID_CX) * miniSize);
+        var cy = thumbnailBaselineY + ((o.y - GRID_CY) * miniSize);
+
+        var rectOffX = (dims.len - 1) * (miniSize / 2);
+        var rectOffY = (dims.wid - 1) * (miniSize / 2);
+
+        push();
+        translate(cx, cy);
+        rotate(o.rot * 90);
+        imageMode(CENTER);
+
+        if (modules[o.type] && modules[o.type].width > 1) {
+            image(modules[o.type], rectOffX, rectOffY, dims.len * miniSize, dims.wid * miniSize);
+        } else {
+            fill(0); noStroke(); rectMode(CENTER);
+            rect(rectOffX, rectOffY, dims.len * miniSize, dims.wid * miniSize);
+        }
+        pop();
+    }
+    pop();
+}
+
+function checkTopBarClick() {
+    var tBoxSize = 34 * globalScale;
+    var toolGapX = 45 * globalScale;
+    var toolStartX = 30 * globalScale;
+    var ty = 35 * globalScale;
+    var my = 80 * globalScale;
+
+    // 1. Clique Linha 1: Ferramentas
+    for (var i = 0; i < 12; i++) {
+        var tx = toolStartX + (i * toolGapX);
+        if (mouseX > tx - tBoxSize / 2 && mouseX < tx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2) {
+            if (i == 0) { selectedModule = -2; selectedObjects = []; return; }
+            if (i == 1) { selectedModule = -1; selectedObjects = []; return; }
+            if (i == 2) { selectedModule = -3; selectedObjects = []; return; }
+            if (i == 3) { isMirrorModeV = !isMirrorModeV; return; }
+            if (i == 4) { isMirrorModeH = !isMirrorModeH; return; }
+            if (i == 5) { showSmallGrid = !showSmallGrid; return; }
+            if (i == 6) { showCenterV = !showCenterV; return; }
+            if (i == 7) { showCenterH = !showCenterH; return; }
+            if (i == 8) { showGuides = !showGuides; return; }
+            if (i == 9) { fitToScreen(); return; }
+            if (i == 10) { undo(); return; }
+            if (i == 11) { redo(); return; }
+        }
+    }
+
+    // 2. Clique Linha 2: Módulos
+    for (var i = 0; i < modules.length; i++) {
+        var mx = toolStartX + (i * toolGapX);
+        if (mouseX > mx - tBoxSize / 2 && mouseX < mx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2) {
+            selectedModule = i; currentRotation = 0; selectedObjects = []; return;
+        }
+    }
+
+    // --- 3. CLIQUE LINHA 3: SEGMENTED CONTROLS ---
+    var ly = 125 * globalScale;
+    var styleBtnW = (3 * toolGapX) + tBoxSize; 
+    var styleBtnH = 34 * globalScale;
+
+    var cxs = [
+        toolStartX + (1.5 * toolGapX),
+        toolStartX + (5.5 * toolGapX),
+        toolStartX + (9.5 * toolGapX),
+        toolStartX + (13.5 * toolGapX)
+    ];
+
+    if (mouseY > ly - styleBtnH / 2 && mouseY < ly + styleBtnH / 2) {
+        // Tema [FILL | DOTTED]
+        if (mouseX > cxs[0] - styleBtnW/2 && mouseX < cxs[0] + styleBtnW/2) {
+            setVisualTheme(mouseX < cxs[0] ? 'fill' : 'dotted'); return;
+        }
+        // Grelha [LINES | DOTS]
+        if (mouseX > cxs[1] - styleBtnW/2 && mouseX < cxs[1] + styleBtnW/2) {
+            currentGridStyle = mouseX < cxs[1] ? 'lines' : 'dots'; return;
+        }
+        // Artboard [F1 | F2 | F3]
+        if (mouseX > cxs[2] - styleBtnW/2 && mouseX < cxs[2] + styleBtnW/2) {
+            var startX = cxs[2] - styleBtnW/2;
+            var segW = styleBtnW / 3;
+            if (mouseX < startX + segW) currentArtboardIdx = 0;
+            else if (mouseX < startX + 2*segW) currentArtboardIdx = 1;
+            else currentArtboardIdx = 2;
+            updateArtboardBounds(); panX = 0; panY = 0; calculateLayout(); return;
+        }
+        // Orientação [PORTRAIT | LANDSCAPE]
+        if (mouseX > cxs[3] - styleBtnW/2 && mouseX < cxs[3] + styleBtnW/2) {
+            isLandscape = mouseX >= cxs[3];
+            updateArtboardBounds(); panX = 0; panY = 0; calculateLayout(); return;
+        }
+    }
+
+    // 4. Botões da Direita (Exportações)
+    var rightMargin = width - (35 * globalScale);
+    var idsRow1 = ["importar", "guardar", "eliminar", "eliminarAlfa"];
+    for (var j = 0; j < idsRow1.length; j++) {
+        var rx = rightMargin - (idsRow1.length - 1 - j) * toolGapX;
+        if (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2) {
+            if (idsRow1[j] === "importar") importProjectJSON();
+            if (idsRow1[j] === "guardar") exportProjectJSON();
+            if (idsRow1[j] === "eliminar") { saveHistory(); placedObjects = []; selectedObjects = []; rebuildCollisionMap(); }
+            if (idsRow1[j] === "eliminarAlfa") clearEntireAlphabet();
+            return;
+        }
+    }
+    var idsRow2 = ["letra", "alfa", "zip"];
+    for (var j = 0; j < idsRow2.length; j++) {
+        var rx = rightMargin - (idsRow2.length - 1 - j) * toolGapX;
+        if (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2) {
+            if (idsRow2[j] === "letra") exportCharacterSVG(currentChar);
+            if (idsRow2[j] === "alfa") exportAlphabetSVG();
+            if (idsRow2[j] === "zip") exportAlphabetZIP();
+            return;
+        }
+    }
+}
+
+function checkSidebarClick() {
+    var charCols = 3;
+    var charGapX = 45 * globalScale;
+    var charStartX = 30 * globalScale;
+    var charGapY = 45 * globalScale;
+    var cSize = 34 * globalScale;
+    var bottomPanelH = 150 * globalScale;
+
+    // A mesma matemática de segurança
+    var minSafeHeight = topBarHeight + bottomPanelH + (50 * globalScale);
+    var effectiveBottom = max(height, minSafeHeight);
+
+    var charStartY = topBarHeight + 30 * globalScale - alphabetScrollY;
+
+    for (var i = 0; i < characters.length; i++) {
+        var col = i % charCols;
+        var row = floor(i / charCols);
+        var x = charStartX + (col * charGapX);
+        var y = charStartY + (row * charGapY);
+
+        // Verificamos o clique respeitando a base virtual (effectiveBottom)
+        if (mouseY > topBarHeight && mouseY < effectiveBottom - bottomPanelH) {
+            if (mouseX > x - cSize / 2 && mouseX < x + cSize / 2 && mouseY > y - cSize / 2 && mouseY < y + cSize / 2) {
+                switchCharacter(characters[i]);
+                return;
+            }
+        }
+    }
+}
+
+function drawUI() {
+    var activeTooltip = null;
+    var tooltipX = 0;
+    var tooltipY = 0;
+
+    // --- 1. BARRA SUPERIOR ---
+    push(); fill(245); noStroke(); rectMode(CORNER); rect(0, 0, width, topBarHeight);
+    stroke(200); strokeWeight(1.5 * globalScale); line(0, topBarHeight, width, topBarHeight); pop();
+
+    var tBoxSize = 34 * globalScale;
+    var toolGapX = 45 * globalScale;
+    var toolStartX = 30 * globalScale;
+    var ty = 35 * globalScale;
+    var my = 80 * globalScale;
+
+    // --- LINHA 1: FERRAMENTAS ---
+    var toolsList = [
+        { img: toolIcons.mover, active: selectedModule == -2, color: [0, 130, 255], tip: "Move / Select" },
+        { img: toolIcons.limpar, active: selectedModule == -1, color: [255, 50, 50], tip: "Eraser" },
+        { img: toolIcons.moverTela, active: selectedModule == -3, color: [200, 150, 0], tip: "Pan Camera" },
+        { img: toolIcons.espelhoV, active: isMirrorModeV, color: [0, 200, 100], tip: "Vertical Symmetry" },
+        { img: toolIcons.espelhoH, active: isMirrorModeH, color: [0, 200, 100], tip: "Horizontal Symmetry" },
+        { img: toolIcons.grelhaMenor, active: showSmallGrid, color: [150, 150, 150], tip: "Toggle Grid" },
+        { img: toolIcons.centroV, active: showCenterV, color: [150, 50, 255], tip: "Vertical Center" },
+        { img: toolIcons.centroH, active: showCenterH, color: [150, 50, 255], tip: "Horizontal Center" },
+        { img: toolIcons.guias, active: showGuides, color: [200, 100, 150], tip: "Typographic Guides" },
+        { img: toolIcons.enquadrar, active: false, color: [100, 100, 100], tip: "Fit to Screen" },
+        { img: toolIcons.voltar, active: false, color: [100, 100, 100], tip: "Undo" },
+        { img: toolIcons.avancar, active: false, color: [100, 100, 100], tip: "Redo" }
+    ];
+
+    rectMode(CENTER); imageMode(CENTER);
+    for (var i = 0; i < toolsList.length; i++) {
+        var tx = toolStartX + (i * toolGapX);
+        var t = toolsList[i];
+        var isH = (mouseX > tx - tBoxSize / 2 && mouseX < tx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2);
+        if (isH) { activeTooltip = t.tip; tooltipX = tx; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
+        fill(t.active ? color(t.color[0], t.color[1], t.color[2], 30) : (isH ? 235 : 255));
+        stroke(t.active ? color(t.color[0], t.color[1], t.color[2]) : 200);
+        strokeWeight(1.5 * globalScale); rect(tx, ty, tBoxSize, tBoxSize, 6 * globalScale);
+        if (t.img) { tint(t.active ? color(t.color[0], t.color[1], t.color[2]) : (isH ? 40 : 80)); image(t.img, tx, ty, 20 * globalScale, 20 * globalScale); noTint(); }
+    }
+
+    // --- SLIDER E ROTAÇÃO (LINHA 1) ---
+    var sliderBoxCX = toolStartX + (14 * toolGapX);
+    fill(250); stroke(220); strokeWeight(1.5 * globalScale); rect(sliderBoxCX, ty, (4 * toolGapX) + tBoxSize, tBoxSize, 6 * globalScale);
+
+    var rotBoxW = (2 * toolGapX) + tBoxSize;
+    var rotBoxCX = toolStartX + (18 * toolGapX);
+    fill(250); stroke(220); strokeWeight(1.5 * globalScale); rect(rotBoxCX, ty, rotBoxW, tBoxSize, 6 * globalScale);
+
+    noStroke();
+    var hasActiveModule = (selectedModule >= 0 || selectedModule == -2);
+    fill(hasActiveModule ? [0, 130, 255] : 150); textAlign(CENTER, CENTER); textSize(10 * globalScale); textStyle(BOLD);
+    text(hasActiveModule ? "ROTATION: " + (currentRotation * 90) + "º" : "ROTATION: --", rotBoxCX, ty);
+    textStyle(NORMAL);
+
+    // --- LINHA 2: MÓDULOS ---
+    for (var i = 0; i < modules.length; i++) {
+        var mx = toolStartX + (i * toolGapX);
+        var isH = (mouseX > mx - tBoxSize / 2 && mouseX < mx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2);
+        if (isH) { activeTooltip = nf(i, 2); tooltipX = mx; tooltipY = my + tBoxSize / 2 + 15 * globalScale; }
+        fill(selectedModule == i ? [220, 240, 255] : (isH ? 235 : 250));
+        stroke(selectedModule == i ? [0, 130, 255] : 220);
+        strokeWeight(1.5 * globalScale); rect(mx, my, tBoxSize, tBoxSize, 6 * globalScale);
+        var dims = getModuleDims(i); var maxD = max(dims.len, dims.wid);
+        if (modules[i]) image(modules[i], mx, my, (dims.len / maxD) * (tBoxSize - 10), (dims.wid / maxD) * (tBoxSize - 10));
+    }
+
+    // --- LINHA 3: SEGMENTED CONTROLS ---
+    var ly = 125 * globalScale;
+    var styleBtnW = (3 * toolGapX) + tBoxSize; 
+    var styleBtnH = 34 * globalScale;
+
+    var cx1 = toolStartX + (1.5 * toolGapX);
+    var cx2 = toolStartX + (5.5 * toolGapX);
+    var cx3 = toolStartX + (9.5 * toolGapX);
+    var cx4 = toolStartX + (13.5 * toolGapX);
+
+    drawSegmentedControl(cx1, ly, styleBtnW, styleBtnH, ["Fill", "Dot"], currentVisualTheme === 'fill' ? 0 : 1);
+    drawSegmentedControl(cx2, ly, styleBtnW, styleBtnH, ["Line grid", "Dot grid"], currentGridStyle === 'lines' ? 0 : 1);
+    drawSegmentedControl(cx3, ly, styleBtnW, styleBtnH, ["F1", "F2", "F3"], currentArtboardIdx);
+    drawSegmentedControl(cx4, ly, styleBtnW, styleBtnH, ["Portrait", "Landscape"], isLandscape ? 1 : 0);
+
+    if (mouseY > ly - styleBtnH/2 && mouseY < ly + styleBtnH/2 && !showShortcutsModal) {
+        if (mouseX > cx3 - styleBtnW/2 && mouseX < cx3 + styleBtnW/2) {
+            var segW = styleBtnW / 3;
+            var startX = cx3 - styleBtnW/2;
+            if (mouseX < startX + segW) { activeTooltip = "Format 1 (690x990px)"; tooltipX = startX + segW/2; tooltipY = ly + styleBtnH/2 + 15*globalScale; }
+            else if (mouseX < startX + 2*segW) { activeTooltip = "Format 2 (990x1410px)"; tooltipX =  startX + 1.5*segW; tooltipY = ly + styleBtnH/2 + 15*globalScale; }
+            else { activeTooltip = "Format 3 (1410x1980px)"; tooltipX = startX + 2.5*segW; tooltipY = ly + styleBtnH/2 + 15*globalScale; }
+        }
+    }
+
+    // --- 4. BOTÕES DA DIREITA (DESENHO) ---
+    var rightMargin = width - (35 * globalScale);
+    var row1R = [{ id: "importar", img: toolIcons.importar, tip: "Import Project" },{ id: "guardar", img: toolIcons.guardar, tip: "Save Project" },{ id: "eliminar", img: toolIcons.limparLetra, isDestructive: true, tip: "Clear Artboard" },{ id: "eliminarAlfa", img: toolIcons.limparAlfabeto, isDestructive: true, tip: "Clear Alphabet" }];
+    for (var j = 0; j < row1R.length; j++) {
+        var rx = rightMargin - (row1R.length - 1 - j) * toolGapX;
+        var isH = (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2);
+        if (isH) { activeTooltip = row1R[j].tip; tooltipX = rx; tooltipY = ty + tBoxSize/2 + 15*globalScale; }
+        fill(row1R[j].isDestructive ? (isH ? [255, 200, 200] : [255, 230, 230]) : (isH ? 235 : 255));
+        stroke(row1R[j].isDestructive ? [255, 50, 50] : 200); strokeWeight(1.5 * globalScale); rect(rx, ty, tBoxSize, tBoxSize, 6 * globalScale);
+        if (row1R[j].img) { tint(row1R[j].isDestructive ? [255, 50, 50] : (isH ? 40 : 80)); image(row1R[j].img, rx, ty, 20*globalScale, 20*globalScale); noTint(); }
+    }
+    var row2R = [{ id: "letra", img: toolIcons.exportarLetra, tip: "Export letter SVG" },{ id: "alfa", img: toolIcons.exportarAlfabeto, tip: "Export alphabet SVG" },{ id: "zip", img: toolIcons.exportarZip, tip: "Export alphabet ZIP" }];
+    for (var j = 0; j < row2R.length; j++) {
+        var rx = rightMargin - (row2R.length - 1 - j) * toolGapX;
+        var isH = (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2);
+        if (isH) { activeTooltip = row2R[j].tip; tooltipX = rx; tooltipY = my + tBoxSize/2 + 15*globalScale; }
+        fill(isH ? [220, 255, 220] : 255); stroke(isH ? [0, 150, 0] : 200); strokeWeight(1.5 * globalScale); rect(rx, my, tBoxSize, tBoxSize, 6 * globalScale);
+        if (row2R[j].img) { tint(isH ? 40 : 80); image(row2R[j].img, rx, my, 20*globalScale, 20*globalScale); noTint(); }
+    }
+
+    // --- BARRA LATERAL (ALFABETO EM SCROLL) ---
+    fill(245); noStroke(); rectMode(CORNER); rect(0, topBarHeight, sidebarWidth, height - topBarHeight);
+    var charGapY = 45 * globalScale; var cSize = 34 * globalScale; var bottomPanelH = 150 * globalScale;
+    var minSafeHeight = topBarHeight + bottomPanelH + (50 * globalScale);
+    var effectiveBottom = max(height, minSafeHeight);
+
+    var availableHForChars = effectiveBottom - topBarHeight - bottomPanelH;
+    var charRows = Math.ceil(characters.length / 3);
+    var maxScroll = max(0, (charRows * charGapY + 20 * globalScale) - availableHForChars);
+    alphabetScrollY = constrain(alphabetScrollY, 0, maxScroll);
+    var charStartY = topBarHeight + 30 * globalScale - alphabetScrollY;
+
+    push(); drawingContext.save(); drawingContext.beginPath(); drawingContext.rect(0, topBarHeight, sidebarWidth, availableHForChars); drawingContext.clip();
+    textSize(12 * globalScale); textStyle(NORMAL); rectMode(CENTER);
+    for (var i = 0; i < characters.length; i++) {
+        var col = i % 3; var row = floor(i / 3); var x = toolStartX + (col * toolGapX); var y = charStartY + (row * charGapY);
+        if (y > topBarHeight - cSize && y < effectiveBottom - bottomPanelH + cSize) {
+            var isH = (mouseX > x - cSize / 2 && mouseX < x + cSize / 2 && mouseY > y - cSize / 2 && mouseY < y + cSize / 2 && mouseY > topBarHeight && mouseY < effectiveBottom - bottomPanelH);
+            if (characters[i] == currentChar) { fill(220); stroke(0); strokeWeight(1.5 * globalScale); } else if (isH) { fill(235); stroke(180); strokeWeight(1.5 * globalScale); } else { fill(255); stroke(200); strokeWeight(1.5 * globalScale); }
+            rect(x, y, cSize, cSize, 4 * globalScale);
+            if (isGridEmpty(characters[i])) { noStroke(); fill(characters[i] == currentChar ? 0 : (isH ? 80 : 150)); text(characters[i], x, y); } else { drawThumbnail(characters[i], x - cSize / 2 + 2 * globalScale, y - cSize / 2 + 2 * globalScale, cSize - 4 * globalScale); }
+        }
+    }
+    drawingContext.restore(); pop();
+
+    // --- RODAPÉ FIXO DE CONFIGURAÇÕES ---
+    fill(245); noStroke(); rectMode(CORNER); rect(0, effectiveBottom - bottomPanelH, sidebarWidth, bottomPanelH);
+    stroke(220); strokeWeight(1.5 * globalScale); line(0, effectiveBottom - bottomPanelH, sidebarWidth, effectiveBottom - bottomPanelH);
+
+    var btnW_largo = (2 * toolGapX) + cSize; var btnH = 34 * globalScale; var btnX_centro = toolStartX + toolGapX;
+    
+    // Posicionamento
+    btnLetterpress.x = btnX_centro; btnLetterpress.y = effectiveBottom - 115 * globalScale; btnLetterpress.w = btnW_largo; btnLetterpress.h = btnH;
+    btnStencil.x = btnX_centro; btnStencil.y = effectiveBottom - 70 * globalScale; btnStencil.w = btnW_largo; btnStencil.h = btnH;
+    btnAtalhos.w = btnH; btnAtalhos.h = btnH; btnAtalhos.x = toolStartX; btnAtalhos.y = effectiveBottom - 25 * globalScale;
+    btnFlip.w = btnH; btnFlip.h = btnH; btnFlip.x = toolStartX + toolGapX; btnFlip.y = effectiveBottom - 25 * globalScale;
+    
+    textSize(8.5 * globalScale); textStyle(BOLD); rectMode(CENTER);
+
+    var isOffH = (mouseX > btnLetterpress.x - btnLetterpress.w / 2 && mouseX < btnLetterpress.x + btnLetterpress.w / 2 && mouseY > btnLetterpress.y - btnLetterpress.h / 2 && mouseY < btnLetterpress.y + btnLetterpress.h / 2);
+    fill(!isOverlapMode ? [0, 130, 255, 30] : (isOffH ? 235 : 255)); stroke(!isOverlapMode ? [0, 130, 255] : 200); strokeWeight(1.5 * globalScale);
+    rect(btnLetterpress.x, btnLetterpress.y, btnLetterpress.w, btnLetterpress.h, 6 * globalScale);
+    noStroke(); fill(!isOverlapMode ? [0, 130, 255] : 150); text("Letterpress mode", btnLetterpress.x, btnLetterpress.y);
+
+    var isOnH = (mouseX > btnStencil.x - btnStencil.w / 2 && mouseX < btnStencil.x + btnStencil.w / 2 && mouseY > btnStencil.y - btnStencil.h / 2 && mouseY < btnStencil.y + btnStencil.h / 2);
+    fill(isOverlapMode ? [0, 130, 255, 30] : (isOnH ? 235 : 255)); stroke(isOverlapMode ? [0, 130, 255] : 200); strokeWeight(1.5 * globalScale);
+    rect(btnStencil.x, btnStencil.y, btnStencil.w, btnStencil.h, 6 * globalScale);
+    noStroke(); fill(isOverlapMode ? [0, 130, 255] : 150); text("Free mode", btnStencil.x, btnStencil.y);
+
+    var isAtH = !showShortcutsModal && (mouseX > btnAtalhos.x - btnAtalhos.w / 2 && mouseX < btnAtalhos.x + btnAtalhos.w / 2 && mouseY > btnAtalhos.y - btnAtalhos.h / 2 && mouseY < btnAtalhos.y + btnAtalhos.h / 2);
+    fill(showShortcutsModal ? 220 : (isAtH ? 235 : 255)); stroke(showShortcutsModal ? 0 : 200); strokeWeight(1.5 * globalScale);
+    rect(btnAtalhos.x, btnAtalhos.y, btnAtalhos.w, btnAtalhos.h, 6 * globalScale);
+    if (toolIcons.atalhos) { tint(isAtH ? 40 : 80); image(toolIcons.atalhos, btnAtalhos.x, btnAtalhos.y, 20 * globalScale, 20 * globalScale); noTint(); }
+
+    // BOTÃO FLIP (Espelhar)
+    var isFlipH = !isOverlapMode && !showShortcutsModal && (mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2);
+    push();
+    if (isOverlapMode) { fill(245, 150); stroke(220, 150); } // Desativado no modo Free
+    else { fill(isFlipH ? 235 : 255); stroke(200); }
+    strokeWeight(1.5 * globalScale); rect(btnFlip.x, btnFlip.y, btnFlip.w, btnFlip.h, 6 * globalScale);
+    noStroke(); fill(isOverlapMode ? 180 : 100); textAlign(CENTER, CENTER); textSize(9 * globalScale); textStyle(BOLD); text("FLIP", btnFlip.x, btnFlip.y);
+    pop();
+
+    if (isOffH && isOverlapMode) { activeTooltip = "Activate"; tooltipX = sidebarWidth + 40 * globalScale; tooltipY = btnLetterpress.y; }
+    if (isOnH && !isOverlapMode) { activeTooltip = "Activate"; tooltipX = sidebarWidth + 40 * globalScale; tooltipY = btnStencil.y; }
+    if (isAtH) { activeTooltip = "Keyboard Shortcuts"; tooltipX = sidebarWidth + 70 * globalScale; tooltipY = btnAtalhos.y; }
+    if (isFlipH && !isOverlapMode) { activeTooltip = "Flip Horizontal Composition"; tooltipX = sidebarWidth + 70 * globalScale; tooltipY = btnFlip.y; }
+
+    stroke(200); strokeWeight(1.5 * globalScale); line(sidebarWidth, topBarHeight, sidebarWidth, effectiveBottom);
+
+    if (activeTooltip && !showShortcutsModal) {
+        push(); textSize(10 * globalScale); textStyle(NORMAL); var tw = textWidth(activeTooltip) + 16 * globalScale;
+        tooltipX = constrain(tooltipX, tw / 2 + 10, width - tw / 2 - 10);
+        rectMode(CENTER); fill(30, 230); noStroke(); rect(tooltipX, tooltipY, tw, 22 * globalScale, 4 * globalScale);
+        fill(255); textAlign(CENTER, CENTER); text(activeTooltip, tooltipX, tooltipY); pop();
+    }
+}
+
+function drawShortcutsModal() {
+    if (!showShortcutsModal) return;
+
+    rectMode(CORNER); fill(0, 160); noStroke(); rect(0, 0, width, height);
+    rectMode(CENTER);
+    var mw = 550 * globalScale; var mh = 560 * globalScale;
+    var mx = width / 2; var my = height / 2;
+
+    fill(255); stroke(200); strokeWeight(2 * globalScale); rect(mx, my, mw, mh, 16 * globalScale);
+
+    noStroke(); fill(0); textAlign(CENTER, CENTER); textSize(20 * globalScale);
+    text("Atalhos", mx, my - mh / 2 + 40 * globalScale);
+
+    var closeX = mx + mw / 2 - 30 * globalScale; var closeY = my - mh / 2 + 30 * globalScale;
+    var isCloseHovered = dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale;
+
+    fill(isCloseHovered ? 255 : 240);
+    if (isCloseHovered) fill(255, 100, 100);
+    circle(closeX, closeY, 28 * globalScale);
+    fill(isCloseHovered ? 255 : 150); textSize(14 * globalScale);
+    text("✕", closeX, closeY + 1 * globalScale);
+
+    var shortcuts = [
+        { key: "R", desc: "Rodar o módulo selecionado" },
+        { key: "H", desc: "Espelhar Composição Inteira" }, // <- NOVO ATALHO
+        { key: "F", desc: "Enquadrar o desenho na janela" },
+        { key: "Espaço + Arrastar", desc: "Mover artboard" },
+        { key: "Delete / Backspace", desc: "Apagar módulo ou seleção" },
+        { key: "G", desc: "Ligar / Desligar as grelhas" },
+        { key: "C", desc: "Centrar as coordenadas (0,0)" },
+        { key: "S", desc: "Guardar imagem (PNG)" },
+        { key: "Shift + S", desc: "Guardar Projeto (JSON)" },
+        { key: "Shift + O", desc: "Abrir Projeto (JSON)" },
+        { key: "Shift + E", desc: "Exportar a Letra Atual (SVG)" },
+        { key: "Shift + A", desc: "Exportar o Alfabeto Completo (SVG)" },
+        { key: "Shift + Z", desc: "Exportar Ficheiro ZIP (Letras Isoladas)" }
+    ];
+
+    var listStartY = my - mh / 2 + 100 * globalScale;
+    var lineH = 34 * globalScale;
+
+    for (var i = 0; i < shortcuts.length; i++) {
+        var y = listStartY + i * lineH;
+        fill(0, 130, 255); textAlign(RIGHT, CENTER); textSize(13 * globalScale);
+        text(shortcuts[i].key, mx - 20 * globalScale, y);
+        fill(80); textAlign(LEFT, CENTER); text(shortcuts[i].desc, mx + 20 * globalScale, y);
+
+        if (i < shortcuts.length - 1) {
+            stroke(240); strokeWeight(1);
+            line(mx - mw / 2 + 50 * globalScale, y + lineH / 2, mx + mw / 2 - 50 * globalScale, y + lineH / 2);
+            noStroke();
+        }
+    }
+}
+
+function keyPressed() {
+    if (key == 's' || key == 'S') {
+        if (!keyIsDown(SHIFT)) {
+            saveCanvas(currentChar, 'png');
+        }
+    }
+    if (key == 'c' || key == 'C') { panX = 0; panY = 0; calculateLayout(); }
+    
+    // NOVO ATALHO DE ESPELHAR (Letra H)
+    if (key == 'h' || key == 'H') {
+        flipCompositionHorizontal();
+    }
+
+    if (key == 'S' && keyIsDown(SHIFT)) exportProjectJSON(); 
+    if (key == 'O' && keyIsDown(SHIFT)) importProjectJSON(); 
+    if (key == 'E' && keyIsDown(SHIFT)) exportCharacterSVG(currentChar); 
+    if (key == 'A' && keyIsDown(SHIFT)) exportAlphabetSVG(); 
+    if (key == 'Z' && keyIsDown(SHIFT)) exportAlphabetZIP(); 
+
+    if (keyCode == DELETE || keyCode == BACKSPACE) {
+        if ((selectedModule === -2 || selectedModule === -1) && selectedObjects.length > 0) {
+            saveHistory();
+            for (var s = 0; s < selectedObjects.length; s++) {
+                var groupToDelete = getMirroredGroup(selectedObjects[s]);
+                for (var g = 0; g < groupToDelete.length; g++) {
+                    var m = groupToDelete[g];
+                    for (var j = placedObjects.length - 1; j >= 0; j--) {
+                        var p = placedObjects[j];
+                        if (p.type == m.type && p.x == m.x && p.y == m.y && p.rot == m.rot) {
+                            placedObjects.splice(j, 1);
+                            removeObjFromCollisionMap(p);
+                            break;
+                        }
+                    }
+                }
+            }
+            selectedObjects = []; 
+        }
+    }
+
+    if (key == 'g' || key == 'G') showSmallGrid = !showSmallGrid;
+
+    if (key == 'r' || key == 'R') {
+        if (selectedModule >= 0) {
+            currentRotation++;
+            if (currentRotation > 3) currentRotation = 0;
+        } else if (selectedModule == -2) {
+            if (isDraggingSelection) {
+                revolveGroup(dragOriginals);
+            } else if (selectedObjects.length > 0) {
+                rotateSelectedObjects();
+            }
+        }
+    }
+}
+
+function windowResized() {
+    initAllCharacters();
+    if (currentChar) {
+        saveCharacter(currentChar);
+    }
+    resizeCanvas(windowWidth, windowHeight);
+    calculateLayout();
+    loadCharacter(currentChar);
+}
+
+function mouseDragged() {
+    // Agora o Mover Tela (-3) também arrasta o ecrã
+    if (keyIsDown(32) || mouseButton === CENTER || selectedModule === -3) {
+        panX += mouseX - pmouseX;
+        panY += mouseY - pmouseY;
+        calculateLayout();
+        return false;
+    }
+}
+
+function fitToScreen() {
+    if (placedObjects.length === 0) {
+        panX = 0; panY = 0; calculateLayout(); return;
+    }
+
+    // 1. Procurar os limites máximos e mínimos do desenho atual
+    var minX = 99999, maxX = -99999, minY = 99999, maxY = -99999;
+
+    for (var k = 0; k < placedObjects.length; k++) {
+        var o = placedObjects[k];
+        var dims = getModuleDims(o.type);
+        var v = getFillVectors(o.rot);
+
+        var corners = [
+            { i: 0, j: 0 },
+            { i: dims.len, j: 0 },
+            { i: 0, j: dims.wid },
+            { i: dims.len, j: dims.wid }
+        ];
+
+        for (var c = 0; c < corners.length; c++) {
+            var px = o.x + (v.p.x * corners[c].i) + (v.s.x * corners[c].j);
+            var py = o.y + (v.p.y * corners[c].i) + (v.s.y * corners[c].j);
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
+        }
+    }
+
+    var bbW = maxX - minX;
+    var bbH = maxY - minY;
+    var bboxCenterX = minX + (bbW / 2);
+    var bboxCenterY = minY + (bbH / 2);
+
+    // 2. Calcular o zoom ideal com uma margem de segurança de 80px
+    var margin = 80;
+    var safeW = availableW - (margin * 2);
+    var safeH = availableH - (margin * 2);
+
+    if (bbW > 0 && bbH > 0) {
+        var idealTileSize = min(safeW / bbW, safeH / bbH);
+        var newTileSize = constrain(floor(idealTileSize), 5, 60);
+        tileSizeSlider.value(newTileSize);
+        tileSize = newTileSize;
+    }
+
+    // 3. Mover a câmara para o centro geométrico exato do desenho
+    panX = -(bboxCenterX - GRID_CX) * tileSize;
+    panY = -(bboxCenterY - GRID_CY) * tileSize;
+
+    calculateLayout();
+}
+
+function getDrawingCenterGrid() {
+    if (placedObjects.length === 0) return { x: GRID_CX, y: GRID_CY };
+
+    var minX = 99999, maxX = -99999, minY = 99999, maxY = -99999;
+
+    for (var k = 0; k < placedObjects.length; k++) {
+        var o = placedObjects[k];
+        var dims = getModuleDims(o.type);
+        var v = getFillVectors(o.rot);
+
+        // Verificamos os cantos para precisão absoluta
+        var corners = [{ i: 0, j: 0 }, { i: dims.len, j: dims.wid }];
+        for (var c = 0; c < corners.length; c++) {
+            var px = o.x + (v.p.x * corners[c].i) + (v.s.x * corners[c].j);
+            var py = o.y + (v.p.y * corners[c].i) + (v.s.y * corners[c].j);
+            minX = min(minX, px); maxX = max(maxX, px);
+            minY = min(minY, py); maxY = max(maxY, py);
+        }
+    }
+    return { x: minX + (maxX - minX) / 2, y: minY + (maxY - minY) / 2 };
+}
+
+function revolveGroup(group) {
+    if (group.length === 0) return;
+    var minX = 99999, maxX = -99999, minY = 99999, maxY = -99999;
+
+    // 1. Encontra a bounding box do grupo
+    for (var k = 0; k < group.length; k++) {
+        var o = group[k];
+        var dims = getModuleDims(o.type);
+        var v = getFillVectors(o.rot);
+        var corners = [
+            { i: 0, j: 0 }, { i: dims.len - 1, j: 0 },
+            { i: 0, j: dims.wid - 1 }, { i: dims.len - 1, j: dims.wid - 1 }
+        ];
+        for (var c = 0; c < corners.length; c++) {
+            var px = o.x + v.p.x * corners[c].i + v.s.x * corners[c].j;
+            var py = o.y + v.p.y * corners[c].i + v.s.y * corners[c].j;
+            if (px < minX) minX = px; if (px > maxX) maxX = px;
+            if (py < minY) minY = py; if (py > maxY) maxY = py;
+        }
+    }
+
+    // 2. Calcula o centro exato
+    var cx = (minX + maxX) / 2;
+    var cy = (minY + maxY) / 2;
+
+    // Garante que o centro bate certo com o compasso da grelha
+    if (Math.abs(cx % 1) !== Math.abs(cy % 1)) cx += 0.5;
+
+    // 3. Aplica a translação de 90º a todas as peças
+    for (var k = 0; k < group.length; k++) {
+        var o = group[k];
+        var newX = cx - (o.y - cy);
+        var newY = cy + (o.x - cx);
+        o.x = newX;
+        o.y = newY;
+        o.rot = (o.rot + 1) % 4;
+    }
+}
+
+function rotateSelectedObjects() {
+    if (selectedObjects.length === 0) return;
+    saveHistory();
+
+    // Remove temporariamente da grelha
+    for (var i = 0; i < selectedObjects.length; i++) {
+        var idx = placedObjects.indexOf(selectedObjects[i]);
+        if (idx > -1) placedObjects.splice(idx, 1);
+        removeObjFromCollisionMap(selectedObjects[i]);
+    }
+
+    // Clona e roda
+    var groupToTest = JSON.parse(JSON.stringify(selectedObjects));
+    revolveGroup(groupToTest);
+
+    // Expande para incluir os espelhos visuais ativos
+    var fullGroupToTest = [];
+    for (var k = 0; k < groupToTest.length; k++) {
+        var mirrors = getMirroredGroup(groupToTest[k]);
+        for (var m = 0; m < mirrors.length; m++) {
+            if (!containsObj(fullGroupToTest, mirrors[m])) {
+                fullGroupToTest.push(mirrors[m]);
+            }
+        }
+    }
+
+    // Testa se a nova rotação cabe no espaço
+    if (checkPlacementValidGroup(fullGroupToTest)) {
+        selectedObjects = [];
+        for (var i = 0; i < fullGroupToTest.length; i++) {
+            placedObjects.push(fullGroupToTest[i]);
+            addObjToCollisionMap(fullGroupToTest[i]);
+        }
+        selectedObjects = fullGroupToTest.slice(0, groupToTest.length);
+    } else {
+        // Reverte se bater nalguma peça vizinha
+        for (var i = 0; i < selectedObjects.length; i++) {
+            placedObjects.push(selectedObjects[i]);
+            addObjToCollisionMap(selectedObjects[i]);
+        }
+    }
+}
+
+function exportProjectJSON() {
+    // 1. GUARDA O ESTADO ATUAL (A linha mágica que faltava!)
+    saveCharacter(currentChar);
+
+    // 2. Prepara o "pacote" com a memória atual do alfabeto
+    var projectData = {
+        version: "1.0",
+        appName: "Plataforma Modular Tipográfica",
+        characters: storedCharacters
+    };
+
+    // 3. Converte a memória num ficheiro de texto JSON
+    var jsonStr = JSON.stringify(projectData);
+    var blob = new Blob([jsonStr], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+
+    // 4. Força o navegador a descarregar o ficheiro
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "meu-alfabeto-modular.json";
+    document.body.appendChild(a); // Necessário no Firefox
+    a.click();
+
+    // 5. Limpa a memória temporária
+    setTimeout(function () {
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    }, 0);
+}
+
+function importProjectJSON() {
+    // 1. Cria um elemento input real
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+
+    // O SEGREDO: Em vez de 'display: none', escondemos o botão fora do ecrã
+    // Isto impede que o Safari/Firefox bloqueiem a abertura da janela!
+    input.style.position = 'absolute';
+    input.style.left = '-9999px';
+
+    document.body.appendChild(input);
+
+    // 2. O que acontece quando se escolhe o ficheiro:
+    input.onchange = function (e) {
+        var file = e.target.files[0];
+
+        if (!file) {
+            document.body.removeChild(input);
+            return;
+        }
+
+        var reader = new FileReader();
+        reader.onload = function (event) {
+            try {
+                // Lê e tenta converter de volta para a memória da plataforma
+                var data = JSON.parse(event.target.result);
+
+                if (data && data.characters) {
+                    storedCharacters = data.characters; // Atualiza a memória global
+
+                    panX = 0; // Centra a câmara para evitar que o projeto carregue "perdido" no espaço
+                    panY = 0;
+
+                    loadCharacter(currentChar);         // Atualiza a grelha visual
+                    calculateLayout();                  // Refaz as matemáticas
+                } else {
+                    alert("O ficheiro não parece ser um projeto válido desta plataforma.");
+                }
+            } catch (err) {
+                alert("Erro ao ler o ficheiro JSON.");
+            }
+
+            // Limpa o botão invisível da página no final para não deixar rasto
+            document.body.removeChild(input);
+        };
+        reader.readAsText(file);
+    };
+
+    // 3. Simula o clique e abre finalmente a janela do sistema operativo
+    input.click();
+}
+
+function exportCharacterSVG(charToExport) {
+    if (charToExport === currentChar) {
+        saveCharacter(currentChar);
+    }
+
+    var objs = storedCharacters[charToExport] ? storedCharacters[charToExport].objects : [];
+
+    if (!objs || objs.length === 0) {
+        alert("A letra '" + charToExport + "' está vazia! Não há nada para exportar.");
+        return;
+    }
+
+    // 1. Calcular a Bounding Box VISUAL EXATA (para colar a arte perfeitamente ao Artboard)
+    var minX = 99999, maxX = -99999, minY = 99999, maxY = -99999;
+
+    for (var k = 0; k < objs.length; k++) {
+        var o = objs[k];
+        var dims = getModuleDims(o.type);
+
+        // Centro exato da célula pivô
+        var pivotX = o.x + 0.5;
+        var pivotY = o.y + 0.5;
+
+        // Offset visual e metades das dimensões (Tradução pura do desenho do ecrã)
+        var offX = (dims.len - 1) * 0.5;
+        var offY = (dims.wid - 1) * 0.5;
+        var hw = dims.len / 2;
+        var hh = dims.wid / 2;
+
+        // 4 cantos do módulo (antes da rotação)
+        var localCorners = [
+            { x: offX - hw, y: offY - hh },
+            { x: offX + hw, y: offY - hh },
+            { x: offX + hw, y: offY + hh },
+            { x: offX - hw, y: offY + hh }
+        ];
+
+        // Aplica a rotação geométrica aos 4 cantos
+        for (var c = 0; c < 4; c++) {
+            var lx = localCorners[c].x;
+            var ly = localCorners[c].y;
+            var rx = lx, ry = ly;
+
+            if (o.rot === 1) { rx = -ly; ry = lx; }
+            else if (o.rot === 2) { rx = -lx; ry = -ly; }
+            else if (o.rot === 3) { rx = ly; ry = -lx; }
+
+            var gx = pivotX + rx;
+            var gy = pivotY + ry;
+
+            // Expande a caixa do Artboard se a peça tocar mais longe
+            if (gx < minX) minX = gx;
+            if (gx > maxX) maxX = gx;
+            if (gy < minY) minY = gy;
+            if (gy > maxY) maxY = gy;
+        }
+    }
+
+    // Tamanho grande para garantir qualidade
+    var exportScale = 50;
+    var bbW = (maxX - minX) * exportScale;
+    var bbH = (maxY - minY) * exportScale;
+
+    // 2. Construir o código nativo do SVG Final
+    var svgStr = '<?xml version="1.0" encoding="utf-8"?>\n';
+    svgStr += '<svg xmlns="http://www.w3.org/2000/svg" width="' + bbW + '" height="' + bbH + '" viewBox="0 0 ' + bbW + ' ' + bbH + '">\n';
+
+    for (var k = 0; k < objs.length; k++) {
+        var o = objs[k];
+        var dims = getModuleDims(o.type);
+
+        // Posiciona a âncora de cada peça em relação ao novo Artboard recalculado
+        var svgPivotX = (o.x + 0.5 - minX) * exportScale;
+        var svgPivotY = (o.y + 0.5 - minY) * exportScale;
+
+        var drawW = dims.len * exportScale;
+        var drawH = dims.wid * exportScale;
+        var rotDeg = o.rot * 90;
+
+        // Extração limpa do código SVG do módulo
+        var rawCode = moduleSVGStrings[o.type].join(' ');
+        var svgStart = rawCode.indexOf('<svg');
+        var closeBracket = rawCode.indexOf('>', svgStart);
+        var endIndex = rawCode.lastIndexOf('</svg>');
+        var innerSVG = rawCode.substring(closeBracket + 1, endIndex);
+
+        // Ler proporções originais
+        var vbX = 0, vbY = 0, vbW = 100, vbH = 100;
+        var viewBoxMatch = rawCode.match(/viewBox=["'](.*?)["']/i);
+
+        if (viewBoxMatch) {
+            var vbVals = viewBoxMatch[1].trim().split(/[\s,]+/);
+            if (vbVals.length === 4) {
+                vbX = parseFloat(vbVals[0]);
+                vbY = parseFloat(vbVals[1]);
+                vbW = parseFloat(vbVals[2]);
+                vbH = parseFloat(vbVals[3]);
+            }
+        } else {
+            var wMatch = rawCode.match(/width=["'](.*?)["']/i);
+            var hMatch = rawCode.match(/height=["'](.*?)["']/i);
+            if (wMatch) vbW = parseFloat(wMatch[1].replace(/[^0-9.]/g, ''));
+            if (hMatch) vbH = parseFloat(hMatch[1].replace(/[^0-9.]/g, ''));
+        }
+
+        // Fator de escala exato para não distorcer formas curvas
+        var scaleX = drawW / vbW;
+        var scaleY = drawH / vbH;
+
+        // 3. O Illustrator adora Matrizes de Transformação separadas (Grupos <g> dentro de Grupos <g>)
+        svgStr += '  <!-- Módulo ' + nf(o.type, 2) + ' -->\n';
+        svgStr += '  <g transform="translate(' + svgPivotX + ' ' + svgPivotY + ') rotate(' + rotDeg + ')">\n';
+        svgStr += '    <g transform="translate(' + (-exportScale / 2) + ' ' + (-exportScale / 2) + ') scale(' + scaleX + ' ' + scaleY + ') translate(' + (-vbX) + ' ' + (-vbY) + ')">\n';
+        svgStr += '      ' + innerSVG + '\n';
+        svgStr += '    </g>\n';
+        svgStr += '  </g>\n';
+    }
+
+    svgStr += '</svg>';
+
+    // 4. Download Automático
+    var blob = new Blob([svgStr], { type: "image/svg+xml" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "Letra_" + charToExport + "_Vetores.svg";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    }, 0);
+}
+
+function exportAlphabetSVG() {
+    // 1. Atualiza a memória com o que está no ecrã neste momento
+    saveCharacter(currentChar);
+
+    var lettersToExport = [];
+
+    // 2. Filtra apenas as letras que têm desenho
+    for (var i = 0; i < characters.length; i++) {
+        var char = characters[i];
+        if (storedCharacters[char] && storedCharacters[char].objects.length > 0) {
+            lettersToExport.push({ char: char, objs: storedCharacters[char].objects });
+        }
+    }
+
+    if (lettersToExport.length === 0) {
+        alert("O alfabeto está vazio! Desenhe pelo menos uma letra.");
+        return;
+    }
+
+    // 3. Configurações da Grelha do Mega SVG
+    var exportScale = 50;
+    var cols = 6; // 6 letras por linha
+    var rows = Math.ceil(lettersToExport.length / cols);
+
+    // Estimativa de um espaço seguro por letra (ex: 20x20 módulos)
+    var cellW = 20 * exportScale;
+    var cellH = 20 * exportScale;
+    var padding = 2 * exportScale;
+
+    var totalW = cols * (cellW + padding) + padding;
+    var totalH = rows * (cellH + padding) + padding;
+
+    // 4. Construir o Cabeçalho do SVG
+    var svgStr = '<?xml version="1.0" encoding="utf-8"?>\n';
+    svgStr += '<svg xmlns="http://www.w3.org/2000/svg" width="' + totalW + '" height="' + totalH + '" viewBox="0 0 ' + totalW + ' ' + totalH + '">\n';
+
+    // Fundo branco opcional (ajuda a visualizar no browser)
+    svgStr += '  <rect width="100%" height="100%" fill="#ffffff" />\n';
+
+    // 5. Desenhar cada letra na sua "célula"
+    for (var L = 0; L < lettersToExport.length; L++) {
+        var item = lettersToExport[L];
+        var col = L % cols;
+        var row = Math.floor(L / cols);
+
+        var cellX = padding + col * (cellW + padding);
+        var cellY = padding + row * (cellH + padding);
+
+        svgStr += '  <!-- LETRA ' + item.char + ' -->\n';
+        svgStr += '  <g transform="translate(' + cellX + ' ' + cellY + ')">\n';
+
+        // Colocar uma etiqueta subtil no topo da célula para o autor saber que letra é
+        svgStr += '    <text x="0" y="-10" font-family="sans-serif" font-size="24" fill="#999999">' + item.char + '</text>\n';
+
+        var objs = item.objs;
+        for (var k = 0; k < objs.length; k++) {
+            var o = objs[k];
+            var dims = getModuleDims(o.type);
+
+            // Relativo ao centro da grelha global do P5 (GRID_CX/CY)
+            var localX = (o.x - GRID_CX + 10) * exportScale; // +10 para empurrar para o meio da célula
+            var localY = (o.y - GRID_CY + 10) * exportScale;
+
+            // Ajuste do pivô visual
+            var svgPivotX = localX + (exportScale / 2);
+            var svgPivotY = localY + (exportScale / 2);
+
+            var drawW = dims.len * exportScale;
+            var drawH = dims.wid * exportScale;
+            var rotDeg = o.rot * 90;
+
+            var rawCode = moduleSVGStrings[o.type].join(' ');
+            var svgStart = rawCode.indexOf('<svg');
+            var closeBracket = rawCode.indexOf('>', svgStart);
+            var endIndex = rawCode.lastIndexOf('</svg>');
+            var innerSVG = rawCode.substring(closeBracket + 1, endIndex);
+
+            var vbX = 0, vbY = 0, vbW = 100, vbH = 100;
+            var viewBoxMatch = rawCode.match(/viewBox=["'](.*?)["']/i);
+
+            if (viewBoxMatch) {
+                var vbVals = viewBoxMatch[1].trim().split(/[\s,]+/);
+                if (vbVals.length === 4) {
+                    vbX = parseFloat(vbVals[0]); vbY = parseFloat(vbVals[1]);
+                    vbW = parseFloat(vbVals[2]); vbH = parseFloat(vbVals[3]);
+                }
+            }
+
+            var scaleX = drawW / vbW;
+            var scaleY = drawH / vbH;
+
+            // Insere o módulo
+            svgStr += '    <g transform="translate(' + svgPivotX + ' ' + svgPivotY + ') rotate(' + rotDeg + ')">\n';
+            svgStr += '      <g transform="translate(' + (-exportScale / 2) + ' ' + (-exportScale / 2) + ') scale(' + scaleX + ' ' + scaleY + ') translate(' + (-vbX) + ' ' + (-vbY) + ')">\n';
+            svgStr += '        ' + innerSVG + '\n';
+            svgStr += '      </g>\n';
+            svgStr += '    </g>\n';
+        }
+        svgStr += '  </g>\n';
+    }
+
+    svgStr += '</svg>';
+
+    // 6. Download
+    var blob = new Blob([svgStr], { type: "image/svg+xml" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "Alfabeto_Completo.svg";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    }, 0);
+}
+
+function exportAlphabetZIP() {
+    // 1. Verifica se a biblioteca JSZip foi bem carregada no HTML
+    if (typeof JSZip === 'undefined') {
+        alert("Erro: Para exportar em ZIP, precisa de adicionar o link do JSZip no seu ficheiro index.html.");
+        return;
+    }
+
+    // 2. Atualiza a memória com o que está no ecrã
+    saveCharacter(currentChar);
+
+    var zip = new JSZip(); // Cria o nosso "saco" virtual
+    var hasLetters = false;
+
+    // 3. Percorre todo o alfabeto à procura de letras com desenho
+    for (var i = 0; i < characters.length; i++) {
+        var charToExport = characters[i];
+        var objs = storedCharacters[charToExport] ? storedCharacters[charToExport].objects : [];
+
+        if (objs && objs.length > 0) {
+            hasLetters = true;
+
+            // --- CÁLCULO EXATO DA LETRA (Tal como na exportação isolada) ---
+            var minX = 99999, maxX = -99999, minY = 99999, maxY = -99999;
+            for (var k = 0; k < objs.length; k++) {
+                var o = objs[k];
+                var dims = getModuleDims(o.type);
+                var pivotX = o.x + 0.5; var pivotY = o.y + 0.5;
+                var offX = (dims.len - 1) * 0.5; var offY = (dims.wid - 1) * 0.5;
+                var hw = dims.len / 2; var hh = dims.wid / 2;
+                var localCorners = [
+                    { x: offX - hw, y: offY - hh }, { x: offX + hw, y: offY - hh },
+                    { x: offX + hw, y: offY + hh }, { x: offX - hw, y: offY + hh }
+                ];
+                for (var c = 0; c < 4; c++) {
+                    var lx = localCorners[c].x, ly = localCorners[c].y;
+                    var rx = lx, ry = ly;
+                    if (o.rot === 1) { rx = -ly; ry = lx; }
+                    else if (o.rot === 2) { rx = -lx; ry = -ly; }
+                    else if (o.rot === 3) { rx = ly; ry = -lx; }
+                    var gx = pivotX + rx; var gy = pivotY + ry;
+                    if (gx < minX) minX = gx; if (gx > maxX) maxX = gx;
+                    if (gy < minY) minY = gy; if (gy > maxY) maxY = gy;
+                }
+            }
+
+            var exportScale = 50;
+            var bbW = (maxX - minX) * exportScale;
+            var bbH = (maxY - minY) * exportScale;
+
+            var svgStr = '<?xml version="1.0" encoding="utf-8"?>\n';
+            svgStr += '<svg xmlns="http://www.w3.org/2000/svg" width="' + bbW + '" height="' + bbH + '" viewBox="0 0 ' + bbW + ' ' + bbH + '">\n';
+
+            for (var k = 0; k < objs.length; k++) {
+                var o = objs[k];
+                var dims = getModuleDims(o.type);
+                var svgPivotX = (o.x + 0.5 - minX) * exportScale;
+                var svgPivotY = (o.y + 0.5 - minY) * exportScale;
+                var drawW = dims.len * exportScale;
+                var drawH = dims.wid * exportScale;
+                var rotDeg = o.rot * 90;
+
+                var rawCode = moduleSVGStrings[o.type].join(' ');
+                var svgStart = rawCode.indexOf('<svg');
+                var closeBracket = rawCode.indexOf('>', svgStart);
+                var endIndex = rawCode.lastIndexOf('</svg>');
+                var innerSVG = rawCode.substring(closeBracket + 1, endIndex);
+
+                var vbX = 0, vbY = 0, vbW = 100, vbH = 100;
+                var viewBoxMatch = rawCode.match(/viewBox=["'](.*?)["']/i);
+                if (viewBoxMatch) {
+                    var vbVals = viewBoxMatch[1].trim().split(/[\s,]+/);
+                    if (vbVals.length === 4) {
+                        vbX = parseFloat(vbVals[0]); vbY = parseFloat(vbVals[1]);
+                        vbW = parseFloat(vbVals[2]); vbH = parseFloat(vbVals[3]);
+                    }
+                } else {
+                    var wMatch = rawCode.match(/width=["'](.*?)["']/i);
+                    var hMatch = rawCode.match(/height=["'](.*?)["']/i);
+                    if (wMatch) vbW = parseFloat(wMatch[1].replace(/[^0-9.]/g, ''));
+                    if (hMatch) vbH = parseFloat(hMatch[1].replace(/[^0-9.]/g, ''));
+                }
+
+                var scaleX = drawW / vbW;
+                var scaleY = drawH / vbH;
+
+                svgStr += '  <!-- Módulo ' + nf(o.type, 2) + ' -->\n';
+                svgStr += '  <g transform="translate(' + svgPivotX + ' ' + svgPivotY + ') rotate(' + rotDeg + ')">\n';
+                svgStr += '    <g transform="translate(' + (-exportScale / 2) + ' ' + (-exportScale / 2) + ') scale(' + scaleX + ' ' + scaleY + ') translate(' + (-vbX) + ' ' + (-vbY) + ')">\n';
+                svgStr += '      ' + innerSVG + '\n';
+                svgStr += '    </g>\n';
+                svgStr += '  </g>\n';
+            }
+            svgStr += '</svg>';
+
+            // 4. Adiciona o ficheiro SVG desta letra à pasta virtual ZIP
+            zip.file(charToExport + ".svg", svgStr);
+        }
+    }
+
+    if (!hasLetters) {
+        alert("O alfabeto está vazio! Desenhe pelo menos uma letra.");
+        return;
+    }
+
+    // 5. Gera o pacote ZIP completo e força o download
+    zip.generateAsync({ type: "blob" }).then(function (content) {
+        var url = URL.createObjectURL(content);
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = "Alfabeto_Modulos_Isolados.zip";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () {
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }, 0);
+    });
+}
+
+// --- LIMPEZA GLOBAL DO ALFABETO (COM UNDO) ---
+function clearEntireAlphabet() {
+    if (confirm("Are you sure you want to clear the entire alphabet? You only can undo this later on each letter individually.")) {
+
+        for (var i = 0; i < characters.length; i++) {
+            var char = characters[i];
+            if (!storedCharacters[char]) continue;
+
+            if (char === currentChar) {
+                if (placedObjects.length > 0) {
+                    saveHistory();
+                    placedObjects = [];
+                    selectedObjects = [];
+                    rebuildCollisionMap();
+                }
+            }
+            else {
+                if (storedCharacters[char].objects && storedCharacters[char].objects.length > 0) {
+                    var hist = storedCharacters[char].history;
+                    if (hist.length >= 15) hist.shift();
+                    hist.push(JSON.parse(JSON.stringify(storedCharacters[char].objects)));
+                    storedCharacters[char].redoHistory = [];
+                    storedCharacters[char].objects = [];
+                }
+            }
+        }
+    }
+
+    // --- SOLUÇÃO AQUI ---
+    mouseIsPressed = false; // Força o p5 a saber que o clique terminou
+    return false;           // Impede que o navegador propague o clique para o canvas
+}
+
+// --- DETEÇÃO DE SCROLL (RATO / TRACKPAD) ---
+function mouseWheel(event) {
+    // Só deixa fazer scroll se o rato estiver a sobrevoar a barra lateral
+    if (mouseX < sidebarWidth && mouseY > topBarHeight) {
+        alphabetScrollY += event.delta; // Soma o movimento
+        return false; // Bloqueia a página do browser de fazer scroll para baixo!
+    }
+}
+
+// ==========================================
+// FUNÇÃO MESTRE: ALTERAR TEMA VISUAL
+// ==========================================
+function setVisualTheme(theme) {
+    currentVisualTheme = theme;
+    if (theme === 'fill') {
+        modules = modulesFill;
+        moduleSVGStrings = moduleSVGStringsFill;
+        redModules = redModulesFill;
+        blueModules = blueModulesFill;
+    } else if (theme === 'dotted') {
+        modules = modulesDotted;
+        moduleSVGStrings = moduleSVGStringsDotted;
+        redModules = redModulesDotted;
+        blueModules = blueModulesDotted;
+    }
+}
+
+function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
+    var segW = w / options.length;
+    var startX = cx - w / 2;
+    
+    // Fundo do Controlo
+    fill(245); stroke(215); strokeWeight(1.5 * globalScale);
+    rect(cx, cy, w, h, 6 * globalScale);
+    
+    for (var i = 0; i < options.length; i++) {
+        var segCX = startX + (i * segW) + (segW / 2);
+        var isHover = (mouseX > startX + i * segW && mouseX < startX + (i + 1) * segW && mouseY > cy - h / 2 && mouseY < cy + h / 2);
+        
+        // Fundo do "Botão" selecionado
+        if (i === selectedIdx) {
+            fill(255); stroke(200); strokeWeight(1 * globalScale);
+            rect(segCX, cy, segW - 4 * globalScale, h - 4 * globalScale, 4 * globalScale);
+        } else if (isHover && !showShortcutsModal) {
+            fill(235); noStroke();
+            rect(segCX, cy, segW - 4 * globalScale, h - 4 * globalScale, 4 * globalScale);
+        }
+        
+        // Linhas Divisórias
+        if (i > 0) {
+            stroke(220); strokeWeight(1.5 * globalScale);
+            line(startX + i * segW, cy - h / 3, startX + i * segW, cy + h / 3);
+        }
+        
+        // Texto
+        noStroke();
+        fill(i === selectedIdx ? [0, 130, 255] : 120);
+        textStyle(i === selectedIdx ? BOLD : NORMAL);
+        textSize(9 * globalScale);
+        text(options[i], segCX, cy);
+    }
+    textStyle(NORMAL);
+}
+
+function flipCompositionHorizontal() {
+    if (placedObjects.length === 0) return;
+    if (isOverlapMode) return; // Bloqueio de segurança (Só funciona em Letterpress)
+
+    // 1. Encontrar o minX e maxX exato de toda a composição
+    var minX = 99999, maxX = -99999;
+    for (var k = 0; k < placedObjects.length; k++) {
+        var o = placedObjects[k];
+        var dims = getModuleDims(o.type);
+        var v = getFillVectors(o.rot);
+        var corners = [
+            { i: 0, j: 0 }, { i: dims.len - 1, j: 0 },
+            { i: 0, j: dims.wid - 1 }, { i: dims.len - 1, j: dims.wid - 1 }
+        ];
+        for (var c = 0; c < corners.length; c++) {
+            var px = o.x + v.p.x * corners[c].i + v.s.x * corners[c].j;
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+        }
+    }
+
+    var localW = minX + maxX; // O Eixo Central Perfeito
+    var newObjects = [];
+
+    // 2. Calcular a inversão para cada peça
+    for (var k = 0; k < placedObjects.length; k++) {
+        var o = placedObjects[k];
+        var type = o.type; var x = o.x; var y = o.y; var rot = o.rot;
+        var dims = getModuleDims(type);
+        var rotM, xM, yM = y;
+
+        if (isCurveGroup(type) || isDiagonalGroup(type)) {
+            rotM = { 0: 1, 1: 0, 2: 3, 3: 2 }[rot];
+            xM = localW - x;
+        } else if (isArchGroup(type)) {
+            if (rot == 0) { rotM = 0; xM = localW - x - dims.len + 1; }
+            else if (rot == 1) { rotM = 3; xM = localW - x; yM = y + dims.len - 1; }
+            else if (rot == 2) { rotM = 2; xM = localW - x + dims.len - 1; }
+            else if (rot == 3) { rotM = 1; xM = localW - x; yM = y - dims.len + 1; }
+        } else {
+            rotM = rot;
+            if (rot == 0) xM = localW - x - dims.len + 1;
+            if (rot == 1) xM = localW - x + dims.wid - 1;
+            if (rot == 2) xM = localW - x + dims.len - 1;
+            if (rot == 3) xM = localW - x - dims.wid + 1;
+        }
+        newObjects.push({ type: type, x: xM, y: yM, rot: rotM });
+    }
+
+    // 3. Testar a Colocação (Garante que não sai do Artboard)
+    saveHistory(); // Guarda o estado para o Undo
+    var backup = JSON.parse(JSON.stringify(placedObjects));
+    placedObjects = [];
+    rebuildCollisionMap();
+
+    var allValid = true;
+    for (var i = 0; i < newObjects.length; i++) {
+        if (canPlaceTile(newObjects[i].x, newObjects[i].y, newObjects[i].type, newObjects[i].rot)) {
+            placedObjects.push(newObjects[i]);
+            addObjToCollisionMap(newObjects[i]);
+        } else {
+            allValid = false;
+            break;
+        }
+    }
+
+    // 4. Reverte tudo se a composição espelhada bater nas margens da folha
+    if (!allValid) {
+        storedCharacters[currentChar].history.pop(); // Remove o Undo que criámos
+        placedObjects = backup;
+        rebuildCollisionMap();
+        alert("A composição espelhada bate nas margens do Artboard atual!");
+    }
+}
