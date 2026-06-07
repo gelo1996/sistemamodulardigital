@@ -2964,7 +2964,7 @@ function drawUI() {
     var tooltipY = 0;
 
     // --- 1. BARRA SUPERIOR ---
-    push(); fill(245); noStroke(); rectMode(CORNER); rect(0, 0, width, topBarHeight);
+    push(); fill("#f9f9f9"); noStroke(); rectMode(CORNER); rect(0, 0, width, topBarHeight);
     stroke(200); strokeWeight(1.5 * globalScale); line(0, topBarHeight, width, topBarHeight); pop();
 
     var tBoxSize = 34 * globalScale;
@@ -3105,7 +3105,7 @@ function drawUI() {
     }
 
     // --- BARRA LATERAL (ALFABETO EM SCROLL) ---
-    fill(245); noStroke(); rectMode(CORNER); rect(0, topBarHeight, sidebarWidth, height - topBarHeight);
+    fill("#f9f9f9"); noStroke(); rectMode(CORNER); rect(0, topBarHeight, sidebarWidth, height - topBarHeight);
     var charGapY = 45 * globalScale; var cSize = 34 * globalScale; var bottomPanelH = 150 * globalScale;
     var minSafeHeight = topBarHeight + bottomPanelH + (50 * globalScale);
     var effectiveBottom = max(height, minSafeHeight);
@@ -3130,7 +3130,7 @@ function drawUI() {
     drawingContext.restore(); pop();
 
     // --- RODAPÉ FIXO DE CONFIGURAÇÕES ---
-    fill(245); noStroke(); rectMode(CORNER); rect(0, effectiveBottom - bottomPanelH, sidebarWidth, bottomPanelH);
+    fill("#f9f9f9"); noStroke(); rectMode(CORNER); rect(0, effectiveBottom - bottomPanelH, sidebarWidth, bottomPanelH);
     stroke(220); strokeWeight(1.5 * globalScale); line(0, effectiveBottom - bottomPanelH, sidebarWidth, effectiveBottom - bottomPanelH);
 
     var btnW_largo = (2 * toolGapX) + cSize; var btnH = 34 * globalScale; var btnX_centro = toolStartX + toolGapX;
@@ -3161,7 +3161,7 @@ function drawUI() {
     // BOTÃO FLIP (Espelhar)
     var isFlipH = !isOverlapMode && !showShortcutsModal && (mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2);
     push();
-    if (isOverlapMode) { fill(245, 150); stroke(220, 150); } // Desativado no modo Free
+    if (isOverlapMode) { fill("#f9f9f9", 150); stroke(220, 150); } // Desativado no modo Free
     else { fill(isFlipH ? 235 : 255); stroke(200); }
     strokeWeight(1.5 * globalScale); rect(btnFlip.x, btnFlip.y, btnFlip.w, btnFlip.h, 6 * globalScale);
     noStroke(); fill(isOverlapMode ? 180 : 100); textAlign(CENTER, CENTER); textSize(9 * globalScale); textStyle(BOLD); text("FLIP", btnFlip.x, btnFlip.y);
@@ -4009,7 +4009,7 @@ function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
     var startX = cx - w / 2;
     
     // Fundo do Controlo
-    fill(245); stroke(215); strokeWeight(1.5 * globalScale);
+    fill("#f9f9f9"); stroke(215); strokeWeight(1.5 * globalScale);
     rect(cx, cy, w, h, 6 * globalScale);
     
     for (var i = 0; i < options.length; i++) {
