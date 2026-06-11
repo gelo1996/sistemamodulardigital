@@ -3161,7 +3161,7 @@ function drawUI() {
     // BOTÃO FLIP (Espelhar)
     var isFlipH = !isOverlapMode && !showShortcutsModal && (mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2);
     push();
-    if (isOverlapMode) { fill("#f9f9f9", 150); stroke(220, 150); } // Desativado no modo Free
+    if (isOverlapMode) { fill(249, 249, 249, 150); stroke(220, 150); } // CORRIGIDO AQUI
     else { fill(isFlipH ? 235 : 255); stroke(200); }
     strokeWeight(1.5 * globalScale); rect(btnFlip.x, btnFlip.y, btnFlip.w, btnFlip.h, 6 * globalScale);
     noStroke(); fill(isOverlapMode ? 180 : 100); textAlign(CENTER, CENTER); textSize(9 * globalScale); textStyle(BOLD); text("FLIP", btnFlip.x, btnFlip.y);
