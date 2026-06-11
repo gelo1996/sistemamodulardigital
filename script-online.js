@@ -182,7 +182,7 @@ function setup() {
 
     collisionMap = createCollisionMap();
 
-    for (var i = 0; i < 21; i++) { 
+    for (var i = 0; i < 21; i++) {
         redModulesFill[i] = createRedVersion(modulesFill[i]);
         blueModulesFill[i] = createBlueVersion(modulesFill[i]);
         redModulesDotted[i] = createRedVersion(modulesDotted[i]);
@@ -192,7 +192,7 @@ function setup() {
     setVisualTheme('fill');
     updateArtboardBounds(); // Inicia com o Formato 1 Vertical
     calculateLayout();
-    
+
     initAllCharacters();
     loadCharacter("A");
 }
@@ -294,11 +294,17 @@ function draw() {
         var snapEndY = centerY + (gMaxY + 1) * tileSize;
 
         push();
-        if (selectedModule == -1) stroke(255, 100, 100);
-        else stroke(100, 150, 255);
-        strokeWeight(3);
-        noFill();
-        drawingContext.setLineDash([8, 8]);
+        // Em vez de tracejado, usamos uma caixa com fundo semi-transparente
+        // e um contorno sólido, que é muito mais leve para o navegador
+        if (selectedModule == -1) {
+            stroke(255, 50, 50, 200);      // Borda vermelha
+            fill(255, 50, 50, 40);         // Fundo vermelho suave
+        } else {
+            stroke(0, 130, 255, 200);      // Borda azul
+            fill(0, 130, 255, 40);         // Fundo azul suave
+        }
+        
+        strokeWeight(1.5 * globalScale); // Fica mais profissional e elegante
         rectMode(CORNERS);
         rect(snapStartX, snapStartY, snapEndX, snapEndY);
         pop();
@@ -432,6 +438,10 @@ function mousePressed() {
             }
         }
     }
+
+    // ADICIONAR ESTA LINHA NO FINAL DA FUNÇÃO:
+    return false; // Bloqueia o navegador de iniciar a seleção nativa
+
 }
 
 function mouseReleased() {
@@ -451,13 +461,15 @@ function mouseReleased() {
         var minY = min(selectionBox.startY, selectionBox.currentY);
         var maxY = max(selectionBox.startY, selectionBox.currentY);
 
-        var gMinX = floor((minX - centerX) / tileSize);
-        var gMaxX = floor((maxX - centerX) / tileSize);
-        var gMinY = floor((minY - centerY) / tileSize);
-        var gMaxY = floor((maxY - centerY) / tileSize);
+        // A CORREÇÃO ESTÁ AQUI: Voltar a somar o GRID_CX e GRID_CY!
+        var gMinX = floor((minX - centerX) / tileSize) + GRID_CX;
+        var gMaxX = floor((maxX - centerX) / tileSize) + GRID_CX;
+        var gMinY = floor((minY - centerY) / tileSize) + GRID_CY;
+        var gMaxY = floor((maxY - centerY) / tileSize) + GRID_CY;
 
         for (var i = 0; i < placedObjects.length; i++) {
             var obj = placedObjects[i];
+            // Agora já vai encontrar as peças porque está a procurar na zona certa (100)
             if (obj.x >= gMinX && obj.x <= gMaxX && obj.y >= gMinY && obj.y <= gMaxY) {
                 if (!selectedObjects.includes(obj)) selectedObjects.push(obj);
             }
@@ -2415,7 +2427,7 @@ function drawGrid() {
                 }
             }
         }
-        drawingContext.setLineDash([]); pop();
+        pop();
     }
 
     // 2. GUIAS TIPOGRÁFICAS E LATERAIS
@@ -2868,7 +2880,7 @@ function checkTopBarClick() {
 
     // --- 3. CLIQUE LINHA 3: SEGMENTED CONTROLS ---
     var ly = 125 * globalScale;
-    var styleBtnW = (3 * toolGapX) + tBoxSize; 
+    var styleBtnW = (3 * toolGapX) + tBoxSize;
     var styleBtnH = 34 * globalScale;
 
     var cxs = [
@@ -2880,24 +2892,24 @@ function checkTopBarClick() {
 
     if (mouseY > ly - styleBtnH / 2 && mouseY < ly + styleBtnH / 2) {
         // Tema [FILL | DOTTED]
-        if (mouseX > cxs[0] - styleBtnW/2 && mouseX < cxs[0] + styleBtnW/2) {
+        if (mouseX > cxs[0] - styleBtnW / 2 && mouseX < cxs[0] + styleBtnW / 2) {
             setVisualTheme(mouseX < cxs[0] ? 'fill' : 'dotted'); return;
         }
         // Grelha [LINES | DOTS]
-        if (mouseX > cxs[1] - styleBtnW/2 && mouseX < cxs[1] + styleBtnW/2) {
+        if (mouseX > cxs[1] - styleBtnW / 2 && mouseX < cxs[1] + styleBtnW / 2) {
             currentGridStyle = mouseX < cxs[1] ? 'lines' : 'dots'; return;
         }
         // Artboard [F1 | F2 | F3]
-        if (mouseX > cxs[2] - styleBtnW/2 && mouseX < cxs[2] + styleBtnW/2) {
-            var startX = cxs[2] - styleBtnW/2;
+        if (mouseX > cxs[2] - styleBtnW / 2 && mouseX < cxs[2] + styleBtnW / 2) {
+            var startX = cxs[2] - styleBtnW / 2;
             var segW = styleBtnW / 3;
             if (mouseX < startX + segW) currentArtboardIdx = 0;
-            else if (mouseX < startX + 2*segW) currentArtboardIdx = 1;
+            else if (mouseX < startX + 2 * segW) currentArtboardIdx = 1;
             else currentArtboardIdx = 2;
             updateArtboardBounds(); panX = 0; panY = 0; calculateLayout(); return;
         }
         // Orientação [PORTRAIT | LANDSCAPE]
-        if (mouseX > cxs[3] - styleBtnW/2 && mouseX < cxs[3] + styleBtnW/2) {
+        if (mouseX > cxs[3] - styleBtnW / 2 && mouseX < cxs[3] + styleBtnW / 2) {
             isLandscape = mouseX >= cxs[3];
             updateArtboardBounds(); panX = 0; panY = 0; calculateLayout(); return;
         }
@@ -2964,7 +2976,7 @@ function drawUI() {
     var tooltipY = 0;
 
     // --- 1. BARRA SUPERIOR ---
-    push(); fill("#f9f9f9"); noStroke(); rectMode(CORNER); rect(0, 0, width, topBarHeight);
+    push(); fill(245); noStroke(); rectMode(CORNER); rect(0, 0, width, topBarHeight);
     stroke(200); strokeWeight(1.5 * globalScale); line(0, topBarHeight, width, topBarHeight); pop();
 
     var tBoxSize = 34 * globalScale;
@@ -3004,7 +3016,7 @@ function drawUI() {
     // --- SLIDER E ROTAÇÃO (LINHA 1) ---
     var sliderBoxCX = toolStartX + (14 * toolGapX);
     var sliderBoxW = (4 * toolGapX) + tBoxSize;
-    fill(250); stroke(220); strokeWeight(1.5 * globalScale); 
+    fill(250); stroke(220); strokeWeight(1.5 * globalScale);
     rect(sliderBoxCX, ty, sliderBoxW, tBoxSize, 6 * globalScale);
 
     // O NOSSO NOVO SLIDER DESENHADO EM JS VETORIAL
@@ -3012,11 +3024,11 @@ function drawUI() {
     // Fundo da Calha
     fill(208); noStroke(); rectMode(CENTER);
     rect(sliderBoxCX, trackY, uiSlider.w, 4 * globalScale, 2 * globalScale);
-    
+
     // Onde a bolinha está agora (matemática exata)
     var thumbX = map(tileSize, uiSlider.min, uiSlider.max, uiSlider.x, uiSlider.x + uiSlider.w);
     var fillW = thumbX - uiSlider.x;
-    
+
     // Calha preenchida de azul (da esquerda até à bolinha)
     if (fillW > 0) {
         rectMode(CORNER); fill(0, 130, 255);
@@ -3025,15 +3037,15 @@ function drawUI() {
     }
 
     var isHoverSlider = !showShortcutsModal && (mouseX > uiSlider.x - 10 && mouseX < uiSlider.x + uiSlider.w + 10 && mouseY > ty - 15 && mouseY < ty + 15);
-    
+
     // Bolinha
     fill(0, 130, 255);
     if (isHoverSlider || isDraggingSlider) { stroke(150, 200, 255); strokeWeight(3 * globalScale); } else { noStroke(); }
     circle(thumbX, trackY, 12 * globalScale);
 
-    if (isHoverSlider || isDraggingSlider) { 
-        activeTooltip = "Scale: " + tileSize; 
-        tooltipX = sliderBoxCX; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; 
+    if (isHoverSlider || isDraggingSlider) {
+        activeTooltip = "Scale: " + tileSize;
+        tooltipX = sliderBoxCX; tooltipY = ty + tBoxSize / 2 + 15 * globalScale;
     }
 
     // A CAIXA DA ROTAÇÃO (Mantém-se igual)
@@ -3061,7 +3073,7 @@ function drawUI() {
 
     // --- LINHA 3: SEGMENTED CONTROLS ---
     var ly = 125 * globalScale;
-    var styleBtnW = (3 * toolGapX) + tBoxSize; 
+    var styleBtnW = (3 * toolGapX) + tBoxSize;
     var styleBtnH = 34 * globalScale;
 
     var cx1 = toolStartX + (1.5 * toolGapX);
@@ -3105,7 +3117,7 @@ function drawUI() {
     }
 
     // --- BARRA LATERAL (ALFABETO EM SCROLL) ---
-    fill("#f9f9f9"); noStroke(); rectMode(CORNER); rect(0, topBarHeight, sidebarWidth, height - topBarHeight);
+    fill(245); noStroke(); rectMode(CORNER); rect(0, topBarHeight, sidebarWidth, height - topBarHeight);
     var charGapY = 45 * globalScale; var cSize = 34 * globalScale; var bottomPanelH = 150 * globalScale;
     var minSafeHeight = topBarHeight + bottomPanelH + (50 * globalScale);
     var effectiveBottom = max(height, minSafeHeight);
@@ -3130,7 +3142,7 @@ function drawUI() {
     drawingContext.restore(); pop();
 
     // --- RODAPÉ FIXO DE CONFIGURAÇÕES ---
-    fill("#f9f9f9"); noStroke(); rectMode(CORNER); rect(0, effectiveBottom - bottomPanelH, sidebarWidth, bottomPanelH);
+    fill(245); noStroke(); rectMode(CORNER); rect(0, effectiveBottom - bottomPanelH, sidebarWidth, bottomPanelH);
     stroke(220); strokeWeight(1.5 * globalScale); line(0, effectiveBottom - bottomPanelH, sidebarWidth, effectiveBottom - bottomPanelH);
 
     var btnW_largo = (2 * toolGapX) + cSize; var btnH = 34 * globalScale; var btnX_centro = toolStartX + toolGapX;
@@ -3244,17 +3256,17 @@ function keyPressed() {
         }
     }
     if (key == 'c' || key == 'C') { panX = 0; panY = 0; calculateLayout(); }
-    
+
     // NOVO ATALHO DE ESPELHAR (Letra H)
     if (key == 'h' || key == 'H') {
         flipCompositionHorizontal();
     }
 
-    if (key == 'S' && keyIsDown(SHIFT)) exportProjectJSON(); 
-    if (key == 'O' && keyIsDown(SHIFT)) importProjectJSON(); 
-    if (key == 'E' && keyIsDown(SHIFT)) exportCharacterSVG(currentChar); 
-    if (key == 'A' && keyIsDown(SHIFT)) exportAlphabetSVG(); 
-    if (key == 'Z' && keyIsDown(SHIFT)) exportAlphabetZIP(); 
+    if (key == 'S' && keyIsDown(SHIFT)) exportProjectJSON();
+    if (key == 'O' && keyIsDown(SHIFT)) importProjectJSON();
+    if (key == 'E' && keyIsDown(SHIFT)) exportCharacterSVG(currentChar);
+    if (key == 'A' && keyIsDown(SHIFT)) exportAlphabetSVG();
+    if (key == 'Z' && keyIsDown(SHIFT)) exportAlphabetZIP();
 
     if (keyCode == DELETE || keyCode == BACKSPACE) {
         if ((selectedModule === -2 || selectedModule === -1) && selectedObjects.length > 0) {
@@ -3273,7 +3285,7 @@ function keyPressed() {
                     }
                 }
             }
-            selectedObjects = []; 
+            selectedObjects = [];
         }
     }
 
@@ -3315,6 +3327,9 @@ function mouseDragged() {
         calculateLayout();
         return false;
     }
+
+    // NOVA LINHA: Bloqueia o navegador de "roubar" o rato durante a seleção!
+    return false;
 }
 
 function fitToScreen() {
@@ -3360,8 +3375,10 @@ function fitToScreen() {
     if (bbW > 0 && bbH > 0) {
         var idealTileSize = min(safeW / bbW, safeH / bbH);
         var newTileSize = constrain(floor(idealTileSize), 5, 60);
-        tileSizeSlider.value(newTileSize);
-        tileSize = newTileSize;
+        
+        // CORREÇÃO: Apagámos o tileSizeSlider.value(...)
+        // Agora basta atualizar o valor direto e o novo slider acompanha sozinho!
+        tileSize = newTileSize; 
     }
 
     // 3. Mover a câmara para o centro geométrico exato do desenho
@@ -3494,10 +3511,6 @@ function exportProjectJSON() {
     // 4. Força o navegador a descarregar o ficheiro
     var a = document.createElement("a");
     a.href = url;
-    
-    a.setAttribute("data-no-ajax", "true");
-    a.target = "_blank";
-    
     a.download = "meu-alfabeto-modular.json";
     document.body.appendChild(a); // Necessário no Firefox
     a.click();
@@ -3691,7 +3704,7 @@ function exportCharacterSVG(charToExport) {
 
     a.setAttribute("data-no-ajax", "true");
     a.target = "_blank";
-    
+
     document.body.appendChild(a);
     a.click();
     setTimeout(function () {
@@ -3811,7 +3824,7 @@ function exportAlphabetSVG() {
 
     a.setAttribute("data-no-ajax", "true");
     a.target = "_blank";
-    
+
     a.download = "Alfabeto_Completo.svg";
     document.body.appendChild(a);
     a.click();
@@ -3931,10 +3944,10 @@ function exportAlphabetZIP() {
         var a = document.createElement("a");
         a.href = url;
         a.download = "Alfabeto_Modulos_Isolados.zip";
-        
+
         a.setAttribute("data-no-ajax", "true");
         a.target = "_blank";
-        
+
         document.body.appendChild(a);
         a.click();
         setTimeout(function () {
@@ -4007,15 +4020,15 @@ function setVisualTheme(theme) {
 function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
     var segW = w / options.length;
     var startX = cx - w / 2;
-    
+
     // Fundo do Controlo
-    fill("#f9f9f9"); stroke(215); strokeWeight(1.5 * globalScale);
+    fill(245); stroke(215); strokeWeight(1.5 * globalScale);
     rect(cx, cy, w, h, 6 * globalScale);
-    
+
     for (var i = 0; i < options.length; i++) {
         var segCX = startX + (i * segW) + (segW / 2);
         var isHover = (mouseX > startX + i * segW && mouseX < startX + (i + 1) * segW && mouseY > cy - h / 2 && mouseY < cy + h / 2);
-        
+
         // Fundo do "Botão" selecionado
         if (i === selectedIdx) {
             fill(255); stroke(200); strokeWeight(1 * globalScale);
@@ -4024,13 +4037,13 @@ function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
             fill(235); noStroke();
             rect(segCX, cy, segW - 4 * globalScale, h - 4 * globalScale, 4 * globalScale);
         }
-        
+
         // Linhas Divisórias
         if (i > 0) {
             stroke(220); strokeWeight(1.5 * globalScale);
             line(startX + i * segW, cy - h / 3, startX + i * segW, cy + h / 3);
         }
-        
+
         // Texto
         noStroke();
         fill(i === selectedIdx ? [0, 130, 255] : 120);
