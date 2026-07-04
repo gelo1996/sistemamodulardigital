@@ -1,3 +1,8 @@
+// --- CAMINHO BASE DOS ASSETS (deteta automaticamente local vs. GitHub Pages) ---
+var BASE_PATH = (window.location.hostname === 'gelo1996.github.io')
+    ? 'https://gelo1996.github.io/sistemamodulardigital/data/'
+    : 'data/';
+
 // --- SISTEMA DE POP-UP (MODAL) E RODAPÉ ---
 var showShortcutsModal = false;
 var btnAtalhos = { x: 0, y: 0, w: 100, h: 30 };
@@ -119,40 +124,40 @@ function preload() {
 
     for (var i = 0; i < 21; i++) {
         // Carrega as versões Fill
-        var fileFill = 'https://gelo1996.github.io/sistemamodulardigital/data/' + nf(i, 2) + '.svg';
+        var fileFill = BASE_PATH + nf(i, 2) + '.svg';
         modulesFill[i] = loadImage(fileFill);
         moduleSVGStringsFill[i] = loadStrings(fileFill);
 
         // Carrega as versões Dotted
-        var fileDot = 'https://gelo1996.github.io/sistemamodulardigital/data/dot-' + nf(i, 2) + '.svg';
+        var fileDot = BASE_PATH + 'dot-' + nf(i, 2) + '.svg';
         modulesDotted[i] = loadImage(fileDot);
         moduleSVGStringsDotted[i] = loadStrings(fileDot);
     }
 
-    toolIcons.mover = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/mover.svg');
-    toolIcons.limpar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/limpar.svg');
-    toolIcons.espelhoV = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/espelho-vertical.svg');
-    toolIcons.espelhoH = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/espelho-horizontal.svg');
-    toolIcons.grelhaMenor = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/grelha-menor.svg');
-    toolIcons.centroV = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/centro-vertical.svg');
-    toolIcons.centroH = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/centro-horizontal.svg');
-    toolIcons.guias = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/guias.svg');
-    toolIcons.enquadrar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/enquadrar.svg');
-    toolIcons.voltar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/voltar.svg');
-    toolIcons.avancar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/avancar.svg');
-    toolIcons.limparLetra = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/limpar-letra.svg');
-    toolIcons.limparAlfabeto = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/limpar-alfabeto.svg'); // <-- ADICIONE AQUI
-    toolIcons.moverTela = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/mover-tela.svg');
+    toolIcons.mover = loadImage(BASE_PATH + 'mover.svg');
+    toolIcons.limpar = loadImage(BASE_PATH + 'limpar.svg');
+    toolIcons.espelhoV = loadImage(BASE_PATH + 'espelho-vertical.svg');
+    toolIcons.espelhoH = loadImage(BASE_PATH + 'espelho-horizontal.svg');
+    toolIcons.grelhaMenor = loadImage(BASE_PATH + 'grelha-menor.svg');
+    toolIcons.centroV = loadImage(BASE_PATH + 'centro-vertical.svg');
+    toolIcons.centroH = loadImage(BASE_PATH + 'centro-horizontal.svg');
+    toolIcons.guias = loadImage(BASE_PATH + 'guias.svg');
+    toolIcons.enquadrar = loadImage(BASE_PATH + 'enquadrar.svg');
+    toolIcons.voltar = loadImage(BASE_PATH + 'voltar.svg');
+    toolIcons.avancar = loadImage(BASE_PATH + 'avancar.svg');
+    toolIcons.limparLetra = loadImage(BASE_PATH + 'limpar-letra.svg');
+    toolIcons.limparAlfabeto = loadImage(BASE_PATH + 'limpar-alfabeto.svg'); // <-- ADICIONE AQUI
+    toolIcons.moverTela = loadImage(BASE_PATH + 'mover-tela.svg');
 
-    toolIcons.importar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/importar.svg');
-    toolIcons.guardar = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/guardar.svg');
-    toolIcons.exportarLetra = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/exportar-letra.svg');
-    toolIcons.exportarAlfabeto = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/exportar-alfabeto.svg');
-    toolIcons.exportarZip = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/exportar-zip.svg');
+    toolIcons.importar = loadImage(BASE_PATH + 'importar.svg');
+    toolIcons.guardar = loadImage(BASE_PATH + 'guardar.svg');
+    toolIcons.exportarLetra = loadImage(BASE_PATH + 'exportar-letra.svg');
+    toolIcons.exportarAlfabeto = loadImage(BASE_PATH + 'exportar-alfabeto.svg');
+    toolIcons.exportarZip = loadImage(BASE_PATH + 'exportar-zip.svg');
 
-    toolIcons.atalhos = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/atalhos.svg');
+    toolIcons.atalhos = loadImage(BASE_PATH + 'atalhos.svg');
 
-    toolIcons.sobrepor = loadImage('https://gelo1996.github.io/sistemamodulardigital/data/sobrepor.svg'); // Garante que tens este ficheiro
+    toolIcons.sobrepor = loadImage(BASE_PATH + 'sobrepor.svg'); // Garante que tens este ficheiro
 }
 
 function updateArtboardBounds() {
