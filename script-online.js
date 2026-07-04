@@ -1,7 +1,12 @@
-// --- CAMINHO BASE DOS ASSETS (deteta automaticamente local vs. GitHub Pages) ---
-var BASE_PATH = (window.location.hostname === 'gelo1996.github.io')
-    ? 'https://gelo1996.github.io/sistemamodulardigital/data/'
-    : 'data/';
+// --- CAMINHO BASE DOS ASSETS ---
+// Em localhost (VS Code Live Server, etc.) usa a pasta local 'data/'.
+// Em qualquer outro sítio (Cargo, GitHub Pages, ...) usa os ficheiros alojados no GitHub.
+var IS_LOCAL = (window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.protocol === 'file:');
+var BASE_PATH = IS_LOCAL
+    ? 'data/'
+    : 'https://gelo1996.github.io/sistemamodulardigital/data/';
 
 // --- SISTEMA DE POP-UP (MODAL) E RODAPÉ ---
 var showShortcutsModal = false;
