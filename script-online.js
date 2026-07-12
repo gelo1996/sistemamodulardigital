@@ -10,6 +10,7 @@ var BASE_PATH = IS_LOCAL
 
 // --- SISTEMA DE POP-UP (MODAL) E RODAPÉ ---
 var showShortcutsModal = false;
+var suppressDrawUntilRelease = false; // impede que o clique que fecha o modal desenhe no artboard
 var btnAtalhos = { x: 0, y: 0, w: 100, h: 30 };
 var btnLetterpress = { x: 0, y: 0, w: 100, h: 30 };
 var btnStencil = { x: 0, y: 0, w: 100, h: 30 };
@@ -88,13 +89,6 @@ var isMirrorModeH = false;
 var showCenterV = false;
 var showCenterH = false;
 var isOverlapMode = false; // Por defeito, a colisão está ligada
-
-// --- SISTEMA DE POP-UP (MODAL) ---
-var showShortcutsModal = false;
-var btnAtalhos = { x: 0, y: 0, w: 100, h: 30 };
-var btnLetterpress = { x: 0, y: 0, w: 100, h: 30 }; // <-- FALTAVA ESTA VARIÁVEL
-var btnStencil = { x: 0, y: 0, w: 100, h: 30 };     // <-- FALTAVA ESTA VARIÁVEL
-var alphabetScrollY = 0; // <-- NOVA VARIÁVEL: Guarda a posição do scroll do alfabeto
 
 // --- SISTEMA DE GUIAS TIPOGRÁFICAS ---
 var showGuides = false;
@@ -179,6 +173,49 @@ function updateArtboardBounds() {
 
     artOffsetX = GRID_CX - Math.floor(artW / 2);
     artOffsetY = GRID_CY - Math.floor(artH / 2);
+}
+
+// Verifica se um módulo cabe por inteiro dentro do artboard atual
+function isObjInsideArtboard(obj) {
+    var dims = getModuleDims(obj.type);
+    var v = getFillVectors(obj.rot);
+    var minX = artOffsetX, maxX = artOffsetX + artW;
+    var minY = artOffsetY, maxY = artOffsetY + artH;
+    for (var i = 0; i < dims.len; i++) {
+        for (var j = 0; j < dims.wid; j++) {
+            if (isCollisionException(obj.type, i, j)) continue;
+            var px = obj.x + (v.p.x * i) + (v.s.x * j);
+            var py = obj.y + (v.p.y * i) + (v.s.y * j);
+            if (px < minX || px >= maxX || py < minY || py >= maxY) return false;
+        }
+    }
+    return true;
+}
+
+// Ao mudar de formato/orientação, apaga (com undo por letra) os módulos que ficam fora da folha
+function cleanupOutOfBoundsModules() {
+    saveCharacter(currentChar); // garante que a letra atual está na memória antes do varrimento
+
+    for (var i = 0; i < characters.length; i++) {
+        var char = characters[i];
+        var store = storedCharacters[char];
+        if (!store || store.objects.length === 0) continue;
+
+        var inside = store.objects.filter(isObjInsideArtboard);
+        if (inside.length === store.objects.length) continue; // nada fora, nada a fazer
+
+        // Regista o undo desta letra antes de apagar (mesma regra do saveHistory)
+        if (store.history.length >= 15) store.history.shift();
+        store.history.push(JSON.parse(JSON.stringify(store.objects)));
+        store.redoHistory = [];
+
+        store.objects = inside;
+    }
+
+    // Recarrega a letra atual, que pode ter perdido módulos
+    placedObjects = JSON.parse(JSON.stringify(storedCharacters[currentChar].objects));
+    rebuildCollisionMap();
+    selectedObjects = [];
 }
 
 function setup() {
@@ -321,15 +358,26 @@ function draw() {
     }
 
     handleInteraction();
+    drawCustomCursor(); // desenhado ANTES da UI para os fantasmas ficarem por baixo dos painéis
     drawUI();
-    drawCustomCursor();
 
     drawShortcutsModal();
+
+    // Contador de módulos da letra atual (canto inferior direito)
+    push(); noStroke(); fill(120); textAlign(RIGHT, BOTTOM); textSize(11);
+    text('modules: ' + placedObjects.length, width - 8, height - 8);
+    pop();
 }
 
 function handleInteraction() {
     // Bloqueia qualquer desenho se o pop-up estiver aberto!
     if (showShortcutsModal) return;
+
+    // O clique que fechou o modal não pode desenhar: espera que o rato seja largado
+    if (suppressDrawUntilRelease) {
+        if (mouseIsPressed) return;
+        suppressDrawUntilRelease = false;
+    }
 
     if (keyIsDown(32) || selectedModule === -3) return;
     if (mouseIsPressed && mouseButton == LEFT) {
@@ -382,9 +430,9 @@ function mousePressed() {
         if (showShortcutsModal) {
             var mw = 550 * globalScale; var mh = 560 * globalScale;
             var mx = width / 2; var myModal = height / 2;
-            if (mouseX < mx - mw / 2 || mouseX > mx + mw / 2 || mouseY < myModal - mh / 2 || mouseY > myModal + mh / 2) { showShortcutsModal = false; }
+            if (mouseX < mx - mw / 2 || mouseX > mx + mw / 2 || mouseY < myModal - mh / 2 || mouseY > myModal + mh / 2) { showShortcutsModal = false; suppressDrawUntilRelease = true; }
             var closeX = mx + mw / 2 - 30 * globalScale; var closeY = myModal - mh / 2 + 30 * globalScale;
-            if (dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale) { showShortcutsModal = false; }
+            if (dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale) { showShortcutsModal = false; suppressDrawUntilRelease = true; }
             return;
         }
 
@@ -2448,7 +2496,7 @@ function drawGrid() {
         };
         var labels = {
             ascender: "ASCENDER", capHeight: "CAP HEIGHT", xHeight: "X-HEIGHT",
-            baseline: "BASELINE", descender: "DESCENDER", left: "ESQUERDA", right: "DIREITA"
+            baseline: "BASELINE", descender: "DESCENDER", left: "LEFT", right: "RIGHT"
         };
 
         for (var keyY in guidesY) {
@@ -2475,8 +2523,8 @@ function drawGrid() {
         if (isMirrorModeH) line(sidebarWidth, centerY, width, centerY);
         drawingContext.setLineDash([]);
         noStroke(); fill(255, 50, 50, 180); textSize(9);
-        if (isMirrorModeV) { textAlign(LEFT, TOP); text("SIMETRIA VERTICAL", centerX + 10, topBarHeight + 15); }
-        if (isMirrorModeH) { textAlign(RIGHT, BOTTOM); text("SIMETRIA HORIZONTAL", width - 15, centerY - 5); }
+        if (isMirrorModeV) { textAlign(LEFT, TOP); text("VERTICAL SYMMETRY", centerX + 10, topBarHeight + 15); }
+        if (isMirrorModeH) { textAlign(RIGHT, BOTTOM); text("HORIZONTAL SYMMETRY", width - 15, centerY - 5); }
     }
 
     rectMode(CENTER);
@@ -2916,12 +2964,12 @@ function checkTopBarClick() {
             if (mouseX < startX + segW) currentArtboardIdx = 0;
             else if (mouseX < startX + 2 * segW) currentArtboardIdx = 1;
             else currentArtboardIdx = 2;
-            updateArtboardBounds(); panX = 0; panY = 0; calculateLayout(); return;
+            updateArtboardBounds(); cleanupOutOfBoundsModules(); panX = 0; panY = 0; calculateLayout(); return;
         }
         // Orientação [PORTRAIT | LANDSCAPE]
         if (mouseX > cxs[3] - styleBtnW / 2 && mouseX < cxs[3] + styleBtnW / 2) {
             isLandscape = mouseX >= cxs[3];
-            updateArtboardBounds(); panX = 0; panY = 0; calculateLayout(); return;
+            updateArtboardBounds(); cleanupOutOfBoundsModules(); panX = 0; panY = 0; calculateLayout(); return;
         }
     }
 
@@ -3215,7 +3263,7 @@ function drawShortcutsModal() {
     fill(255); stroke(200); strokeWeight(2 * globalScale); rect(mx, my, mw, mh, 16 * globalScale);
 
     noStroke(); fill(0); textAlign(CENTER, CENTER); textSize(20 * globalScale);
-    text("Atalhos", mx, my - mh / 2 + 40 * globalScale);
+    text("Shortcuts", mx, my - mh / 2 + 40 * globalScale);
 
     var closeX = mx + mw / 2 - 30 * globalScale; var closeY = my - mh / 2 + 30 * globalScale;
     var isCloseHovered = dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale;
@@ -3227,19 +3275,19 @@ function drawShortcutsModal() {
     text("✕", closeX, closeY + 1 * globalScale);
 
     var shortcuts = [
-        { key: "R", desc: "Rodar o módulo selecionado" },
-        { key: "H", desc: "Espelhar Composição Inteira" }, // <- NOVO ATALHO
-        { key: "F", desc: "Enquadrar o desenho na janela" },
-        { key: "Espaço + Arrastar", desc: "Mover artboard" },
-        { key: "Delete / Backspace", desc: "Apagar módulo ou seleção" },
-        { key: "G", desc: "Ligar / Desligar as grelhas" },
-        { key: "C", desc: "Centrar as coordenadas (0,0)" },
-        { key: "S", desc: "Guardar imagem (PNG)" },
-        { key: "Shift + S", desc: "Guardar Projeto (JSON)" },
-        { key: "Shift + O", desc: "Abrir Projeto (JSON)" },
-        { key: "Shift + E", desc: "Exportar a Letra Atual (SVG)" },
-        { key: "Shift + A", desc: "Exportar o Alfabeto Completo (SVG)" },
-        { key: "Shift + Z", desc: "Exportar Ficheiro ZIP (Letras Isoladas)" }
+        { key: "R", desc: "Rotate the selected module" },
+        { key: "H", desc: "Flip the entire composition" },
+        { key: "F", desc: "Fit the drawing to the window" },
+        { key: "Space + Drag", desc: "Pan the artboard" },
+        { key: "Delete / Backspace", desc: "Delete module or selection" },
+        { key: "G", desc: "Toggle grids on / off" },
+        { key: "C", desc: "Center the coordinates (0,0)" },
+        { key: "S", desc: "Save image (PNG)" },
+        { key: "Shift + S", desc: "Save project (JSON)" },
+        { key: "Shift + O", desc: "Open project (JSON)" },
+        { key: "Shift + E", desc: "Export current letter (SVG)" },
+        { key: "Shift + A", desc: "Export full alphabet (SVG)" },
+        { key: "Shift + Z", desc: "Export ZIP file (individual letters)" }
     ];
 
     var listStartY = my - mh / 2 + 100 * globalScale;
@@ -3270,6 +3318,11 @@ function keyPressed() {
     // NOVO ATALHO DE ESPELHAR (Letra H)
     if (key == 'h' || key == 'H') {
         flipCompositionHorizontal();
+    }
+
+    // ATALHO DE ENQUADRAR (Letra F) — já estava no modal, faltava aqui
+    if (key == 'f' || key == 'F') {
+        fitToScreen();
     }
 
     if (key == 'S' && keyIsDown(SHIFT)) exportProjectJSON();
@@ -3569,10 +3622,10 @@ function importProjectJSON() {
                     loadCharacter(currentChar);         // Atualiza a grelha visual
                     calculateLayout();                  // Refaz as matemáticas
                 } else {
-                    alert("O ficheiro não parece ser um projeto válido desta plataforma.");
+                    alert("This file doesn't look like a valid project for this platform.");
                 }
             } catch (err) {
-                alert("Erro ao ler o ficheiro JSON.");
+                alert("Error reading the JSON file.");
             }
 
             // Limpa o botão invisível da página no final para não deixar rasto
@@ -3593,7 +3646,7 @@ function exportCharacterSVG(charToExport) {
     var objs = storedCharacters[charToExport] ? storedCharacters[charToExport].objects : [];
 
     if (!objs || objs.length === 0) {
-        alert("A letra '" + charToExport + "' está vazia! Não há nada para exportar.");
+        alert("The letter '" + charToExport + "' is empty! There is nothing to export.");
         return;
     }
 
@@ -3738,7 +3791,7 @@ function exportAlphabetSVG() {
     }
 
     if (lettersToExport.length === 0) {
-        alert("O alfabeto está vazio! Desenhe pelo menos uma letra.");
+        alert("The alphabet is empty! Draw at least one letter.");
         return;
     }
 
@@ -3847,7 +3900,7 @@ function exportAlphabetSVG() {
 function exportAlphabetZIP() {
     // 1. Verifica se a biblioteca JSZip foi bem carregada no HTML
     if (typeof JSZip === 'undefined') {
-        alert("Erro: Para exportar em ZIP, precisa de adicionar o link do JSZip no seu ficheiro index.html.");
+        alert("Error: To export as ZIP, you need to add the JSZip link to your index.html file.");
         return;
     }
 
@@ -3944,7 +3997,7 @@ function exportAlphabetZIP() {
     }
 
     if (!hasLetters) {
-        alert("O alfabeto está vazio! Desenhe pelo menos uma letra.");
+        alert("The alphabet is empty! Draw at least one letter.");
         return;
     }
 
@@ -4135,7 +4188,7 @@ function flipCompositionHorizontal() {
         storedCharacters[currentChar].history.pop(); // Remove o Undo que criámos
         placedObjects = backup;
         rebuildCollisionMap();
-        alert("A composição espelhada bate nas margens do Artboard atual!");
+        alert("The flipped composition hits the edges of the current artboard!");
     }
 }
 
