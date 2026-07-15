@@ -3668,10 +3668,10 @@ function importProjectJSON() {
                     loadCharacter(currentChar);         // Atualiza a grelha visual
                     calculateLayout();                  // Refaz as matemáticas
                 } else {
-                    alert("This file doesn't look like a valid project for this platform.");
+                    avisar("This file doesn't look like a valid project for this platform.");
                 }
             } catch (err) {
-                alert("Error reading the JSON file.");
+                avisar("Error reading the JSON file.");
             }
 
             // Limpa o botão invisível da página no final para não deixar rasto
@@ -3692,7 +3692,7 @@ function exportCharacterSVG(charToExport) {
     var objs = storedCharacters[charToExport] ? storedCharacters[charToExport].objects : [];
 
     if (!objs || objs.length === 0) {
-        alert("The letter '" + charToExport + "' is empty! There is nothing to export.");
+        avisar("The letter '" + charToExport + "' is empty! There is nothing to export.");
         return;
     }
 
@@ -3837,7 +3837,7 @@ function exportAlphabetSVG() {
     }
 
     if (lettersToExport.length === 0) {
-        alert("The alphabet is empty! Draw at least one letter.");
+        avisar("The alphabet is empty! Draw at least one letter.");
         return;
     }
 
@@ -3946,7 +3946,7 @@ function exportAlphabetSVG() {
 function exportAlphabetZIP() {
     // 1. Verifica se a biblioteca JSZip foi bem carregada no HTML
     if (typeof JSZip === 'undefined') {
-        alert("Error: To export as ZIP, you need to add the JSZip link to your index.html file.");
+        avisar("Error: To export as ZIP, you need to add the JSZip link to your index.html file.");
         return;
     }
 
@@ -4043,7 +4043,7 @@ function exportAlphabetZIP() {
     }
 
     if (!hasLetters) {
-        alert("The alphabet is empty! Draw at least one letter.");
+        avisar("The alphabet is empty! Draw at least one letter.");
         return;
     }
 
@@ -4068,7 +4068,7 @@ function exportAlphabetZIP() {
 
 // --- LIMPEZA GLOBAL DO ALFABETO (COM UNDO) ---
 function clearEntireAlphabet() {
-    if (confirm("Are you sure you want to clear the entire alphabet? You only can undo this later on each letter individually.")) {
+    if (perguntar("Are you sure you want to clear the entire alphabet? You only can undo this later on each letter individually.")) {
 
         for (var i = 0; i < characters.length; i++) {
             var char = characters[i];
@@ -4163,6 +4163,27 @@ function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
     textStyle(NORMAL);
 }
 
+// --- DIÁLOGOS NATIVOS (alert / confirm) ---
+// Os diálogos do browser roubam o foco e engolem o mouseup: quando se fecham,
+// o p5 continua a achar que o botão do rato está premido e o handleInteraction()
+// desenha sem parar. Usar sempre estes invólucros em vez de alert()/confirm()
+// diretos — repõem o estado do rato no fim.
+function reporEstadoDoRato() {
+    mouseIsPressed = false;
+    suppressDrawUntilRelease = true; // o clique que abriu o diálogo não desenha
+}
+
+function avisar(mensagem) {
+    alert(mensagem);
+    reporEstadoDoRato();
+}
+
+function perguntar(mensagem) {
+    var resposta = confirm(mensagem);
+    reporEstadoDoRato();
+    return resposta;
+}
+
 // --- VOLTAR AO SITE (com aviso de trabalho por guardar) ---
 function hasUnsavedWork() {
     saveCharacter(currentChar); // a letra atual pode ainda não estar na memória
@@ -4175,7 +4196,7 @@ function hasUnsavedWork() {
 
 function goToSite() {
     if (hasUnsavedWork()) {
-        var leave = confirm("You have work on the canvas that isn't saved.\n\nLeaving now will discard it — use \"Save project (JSON)\" first if you want to keep it.\n\nLeave anyway?");
+        var leave = perguntar("You have work on the canvas that isn't saved.\n\nLeaving now will discard it — use \"Save project (JSON)\" first if you want to keep it.\n\nLeave anyway?");
         if (!leave) return;
     }
     window.location.href = 'https://pragmatipo.pt';
@@ -4252,7 +4273,7 @@ function flipCompositionHorizontal() {
         storedCharacters[currentChar].history.pop(); // Remove o Undo que criámos
         placedObjects = backup;
         rebuildCollisionMap();
-        alert("The flipped composition hits the edges of the current artboard!");
+        avisar("The flipped composition hits the edges of the current artboard!");
     }
 }
 
