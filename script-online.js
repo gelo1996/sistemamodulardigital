@@ -219,8 +219,30 @@ function cleanupOutOfBoundsModules() {
     selectedObjects = [];
 }
 
+// O Cargo esvazia as declarações dos blocos <style> do embed, deixando o canvas
+// em position:static e empurrado para fora do ecrã. Estilos aplicados por JS
+// não passam por esse filtro, por isso o layout é forçado aqui.
+function forceCanvasLayout(cnv) {
+    var el = (cnv && cnv.elt) ? cnv.elt : document.querySelector('canvas.p5Canvas');
+    if (el) {
+        el.style.setProperty('display', 'block', 'important');
+        el.style.setProperty('position', 'fixed', 'important');
+        el.style.setProperty('top', '0', 'important');
+        el.style.setProperty('left', '0', 'important');
+        el.style.setProperty('z-index', '9998', 'important');
+    }
+    var nodes = [document.body, document.documentElement];
+    for (var i = 0; i < nodes.length; i++) {
+        if (!nodes[i]) continue;
+        nodes[i].style.setProperty('margin', '0', 'important');
+        nodes[i].style.setProperty('padding', '0', 'important');
+        nodes[i].style.setProperty('overflow', 'hidden', 'important');
+    }
+}
+
 function setup() {
-    createCanvas(windowWidth, windowHeight);
+    var cnv = createCanvas(windowWidth, windowHeight);
+    forceCanvasLayout(cnv);
     rectMode(CENTER);
     imageMode(CENTER);
     strokeWeight(0.15);
