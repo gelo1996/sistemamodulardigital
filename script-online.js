@@ -15,6 +15,7 @@ var btnAtalhos = { x: 0, y: 0, w: 100, h: 30 };
 var btnLetterpress = { x: 0, y: 0, w: 100, h: 30 };
 var btnStencil = { x: 0, y: 0, w: 100, h: 30 };
 var btnFlip = { x: 0, y: 0, w: 30, h: 30 }; // <-- ADICIONAR AQUI
+var btnHome = { x: 0, y: 0, w: 30, h: 30 }; // Voltar a pragmatipo.pt
 var alphabetScrollY = 0;
 
 // --- SISTEMA DE ARTBOARD E UI ---
@@ -460,6 +461,10 @@ function mousePressed() {
             }
             if (!isOverlapMode && mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2) {
                 flipCompositionHorizontal();
+                return;
+            }
+            if (mouseX > btnHome.x - btnHome.w / 2 && mouseX < btnHome.x + btnHome.w / 2 && mouseY > btnHome.y - btnHome.h / 2 && mouseY < btnHome.y + btnHome.h / 2) {
+                goToSite();
                 return;
             }
             checkSidebarClick();
@@ -3210,6 +3215,7 @@ function drawUI() {
     btnStencil.x = btnX_centro; btnStencil.y = effectiveBottom - 70 * globalScale; btnStencil.w = btnW_largo; btnStencil.h = btnH;
     btnAtalhos.w = btnH; btnAtalhos.h = btnH; btnAtalhos.x = toolStartX; btnAtalhos.y = effectiveBottom - 25 * globalScale;
     btnFlip.w = btnH; btnFlip.h = btnH; btnFlip.x = toolStartX + toolGapX; btnFlip.y = effectiveBottom - 25 * globalScale;
+    btnHome.w = btnH; btnHome.h = btnH; btnHome.x = toolStartX + 2 * toolGapX; btnHome.y = effectiveBottom - 25 * globalScale;
 
     textSize(8.5 * globalScale); textStyle(BOLD); rectMode(CENTER);
 
@@ -3237,10 +3243,24 @@ function drawUI() {
     noStroke(); fill(isOverlapMode ? 180 : 100); textAlign(CENTER, CENTER); textSize(9 * globalScale); textStyle(BOLD); text("FLIP", btnFlip.x, btnFlip.y);
     pop();
 
+    // BOTÃO HOME (Voltar ao site) — seta desenhada à mão, sem SVG novo
+    var isHomeH = !showShortcutsModal && (mouseX > btnHome.x - btnHome.w / 2 && mouseX < btnHome.x + btnHome.w / 2 && mouseY > btnHome.y - btnHome.h / 2 && mouseY < btnHome.y + btnHome.h / 2);
+    push();
+    fill(isHomeH ? 235 : 255); stroke(200); strokeWeight(1.5 * globalScale);
+    rect(btnHome.x, btnHome.y, btnHome.w, btnHome.h, 6 * globalScale);
+    stroke(isHomeH ? 40 : 100); strokeWeight(1.6 * globalScale); noFill();
+    var aHalf = 5 * globalScale;
+    var aHead = 4 * globalScale;
+    line(btnHome.x + aHalf, btnHome.y, btnHome.x - aHalf, btnHome.y);
+    line(btnHome.x - aHalf, btnHome.y, btnHome.x - aHalf + aHead, btnHome.y - aHead);
+    line(btnHome.x - aHalf, btnHome.y, btnHome.x - aHalf + aHead, btnHome.y + aHead);
+    pop();
+
     if (isOffH && isOverlapMode) { activeTooltip = "Activate"; tooltipX = sidebarWidth + 40 * globalScale; tooltipY = btnLetterpress.y; }
     if (isOnH && !isOverlapMode) { activeTooltip = "Activate"; tooltipX = sidebarWidth + 40 * globalScale; tooltipY = btnStencil.y; }
     if (isAtH) { activeTooltip = "Keyboard Shortcuts"; tooltipX = sidebarWidth + 70 * globalScale; tooltipY = btnAtalhos.y; }
     if (isFlipH && !isOverlapMode) { activeTooltip = "Flip Horizontal Composition"; tooltipX = sidebarWidth + 70 * globalScale; tooltipY = btnFlip.y; }
+    if (isHomeH) { activeTooltip = "Back to pragmatipo.pt"; tooltipX = sidebarWidth + 70 * globalScale; tooltipY = btnHome.y; }
 
     stroke(200); strokeWeight(1.5 * globalScale); line(sidebarWidth, topBarHeight, sidebarWidth, effectiveBottom);
 
@@ -3575,6 +3595,10 @@ function exportProjectJSON() {
     var a = document.createElement("a");
     a.href = url;
     a.download = "meu-alfabeto-modular.json";
+
+    a.setAttribute("data-no-ajax", "true"); // Impede o router do Cargo de intercetar o clique
+    a.target = "_blank";
+
     document.body.appendChild(a); // Necessário no Firefox
     a.click();
 
@@ -4115,6 +4139,24 @@ function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
         text(options[i], segCX, cy);
     }
     textStyle(NORMAL);
+}
+
+// --- VOLTAR AO SITE (com aviso de trabalho por guardar) ---
+function hasUnsavedWork() {
+    saveCharacter(currentChar); // a letra atual pode ainda não estar na memória
+    for (var i = 0; i < characters.length; i++) {
+        var store = storedCharacters[characters[i]];
+        if (store && store.objects.length > 0) return true;
+    }
+    return false;
+}
+
+function goToSite() {
+    if (hasUnsavedWork()) {
+        var leave = confirm("You have work on the canvas that isn't saved.\n\nLeaving now will discard it — use \"Save project (JSON)\" first if you want to keep it.\n\nLeave anyway?");
+        if (!leave) return;
+    }
+    window.location.href = 'https://pragmatipo.pt';
 }
 
 function flipCompositionHorizontal() {
