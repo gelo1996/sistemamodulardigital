@@ -57,15 +57,20 @@
         var world = engine.world;
 
         // --- CONTENTOR ---------------------------------------------------
-        // Criado e estilizado por JS. Como é o primeiro filho do <body> e usa
-        // z-index 0, fica atrás do conteúdo da página; o pointer-events:none
-        // deixa os links por baixo continuarem clicáveis.
+        // Criado e estilizado por JS (o Cargo esvazia CSS de <style>).
+        //
+        // IMPORTANTE: tem de ir no FIM do <body>, nunca como primeiro filho.
+        // O router do Cargo trata o primeiro <div> do body como o seu contentor
+        // de conteúdo e renderiza as páginas lá dentro — o conteúdo herdava
+        // então o pointer-events:none e nenhum link era clicável.
+        // Com z-index negativo fica atrás de tudo à mesma, que é o mesmo padrão
+        // que o próprio Cargo usa nos seus fundos (position:fixed, z-index:-99).
         var contentor = document.getElementById("animacao-fundo");
         if (!contentor) {
             contentor = document.createElement("div");
             contentor.id = "animacao-fundo";
-            document.body.insertBefore(contentor, document.body.firstChild);
         }
+        document.body.appendChild(contentor);
         estilo(contentor, {
             "position": "fixed",
             "top": "0",
@@ -74,7 +79,7 @@
             "height": "100vh",
             "overflow": "hidden",
             "pointer-events": "none",
-            "z-index": "0"
+            "z-index": "-1"
         });
 
         // --- LISTA DE MÓDULOS --------------------------------------------
