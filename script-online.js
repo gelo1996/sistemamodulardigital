@@ -17,6 +17,8 @@ var btnStencil = { x: 0, y: 0, w: 100, h: 30 };
 var btnFlip = { x: 0, y: 0, w: 30, h: 30 }; // <-- ADICIONAR AQUI
 var btnHome = { x: 0, y: 0, w: 30, h: 30 }; // Voltar a pragmatipo.pt
 var alphabetScrollY = 0;
+var modalScrollY = 0;    // posição do scroll dentro do modal
+var modalMaxScroll = 0;  // recalculado a cada frame conforme a altura do conteúdo
 
 // --- SISTEMA DE ARTBOARD E UI ---
 var currentArtboardIdx = 0; // 0 = F1, 1 = F2, 2 = F3
@@ -265,6 +267,9 @@ function setup() {
 
     initAllCharacters();
     loadCharacter("A");
+
+    aplicarTipoDeLetraDoSite();
+    mostrarManualNaPrimeiraVisita();
 }
 
 function createRedVersion(img) {
@@ -451,11 +456,15 @@ function getHoveredGuide() {
 function mousePressed() {
     if (mouseButton == LEFT) {
         if (showShortcutsModal) {
-            var mw = 550 * globalScale; var mh = 560 * globalScale;
-            var mx = width / 2; var myModal = height / 2;
-            if (mouseX < mx - mw / 2 || mouseX > mx + mw / 2 || mouseY < myModal - mh / 2 || mouseY > myModal + mh / 2) { showShortcutsModal = false; suppressDrawUntilRelease = true; }
-            var closeX = mx + mw / 2 - 30 * globalScale; var closeY = myModal - mh / 2 + 30 * globalScale;
-            if (dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale) { showShortcutsModal = false; suppressDrawUntilRelease = true; }
+            var b = getModalBounds();
+            if (mouseX < b.x - b.w / 2 || mouseX > b.x + b.w / 2 || mouseY < b.y - b.h / 2 || mouseY > b.y + b.h / 2) {
+                showShortcutsModal = false; suppressDrawUntilRelease = true;
+            }
+            var closeX = b.x + b.w / 2 - 30 * globalScale;
+            var closeY = b.y - b.h / 2 + 30 * globalScale;
+            if (dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale) {
+                showShortcutsModal = false; suppressDrawUntilRelease = true;
+            }
             return;
         }
 
@@ -479,6 +488,7 @@ function mousePressed() {
             }
             if (mouseX > btnAtalhos.x - btnAtalhos.w / 2 && mouseX < btnAtalhos.x + btnAtalhos.w / 2 && mouseY > btnAtalhos.y - btnAtalhos.h / 2 && mouseY < btnAtalhos.y + btnAtalhos.h / 2) {
                 showShortcutsModal = true;
+                modalScrollY = 0; // abre sempre no início do manual
                 return;
             }
             if (!isOverlapMode && mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2) {
@@ -3294,67 +3304,370 @@ function drawUI() {
     }
 }
 
+// --- CONTEÚDO DO MANUAL (modal) ---
+// h = secção, li = tópico, key = linha de atalho
+var MANUAL = [
+    { t: 'cat', s: 'Working modes' },
+
+    { t: 'h', s: 'Letterpress mode' },
+    { t: 'li', s: 'Simulates handling the movable-type version of the system: modules cannot overlap' },
+
+    { t: 'h', s: 'Free mode' },
+    { t: 'li', s: 'Simulates handling the stencil version of the system: modules can overlap' },
+
+    { t: 'h', s: 'Flip' },
+    { t: 'li', s: 'Available in letterpress mode only. Mirrors the letters, preparing them for printing with movable type' },
+    { t: 'sc', k: 'H', s: 'Flip the entire composition' },
+
+    { t: 'cat', s: 'Tools' },
+
+    { t: 'h', s: 'Move / select', ic: 'mover' },
+    { t: 'li', s: 'Move or select modules on the artboard' },
+    { t: 'li', s: 'Select them one at a time, or several at once by dragging' },
+
+    { t: 'h', s: 'Eraser', ic: 'limpar' },
+    { t: 'li', s: 'Delete one or more modules on the artboard' },
+    { t: 'li', s: 'Delete them one at a time, or several at once by dragging' },
+    { t: 'sc', k: 'Delete / Backspace', s: 'Delete module or selection' },
+
+    { t: 'h', s: 'Pan camera', ic: 'moverTela' },
+    { t: 'li', s: 'Drag the artboard around' },
+    { t: 'sc', k: 'Space + Drag', s: 'Pan the artboard' },
+    { t: 'sc', k: 'C', s: 'Center the coordinates (0,0)' },
+
+    { t: 'h', s: 'Vertical & horizontal symmetry', ic: ['espelhoV', 'espelhoH'] },
+    { t: 'li', s: 'Speeds up drawing symmetrical letters \u2014 vertically, horizontally or on both axes \u2014 by mirroring every module automatically' },
+
+    { t: 'h', s: 'Rotation' },
+    { t: 'li', s: 'Shows the current rotation of the module' },
+    { t: 'sc', k: 'R', s: 'Rotate the selected module' },
+
+    { t: 'h', s: 'Undo', ic: 'voltar' },
+    { t: 'li', s: 'Step back through the last 15 actions' },
+
+    { t: 'h', s: 'Redo', ic: 'avancar' },
+    { t: 'li', s: 'Step forward through the last 15 actions' },
+
+    { t: 'cat', s: 'View & guides' },
+
+    { t: 'h', s: 'Toggle grid', ic: 'grelhaMenor' },
+    { t: 'li', s: 'Show or hide the grid' },
+    { t: 'sc', k: 'G', s: 'Toggle grids on / off' },
+
+    { t: 'h', s: 'Vertical center', ic: 'centroV' },
+    { t: 'li', s: 'Show or hide a vertical guide line' },
+
+    { t: 'h', s: 'Horizontal center', ic: 'centroH' },
+    { t: 'li', s: 'Show or hide a horizontal guide line' },
+
+    { t: 'h', s: 'Typographic guides', ic: 'guias' },
+    { t: 'li', s: 'Show or hide the typographic guide lines' },
+    { t: 'li', s: 'Their position carries across every artboard' },
+    { t: 'li', s: 'Their order cannot be changed \u2014 except for the ascender and cap height, which may sometimes be swapped' },
+
+    { t: 'h', s: 'Fit to screen', ic: 'enquadrar' },
+    { t: 'li', s: 'Fit everything you have drawn into the visible area' },
+    { t: 'sc', k: 'F', s: 'Fit the drawing to the window' },
+
+    { t: 'h', s: 'Slider' },
+    { t: 'li', s: 'Zoom in and out' },
+
+    { t: 'cat', s: 'Canvas & display' },
+
+    { t: 'h', s: 'Fill / Dot' },
+    { t: 'li', s: 'Fill: shows the modules fully filled in' },
+    { t: 'li', s: 'Dot: shows the modules closer to the physical letterpress type' },
+
+    { t: 'h', s: 'Line grid / Dot grid' },
+    { t: 'li', s: 'Line grid: a grid closer to the stencil version of the system' },
+    { t: 'li', s: 'Dot grid: a grid closer to the letterpress version of the system' },
+
+    { t: 'h', s: 'F1 / F2 / F3' },
+    { t: 'li', s: 'F1: close to 25 \u00d7 35 cm' },
+    { t: 'li', s: 'F2: close to 35 \u00d7 50 cm' },
+    { t: 'li', s: 'F3: close to 50 \u00d7 70 cm' },
+
+    { t: 'h', s: 'Portrait / Landscape' },
+    { t: 'li', s: 'Portrait: vertical artboard' },
+    { t: 'li', s: 'Landscape: horizontal artboard' },
+
+    { t: 'h', s: '36 side thumbnails' },
+    { t: 'li', s: '26 of them correspond to the letters of the Latin alphabet; the remaining 10 to the digits' },
+
+    { t: 'cat', s: 'Projects & export' },
+
+    { t: 'h', s: 'Import project', ic: 'importar' },
+    { t: 'li', s: 'Import files previously exported from this tool' },
+    { t: 'sc', k: 'Shift + O', s: 'Open project (JSON)' },
+
+    { t: 'h', s: 'Save project', ic: 'guardar' },
+    { t: 'li', s: 'Export a .json file so you can carry on exploring later' },
+    { t: 'sc', k: 'Shift + S', s: 'Save project (JSON)' },
+
+    { t: 'h', s: 'Export letter (SVG)', ic: 'exportarLetra' },
+    { t: 'li', s: 'Export the selected artboard as an SVG file' },
+    { t: 'sc', k: 'Shift + E', s: 'Export current letter (SVG)' },
+
+    { t: 'h', s: 'Export alphabet (SVG)', ic: 'exportarAlfabeto' },
+    { t: 'li', s: 'Export the whole alphabet as a single SVG file' },
+    { t: 'sc', k: 'Shift + A', s: 'Export full alphabet (SVG)' },
+
+    { t: 'h', s: 'Export alphabet (ZIP)', ic: 'exportarZip' },
+    { t: 'li', s: 'Export the whole alphabet as separate SVG files inside a ZIP' },
+    { t: 'sc', k: 'Shift + Z', s: 'Export ZIP file (individual letters)' },
+
+    { t: 'cat', s: 'Clearing' },
+
+    { t: 'h', s: 'Clear artboard', ic: 'limparLetra', perigo: true },
+    { t: 'li', s: 'Delete every module on the selected artboard' },
+
+    { t: 'h', s: 'Clear alphabet', ic: 'limparAlfabeto', perigo: true },
+    { t: 'li', s: 'Delete every module on every artboard' }
+];
+
+// Uma única fonte para as dimensões do modal, para o desenho e a deteção
+// de cliques nunca divergirem.
+function getModalBounds() {
+    var w = min(640 * globalScale, width * 0.92);
+    var h = min(740 * globalScale, height * 0.88);
+    return { w: w, h: h, x: width / 2, y: height / 2 };
+}
+
+// Parte uma frase em linhas que caibam na largura dada
+function wrapText(str, maxW) {
+    var palavras = str.split(' ');
+    var linhas = [];
+    var linha = '';
+    for (var i = 0; i < palavras.length; i++) {
+        var teste = linha ? linha + ' ' + palavras[i] : palavras[i];
+        if (textWidth(teste) > maxW && linha) {
+            linhas.push(linha);
+            linha = palavras[i];
+        } else {
+            linha = teste;
+        }
+    }
+    if (linha) linhas.push(linha);
+    return linhas;
+}
+
 function drawShortcutsModal() {
     if (!showShortcutsModal) return;
 
+    push();
     rectMode(CORNER); fill(0, 160); noStroke(); rect(0, 0, width, height);
+
+    var b = getModalBounds();
+    var left = b.x - b.w / 2, top = b.y - b.h / 2;
+    var headerH = 62 * globalScale;
+    var padX = 32 * globalScale;
+
     rectMode(CENTER);
-    var mw = 550 * globalScale; var mh = 560 * globalScale;
-    var mx = width / 2; var my = height / 2;
+    fill(255); stroke(200); strokeWeight(2 * globalScale);
+    rect(b.x, b.y, b.w, b.h, 16 * globalScale);
 
-    fill(255); stroke(200); strokeWeight(2 * globalScale); rect(mx, my, mw, mh, 16 * globalScale);
+    // --- CONTEÚDO (recortado à área visível e deslocado pelo scroll) ---
+    var areaTop = top + headerH;
+    var areaH = b.h - headerH - 14 * globalScale;
+    var colW = b.w - padX * 2;
 
-    noStroke(); fill(0); textAlign(CENTER, CENTER); textSize(20 * globalScale);
-    text("Shortcuts", mx, my - mh / 2 + 40 * globalScale);
+    drawingContext.save();
+    drawingContext.beginPath();
+    drawingContext.rect(left, areaTop, b.w, areaH);
+    drawingContext.clip();
 
-    var closeX = mx + mw / 2 - 30 * globalScale; var closeY = my - mh / 2 + 30 * globalScale;
-    var isCloseHovered = dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale;
+    noStroke();
+    rectMode(CORNER);
+    imageMode(CORNER);
+    var y = areaTop + 8 * globalScale - modalScrollY;
 
-    fill(isCloseHovered ? 255 : 240);
-    if (isCloseHovered) fill(255, 100, 100);
-    circle(closeX, closeY, 28 * globalScale);
-    fill(isCloseHovered ? 255 : 150); textSize(14 * globalScale);
-    text("✕", closeX, closeY + 1 * globalScale);
+    // Coluna reservada aos ícones, à esquerda. O texto alinha todo a seguir,
+    // mesmo nas secções sem ícone, para a lista não ficar aos degraus.
+    var iconCol = 34 * globalScale;
+    var textX = left + padX + iconCol;
+    var textW = colW - iconCol;
 
-    var shortcuts = [
-        { key: "R", desc: "Rotate the selected module" },
-        { key: "H", desc: "Flip the entire composition" },
-        { key: "F", desc: "Fit the drawing to the window" },
-        { key: "Space + Drag", desc: "Pan the artboard" },
-        { key: "Delete / Backspace", desc: "Delete module or selection" },
-        { key: "G", desc: "Toggle grids on / off" },
-        { key: "C", desc: "Center the coordinates (0,0)" },
-        { key: "S", desc: "Save image (PNG)" },
-        { key: "Shift + S", desc: "Save project (JSON)" },
-        { key: "Shift + O", desc: "Open project (JSON)" },
-        { key: "Shift + E", desc: "Export current letter (SVG)" },
-        { key: "Shift + A", desc: "Export full alphabet (SVG)" },
-        { key: "Shift + Z", desc: "Export ZIP file (individual letters)" }
-    ];
+    for (var i = 0; i < MANUAL.length; i++) {
+        var bloco = MANUAL[i];
 
-    var listStartY = my - mh / 2 + 100 * globalScale;
-    var lineH = 34 * globalScale;
-
-    for (var i = 0; i < shortcuts.length; i++) {
-        var y = listStartY + i * lineH;
-        fill(0, 130, 255); textAlign(RIGHT, CENTER); textSize(13 * globalScale);
-        text(shortcuts[i].key, mx - 20 * globalScale, y);
-        fill(80); textAlign(LEFT, CENTER); text(shortcuts[i].desc, mx + 20 * globalScale, y);
-
-        if (i < shortcuts.length - 1) {
-            stroke(240); strokeWeight(1);
-            line(mx - mw / 2 + 50 * globalScale, y + lineH / 2, mx + mw / 2 - 50 * globalScale, y + lineH / 2);
+        if (bloco.t === 'cat') {
+            // Cabeçalho de categoria: régua + rótulo em maiúsculas
+            y += (i === 0 ? 4 : 30) * globalScale;
+            stroke(224); strokeWeight(1);
+            line(left + padX, y, left + b.w - padX, y);
             noStroke();
+            y += 13 * globalScale;
+            fill(0, 130, 255); textAlign(LEFT, TOP);
+            textSize(10 * globalScale); textStyle(BOLD);
+            text(bloco.s.toUpperCase(), left + padX, y);
+            textStyle(NORMAL);
+            y += 21 * globalScale;
+
+        } else if (bloco.t === 'h') {
+            y += (i === 0 ? 6 : 18) * globalScale;
+
+            // Ícone(s) da barra de ferramentas, para criar a associação visual.
+            // Quando são dois (simetria V e H), ficam empilhados na vertical.
+            var icones = bloco.ic ? ((typeof bloco.ic === 'string') ? [bloco.ic] : bloco.ic) : [];
+            var empilhados = icones.length > 1;
+
+            if (icones.length) {
+                push();
+                if (bloco.perigo) tint(255, 60, 60); else tint(30);
+                if (empilhados) {
+                    for (var q = 0; q < icones.length && q < 2; q++) {
+                        var im2 = toolIcons[icones[q]];
+                        if (im2) image(im2, left + padX,
+                                       y - 3 * globalScale + q * 22 * globalScale,
+                                       19 * globalScale, 19 * globalScale);
+                    }
+                } else {
+                    var im = toolIcons[icones[0]];
+                    if (im) image(im, left + padX, y - 3 * globalScale, 19 * globalScale, 19 * globalScale);
+                }
+                pop();
+            }
+
+            fill(0); textAlign(LEFT, TOP);
+            textSize(13 * globalScale); textStyle(BOLD);
+            text(bloco.s, textX, y);
+            // O texto avança sempre igual: os ícones ficam numa coluna à
+            // esquerda, por isso o segundo ícone empilhado não colide com nada.
+            y += 21 * globalScale;
+            textStyle(NORMAL);
+
+        } else if (bloco.t === 'li') {
+            textSize(11.5 * globalScale); textStyle(NORMAL);
+            var linhas = wrapText(bloco.s, textW - 14 * globalScale);
+            fill(150); textAlign(LEFT, TOP);
+            text('•', textX, y);
+            fill(90);
+            for (var j = 0; j < linhas.length; j++) {
+                text(linhas[j], textX + 14 * globalScale, y);
+                y += 16 * globalScale;
+            }
+            y += 3 * globalScale;
+
+        } else if (bloco.t === 'sc') {
+            // Atalho junto da ferramenta a que pertence, com aspeto de tecla
+            y += 4 * globalScale;
+            textSize(10 * globalScale); textStyle(BOLD);
+            var capW = textWidth(bloco.k) + 16 * globalScale;
+            var capH = 18 * globalScale;
+
+            push();
+            rectMode(CORNER);
+            fill(240, 246, 255); stroke(198, 220, 250); strokeWeight(1);
+            rect(textX, y, capW, capH, 4 * globalScale);
+            pop();
+
+            noStroke();
+            fill(0, 130, 255); textAlign(CENTER, CENTER);
+            text(bloco.k, textX + capW / 2, y + capH / 2);
+
+            textStyle(NORMAL); textSize(11.5 * globalScale);
+            fill(90); textAlign(LEFT, CENTER);
+            text(bloco.s, textX + capW + 10 * globalScale, y + capH / 2);
+            y += capH + 6 * globalScale;
         }
     }
+
+    var alturaTotal = (y + modalScrollY) - areaTop + 20 * globalScale;
+    modalMaxScroll = max(0, alturaTotal - areaH);
+
+    drawingContext.restore();
+
+    // --- CABEÇALHO (por cima, para o conteúdo passar por baixo) ---
+    noStroke(); rectMode(CORNER);
+    // Cantos de cima arredondados para acompanharem a curva do painel — a
+    // recto, os vértices brancos espreitavam por fora da borda arredondada.
+    fill(255);
+    rect(left + 2, top + 2, b.w - 4, headerH - 2,
+         14 * globalScale, 14 * globalScale, 0, 0);
+    fill(0); textAlign(LEFT, CENTER); textSize(19 * globalScale); textStyle(BOLD);
+    text('Pragmatipo', left + padX, top + headerH / 2 - 6 * globalScale);
+    textStyle(NORMAL); textSize(10.5 * globalScale); fill(140);
+    text('Guide & keyboard shortcuts', left + padX, top + headerH / 2 + 12 * globalScale);
+    stroke(230); strokeWeight(1); line(left + padX, top + headerH, left + b.w - padX, top + headerH);
+    noStroke();
+
+    // --- BARRA DE SCROLL ---
+    if (modalMaxScroll > 0) {
+        var trilhoX = left + b.w - 12 * globalScale;
+        var trilhoH = areaH - 12 * globalScale;
+        var trilhoY = areaTop + 6 * globalScale;
+        fill(238); rectMode(CENTER);
+        rect(trilhoX, trilhoY + trilhoH / 2, 4 * globalScale, trilhoH, 2 * globalScale);
+        var puxadorH = max(30 * globalScale, trilhoH * (areaH / (areaH + modalMaxScroll)));
+        var puxadorY = trilhoY + (trilhoH - puxadorH) * (modalScrollY / modalMaxScroll);
+        fill(180);
+        rect(trilhoX, puxadorY + puxadorH / 2, 4 * globalScale, puxadorH, 2 * globalScale);
+    }
+
+    // --- BOTÃO FECHAR ---
+    rectMode(CENTER);
+    var closeX = left + b.w - 30 * globalScale, closeY = top + 30 * globalScale;
+    var isCloseHovered = dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale;
+    noStroke();
+    fill(isCloseHovered ? color(255, 100, 100) : color(240));
+    circle(closeX, closeY, 28 * globalScale);
+    fill(isCloseHovered ? 255 : 150); textAlign(CENTER, CENTER); textSize(14 * globalScale);
+    text('✕', closeX, closeY + 1 * globalScale);
+
+    pop();
+}
+
+// --- TIPO DE LETRA DO SITE ---
+// O canvas consegue usar qualquer fonte que o browser já tenha carregado,
+// bastando pedi-la pelo nome. Mas o Cargo declara a fonte e só a descarrega
+// quando há texto HTML que a use — nesta página é tudo canvas, por isso fica
+// em 'unloaded' e o pedido seria ignorado em silêncio. Daí o fonts.load().
+// Em localhost a fonte não existe: mantém-se o sans-serif por omissão.
+var FONTE_DO_SITE = 'Marist Variable';
+
+function aplicarTipoDeLetraDoSite() {
+    if (!document.fonts || !document.fonts.load) return;
+    var pedido = '16px "' + FONTE_DO_SITE + '"';
+    document.fonts.load(pedido).then(function () {
+        if (fonteMesmoDisponivel(FONTE_DO_SITE)) textFont(FONTE_DO_SITE);
+    }).catch(function () {
+        // fonte indisponível (ex.: localhost) — fica a de omissão
+    });
+}
+
+// O document.fonts.check() devolve true mesmo para fontes inexistentes (conta
+// a de recurso como válida). A única forma fiável é medir: se o texto tem a
+// mesma largura com e sem a fonte pedida, então ela não está lá.
+function fonteMesmoDisponivel(familia) {
+    var ctx = document.createElement('canvas').getContext('2d');
+    var amostra = 'MWmwiI0Oo@#';
+    ctx.font = '72px monospace';
+    var larguraBase = ctx.measureText(amostra).width;
+    ctx.font = '72px "' + familia + '", monospace';
+    return ctx.measureText(amostra).width !== larguraBase;
+}
+
+// Abre o manual só na primeira vez que cada pessoa entra na plataforma.
+// Nas visitas seguintes fica fechado; o botão de atalhos abre-o sempre.
+function mostrarManualNaPrimeiraVisita() {
+    var chave = 'pragmatipo-manual-visto';
+    try {
+        if (localStorage.getItem(chave)) return; // já cá esteve
+        localStorage.setItem(chave, '1');
+    } catch (e) {
+        // localStorage bloqueado (navegação privada): mostra na mesma
+    }
+    showShortcutsModal = true;
+    modalScrollY = 0;
 }
 
 function keyPressed() {
-    if (key == 's' || key == 'S') {
-        if (!keyIsDown(SHIFT)) {
-            saveCanvas(currentChar, 'png');
-        }
+    // Com o manual aberto, as teclas não devem mexer no desenho por trás dele
+    if (showShortcutsModal) {
+        if (keyCode === ESCAPE) showShortcutsModal = false;
+        return;
     }
+
     if (key == 'c' || key == 'C') { panX = 0; panY = 0; calculateLayout(); }
 
     // NOVO ATALHO DE ESPELHAR (Letra H)
@@ -4101,6 +4414,12 @@ function clearEntireAlphabet() {
 
 // --- DETEÇÃO DE SCROLL (RATO / TRACKPAD) ---
 function mouseWheel(event) {
+    // Com o modal aberto, a roda faz scroll ao manual
+    if (showShortcutsModal) {
+        modalScrollY = constrain(modalScrollY + event.delta, 0, modalMaxScroll);
+        return false;
+    }
+
     // Só deixa fazer scroll se o rato estiver a sobrevoar a barra lateral
     if (mouseX < sidebarWidth && mouseY > topBarHeight) {
         alphabetScrollY += event.delta; // Soma o movimento
