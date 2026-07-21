@@ -19,6 +19,8 @@ var btnHome = { x: 0, y: 0, w: 30, h: 30 }; // Voltar a pragmatipo.pt
 var alphabetScrollY = 0;
 var modalScrollY = 0;    // posição do scroll dentro do modal
 var modalMaxScroll = 0;  // recalculado a cada frame conforme a altura do conteúdo
+var categoriasAbertas = {}; // acordeão: que categorias do manual estão expandidas
+var modalCatAreas = [];     // zonas clicáveis dos cabeçalhos de categoria (por frame)
 
 // --- SISTEMA DE ARTBOARD E UI ---
 var currentArtboardIdx = 0; // 0 = F1, 1 = F2, 2 = F3
@@ -457,12 +459,32 @@ function mousePressed() {
     if (mouseButton == LEFT) {
         if (showShortcutsModal) {
             var b = getModalBounds();
-            if (mouseX < b.x - b.w / 2 || mouseX > b.x + b.w / 2 || mouseY < b.y - b.h / 2 || mouseY > b.y + b.h / 2) {
-                showShortcutsModal = false; suppressDrawUntilRelease = true;
-            }
+
+            // Botão fechar
             var closeX = b.x + b.w / 2 - 30 * globalScale;
             var closeY = b.y - b.h / 2 + 30 * globalScale;
             if (dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale) {
+                showShortcutsModal = false; suppressDrawUntilRelease = true;
+                return;
+            }
+
+            // Clique num cabeçalho de categoria: abre/fecha o acordeão.
+            // Só conta dentro da área de conteúdo (títulos fora dela estão
+            // recortados e não devem responder).
+            var areaTop = (b.y - b.h / 2) + b.headerH;
+            var areaBot = (b.y + b.h / 2) - 14 * globalScale;
+            for (var ci = 0; ci < modalCatAreas.length; ci++) {
+                var a = modalCatAreas[ci];
+                var meio = (a.y0 + a.y1) / 2;
+                if (mouseY >= a.y0 && mouseY <= a.y1 && meio > areaTop && meio < areaBot &&
+                    mouseX > b.x - b.w / 2 && mouseX < b.x + b.w / 2) {
+                    categoriasAbertas[a.nome] = !categoriasAbertas[a.nome];
+                    return;
+                }
+            }
+
+            // Clique fora do painel: fecha
+            if (mouseX < b.x - b.w / 2 || mouseX > b.x + b.w / 2 || mouseY < b.y - b.h / 2 || mouseY > b.y + b.h / 2) {
                 showShortcutsModal = false; suppressDrawUntilRelease = true;
             }
             return;
@@ -487,8 +509,7 @@ function mousePressed() {
                 return;
             }
             if (mouseX > btnAtalhos.x - btnAtalhos.w / 2 && mouseX < btnAtalhos.x + btnAtalhos.w / 2 && mouseY > btnAtalhos.y - btnAtalhos.h / 2 && mouseY < btnAtalhos.y + btnAtalhos.h / 2) {
-                showShortcutsModal = true;
-                modalScrollY = 0; // abre sempre no início do manual
+                abrirManual();
                 return;
             }
             if (!isOverlapMode && mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2) {
@@ -3249,7 +3270,7 @@ function drawUI() {
     btnFlip.w = btnH; btnFlip.h = btnH; btnFlip.x = toolStartX + toolGapX; btnFlip.y = effectiveBottom - 25 * globalScale;
     btnHome.w = btnH; btnHome.h = btnH; btnHome.x = toolStartX + 2 * toolGapX; btnHome.y = effectiveBottom - 25 * globalScale;
 
-    textSize(8.5 * globalScale); textStyle(BOLD); rectMode(CENTER);
+    textSize(9.5 * globalScale); textStyle(BOLD); rectMode(CENTER);
 
     var isOffH = (mouseX > btnLetterpress.x - btnLetterpress.w / 2 && mouseX < btnLetterpress.x + btnLetterpress.w / 2 && mouseY > btnLetterpress.y - btnLetterpress.h / 2 && mouseY < btnLetterpress.y + btnLetterpress.h / 2);
     fill(!isOverlapMode ? [0, 130, 255, 30] : (isOffH ? 235 : 255)); stroke(!isOverlapMode ? [0, 130, 255] : 200); strokeWeight(1.5 * globalScale);
@@ -3429,8 +3450,9 @@ var MANUAL = [
 // de cliques nunca divergirem.
 function getModalBounds() {
     var w = min(640 * globalScale, width * 0.92);
-    var h = min(740 * globalScale, height * 0.88);
-    return { w: w, h: h, x: width / 2, y: height / 2 };
+    var h = min(760 * globalScale, height * 0.88);
+    // headerH aqui para o desenho e a deteção de cliques usarem o mesmo valor
+    return { w: w, h: h, x: width / 2, y: height / 2, headerH: 84 * globalScale };
 }
 
 // Parte uma frase em linhas que caibam na largura dada
@@ -3459,7 +3481,7 @@ function drawShortcutsModal() {
 
     var b = getModalBounds();
     var left = b.x - b.w / 2, top = b.y - b.h / 2;
-    var headerH = 62 * globalScale;
+    var headerH = b.headerH;
     var padX = 32 * globalScale;
 
     rectMode(CENTER);
@@ -3487,21 +3509,58 @@ function drawShortcutsModal() {
     var textX = left + padX + iconCol;
     var textW = colW - iconCol;
 
+    // Acordeão: cada categoria é um cabeçalho clicável; o conteúdo só desenha
+    // quando a categoria está aberta. As áreas de clique são registadas em
+    // coordenadas de ecrã para o mousePressed as poder testar.
+    modalCatAreas = [];
+    var categoriaAberta = false;
+
     for (var i = 0; i < MANUAL.length; i++) {
         var bloco = MANUAL[i];
 
         if (bloco.t === 'cat') {
-            // Cabeçalho de categoria: régua + rótulo em maiúsculas
-            y += (i === 0 ? 4 : 30) * globalScale;
-            stroke(224); strokeWeight(1);
+            var aberta = !!categoriasAbertas[bloco.s];
+            categoriaAberta = aberta;
+
+            y += (i === 0 ? 4 : 16) * globalScale;
+            var linhaTopo = y;
+            var alturaCab = 42 * globalScale;
+
+            // Realce ao passar o rato (só na área visível)
+            var hoverCab = (mouseX > left + padX && mouseX < left + b.w - padX &&
+                            mouseY > y && mouseY < y + alturaCab &&
+                            mouseY > areaTop && mouseY < areaTop + areaH);
+            if (hoverCab) {
+                push(); rectMode(CORNER); noStroke(); fill(0, 0, 0, 8);
+                rect(left + padX - 6 * globalScale, y, colW + 12 * globalScale, alturaCab, 6 * globalScale);
+                pop();
+            }
+
+            // Seta ▸ (fechada) / ▾ (aberta)
+            push();
+            fill(0); textAlign(LEFT, CENTER); textStyle(BOLD);
+            textSize(13 * globalScale);
+            text(aberta ? '▾' : '▸', left + padX, y + alturaCab / 2);
+            // Rótulo da categoria
+            textSize(17 * globalScale);
+            text(bloco.s, left + padX + 22 * globalScale, y + alturaCab / 2);
+            textStyle(NORMAL);
+            pop();
+
+            // Regista a zona clicável desta categoria
+            modalCatAreas.push({ nome: bloco.s, y0: linhaTopo, y1: linhaTopo + alturaCab });
+
+            y += alturaCab;
+
+            // Régua fina por baixo do cabeçalho
+            stroke(232); strokeWeight(1);
             line(left + padX, y, left + b.w - padX, y);
             noStroke();
-            y += 13 * globalScale;
-            fill(0, 130, 255); textAlign(LEFT, TOP);
-            textSize(10 * globalScale); textStyle(BOLD);
-            text(bloco.s.toUpperCase(), left + padX, y);
-            textStyle(NORMAL);
-            y += 21 * globalScale;
+            y += 6 * globalScale;
+
+        } else if (!categoriaAberta) {
+            // Categoria fechada: salta o conteúdo sem o desenhar nem contar altura
+            continue;
 
         } else if (bloco.t === 'h') {
             y += (i === 0 ? 6 : 18) * globalScale;
@@ -3529,31 +3588,31 @@ function drawShortcutsModal() {
             }
 
             fill(0); textAlign(LEFT, TOP);
-            textSize(13 * globalScale); textStyle(BOLD);
+            textSize(14.5 * globalScale); textStyle(BOLD);
             text(bloco.s, textX, y);
             // O texto avança sempre igual: os ícones ficam numa coluna à
             // esquerda, por isso o segundo ícone empilhado não colide com nada.
-            y += 21 * globalScale;
+            y += 23 * globalScale;
             textStyle(NORMAL);
 
         } else if (bloco.t === 'li') {
-            textSize(11.5 * globalScale); textStyle(NORMAL);
-            var linhas = wrapText(bloco.s, textW - 14 * globalScale);
+            textSize(13 * globalScale); textStyle(NORMAL);
+            var linhas = wrapText(bloco.s, textW - 16 * globalScale);
             fill(150); textAlign(LEFT, TOP);
             text('•', textX, y);
             fill(90);
             for (var j = 0; j < linhas.length; j++) {
-                text(linhas[j], textX + 14 * globalScale, y);
-                y += 16 * globalScale;
+                text(linhas[j], textX + 16 * globalScale, y);
+                y += 18 * globalScale;
             }
             y += 3 * globalScale;
 
         } else if (bloco.t === 'sc') {
             // Atalho junto da ferramenta a que pertence, com aspeto de tecla
             y += 4 * globalScale;
-            textSize(10 * globalScale); textStyle(BOLD);
-            var capW = textWidth(bloco.k) + 16 * globalScale;
-            var capH = 18 * globalScale;
+            textSize(11.5 * globalScale); textStyle(BOLD);
+            var capW = textWidth(bloco.k) + 18 * globalScale;
+            var capH = 20 * globalScale;
 
             push();
             rectMode(CORNER);
@@ -3565,10 +3624,10 @@ function drawShortcutsModal() {
             fill(0, 130, 255); textAlign(CENTER, CENTER);
             text(bloco.k, textX + capW / 2, y + capH / 2);
 
-            textStyle(NORMAL); textSize(11.5 * globalScale);
+            textStyle(NORMAL); textSize(13 * globalScale);
             fill(90); textAlign(LEFT, CENTER);
             text(bloco.s, textX + capW + 10 * globalScale, y + capH / 2);
-            y += capH + 6 * globalScale;
+            y += capH + 7 * globalScale;
         }
     }
 
@@ -3584,10 +3643,10 @@ function drawShortcutsModal() {
     fill(255);
     rect(left + 2, top + 2, b.w - 4, headerH - 2,
          14 * globalScale, 14 * globalScale, 0, 0);
-    fill(0); textAlign(LEFT, CENTER); textSize(19 * globalScale); textStyle(BOLD);
-    text('Pragmatipo', left + padX, top + headerH / 2 - 6 * globalScale);
-    textStyle(NORMAL); textSize(10.5 * globalScale); fill(140);
-    text('Guide & keyboard shortcuts', left + padX, top + headerH / 2 + 12 * globalScale);
+    fill(0); textAlign(LEFT, CENTER); textSize(30 * globalScale); textStyle(BOLD);
+    text('Pragmatipo', left + padX, top + headerH / 2 - 11 * globalScale);
+    textStyle(NORMAL); textSize(11 * globalScale); fill(140);
+    text('Guide & keyboard shortcuts', left + padX, top + headerH / 2 + 20 * globalScale);
     stroke(230); strokeWeight(1); line(left + padX, top + headerH, left + b.w - padX, top + headerH);
     noStroke();
 
@@ -3657,8 +3716,14 @@ function mostrarManualNaPrimeiraVisita() {
     } catch (e) {
         // localStorage bloqueado (navegação privada): mostra na mesma
     }
+    abrirManual();
+}
+
+// Abre o manual sempre como índice limpo: scroll no topo e categorias fechadas.
+function abrirManual() {
     showShortcutsModal = true;
     modalScrollY = 0;
+    categoriasAbertas = {};
 }
 
 function keyPressed() {
@@ -4476,7 +4541,7 @@ function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
         noStroke();
         fill(i === selectedIdx ? [0, 130, 255] : 120);
         textStyle(i === selectedIdx ? BOLD : NORMAL);
-        textSize(9 * globalScale);
+        textSize(10.5 * globalScale);
         text(options[i], segCX, cy);
     }
     textStyle(NORMAL);
