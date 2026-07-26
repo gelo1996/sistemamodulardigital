@@ -245,11 +245,14 @@ function forceCanvasLayout(cnv) {
 }
 
 function setup() {
+    // Desenha à resolução real do ecrã (Retina = 2x): sem isto, o p5 pode
+    // renderizar a 1x e o texto/linhas ficam com ar pixelizado.
+    pixelDensity(displayDensity());
     var cnv = createCanvas(windowWidth, windowHeight);
     forceCanvasLayout(cnv);
     rectMode(CENTER);
     imageMode(CENTER);
-    strokeWeight(0.5);
+    strokeWeight(0.75);
     textSize(8);
     textAlign(CENTER, CENTER);
     angleMode(DEGREES);
@@ -381,7 +384,7 @@ function draw() {
             fill(0, 200, 0, 40);         // Fundo azul suave
         }
         
-        strokeWeight(0.5); // Fica mais profissional e elegante
+        strokeWeight(0.75); // Fica mais profissional e elegante
         rectMode(CORNERS);
         rect(snapStartX, snapStartY, snapEndX, snapEndY);
         pop();
@@ -2505,14 +2508,14 @@ function drawGrid() {
     rect(gridStartX, gridStartY, gridPixW, gridPixH);
 
     // Contorno cinza do Artboard
-    push(); stroke(238); strokeWeight(0.5); noFill();
+    push(); stroke(238); strokeWeight(0.75); noFill();
     rect(gridStartX, gridStartY, gridPixW, gridPixH); pop();
 
     // 1. Grelha Fina (Linhas ou Pontos)
     if (showSmallGrid) {
         push();
         if (currentGridStyle === 'lines') {
-            strokeWeight(0.5); stroke(238); drawingContext.setLineDash([4, 4]);
+            strokeWeight(1); stroke(238); drawingContext.setLineDash([4, 4]);
 
             // As linhas só são desenhadas dentro da largura e altura do artboard (artW / artH)
             for (var i = 0; i <= artW; i++) {
@@ -2524,7 +2527,7 @@ function drawGrid() {
                 line(gridStartX, py, gridEndX, py);
             }
         } else if (currentGridStyle === 'dots') {
-            fill(210); noStroke(); // Cor do círculo
+            fill(238); noStroke(); // Cor do círculo
 
             // A tua matemática exata de escalonamento para 5.811pt
             var dotSize = tileSize * (5.811 / 15);
@@ -2560,23 +2563,23 @@ function drawGrid() {
         for (var keyY in guidesY) {
             var screenY = centerY + (guidesY[keyY] - GRID_CY) * tileSize;
             var colY = guideColors[keyY];
-            stroke(colY[0], colY[1], colY[2]); strokeWeight(0.5); drawingContext.setLineDash([8, 4]); line(sidebarWidth, screenY, width, screenY); drawingContext.setLineDash([]);
+            stroke(colY[0], colY[1], colY[2]); strokeWeight(0.75); drawingContext.setLineDash([8, 4]); line(sidebarWidth, screenY, width, screenY); drawingContext.setLineDash([]);
             noStroke(); fill(colY[0], colY[1], colY[2]); textAlign(LEFT, BOTTOM); textSize(9); text(labels[keyY], sidebarWidth + 10, screenY - 2);
         }
 
         for (var keyX in guidesX) {
             var screenX = centerX + (guidesX[keyX] - GRID_CX) * tileSize;
             var colX = guideColors[keyX];
-            stroke(colX[0], colX[1], colX[2]); strokeWeight(0.5); drawingContext.setLineDash([8, 4]); line(screenX, topBarHeight, screenX, height); drawingContext.setLineDash([]);
+            stroke(colX[0], colX[1], colX[2]); strokeWeight(0.75); drawingContext.setLineDash([8, 4]); line(screenX, topBarHeight, screenX, height); drawingContext.setLineDash([]);
             noStroke(); fill(colX[0], colX[1], colX[2]); textAlign(LEFT, TOP); textSize(9); text(labels[keyX], screenX + 5, topBarHeight + 10);
         }
     }
 
-    if (showCenterV) { push(); stroke(200, 50, 255, 180); strokeWeight(0.5); drawingContext.setLineDash([10, 5]); line(centerX, topBarHeight, centerX, height); pop(); }
-    if (showCenterH) { push(); stroke(200, 50, 255, 180); strokeWeight(0.5); drawingContext.setLineDash([10, 5]); line(sidebarWidth, centerY, width, centerY); pop(); }
+    if (showCenterV) { push(); stroke(200, 50, 255, 180); strokeWeight(0.75); drawingContext.setLineDash([10, 5]); line(centerX, topBarHeight, centerX, height); pop(); }
+    if (showCenterH) { push(); stroke(200, 50, 255, 180); strokeWeight(0.75); drawingContext.setLineDash([10, 5]); line(sidebarWidth, centerY, width, centerY); pop(); }
 
     if (isMirrorModeV || isMirrorModeH) {
-        stroke(255, 50, 50, 180); strokeWeight(0.5); drawingContext.setLineDash([5, 5]);
+        stroke(255, 50, 50, 180); strokeWeight(0.75); drawingContext.setLineDash([5, 5]);
         if (isMirrorModeV) line(centerX, topBarHeight, centerX, height);
         if (isMirrorModeH) line(sidebarWidth, centerY, width, centerY);
         drawingContext.setLineDash([]);
@@ -3093,7 +3096,7 @@ function drawUI() {
 
     // --- 1. BARRA SUPERIOR ---
     push(); fill(249); noStroke(); rectMode(CORNER); rect(0, 0, width, topBarHeight);
-    stroke(238); strokeWeight(0.5); line(0, topBarHeight, width, topBarHeight); pop();
+    stroke(238); strokeWeight(0.75); line(0, topBarHeight, width, topBarHeight); pop();
 
     var tBoxSize = 34 * globalScale;
     var toolGapX = 45 * globalScale;
@@ -3124,15 +3127,20 @@ function drawUI() {
         var isH = (mouseX > tx - tBoxSize / 2 && mouseX < tx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2);
         if (isH) { activeTooltip = t.tip; tooltipX = tx; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
         fill(t.active ? color(t.color[0], t.color[1], t.color[2], 30) : (isH ? 235 : 249));
-        stroke(t.active ? color(t.color[0], t.color[1], t.color[2]) : 200);
-        strokeWeight(0.5); rect(tx, ty, tBoxSize, tBoxSize, 6 * globalScale);
+        stroke(t.active ? color(t.color[0], t.color[1], t.color[2]) : 238);
+        strokeWeight(0.75); rect(tx, ty, tBoxSize, tBoxSize, 6 * globalScale);
         if (t.img) { tint(t.active ? color(t.color[0], t.color[1], t.color[2]) : (isH ? 40 : 80)); image(t.img, tx, ty, 20 * globalScale, 20 * globalScale); noTint(); }
     }
 
     // --- SLIDER E ROTAÇÃO (LINHA 1) ---
     var sliderBoxCX = toolStartX + (14 * toolGapX);
     var sliderBoxW = (4 * toolGapX) + tBoxSize;
-    fill(250); stroke(238); strokeWeight(0.5);
+
+    // Hover calculado antes de desenhar a caixa, para ela poder reagir
+    // como os restantes botões da barra (235 em hover, 249 normal).
+    var isHoverSlider = !showShortcutsModal && (mouseX > uiSlider.x - 10 && mouseX < uiSlider.x + uiSlider.w + 10 && mouseY > ty - 15 && mouseY < ty + 15);
+
+    fill(isHoverSlider || isDraggingSlider ? 235 : 249); stroke(238); strokeWeight(0.75);
     rect(sliderBoxCX, ty, sliderBoxW, tBoxSize, 6 * globalScale);
 
     // O NOSSO NOVO SLIDER DESENHADO EM JS VETORIAL
@@ -3152,11 +3160,9 @@ function drawUI() {
         rectMode(CENTER);
     }
 
-    var isHoverSlider = !showShortcutsModal && (mouseX > uiSlider.x - 10 && mouseX < uiSlider.x + uiSlider.w + 10 && mouseY > ty - 15 && mouseY < ty + 15);
-
     // Bolinha
     fill(0, 200, 0);
-    if (isHoverSlider || isDraggingSlider) { stroke(140, 225, 140); strokeWeight(0.5); } else { noStroke(); }
+    if (isHoverSlider || isDraggingSlider) { stroke(140, 225, 140); strokeWeight(0.75); } else { noStroke(); }
     circle(thumbX, trackY, 12 * globalScale);
 
     if (isHoverSlider || isDraggingSlider) {
@@ -3167,7 +3173,7 @@ function drawUI() {
     // A CAIXA DA ROTAÇÃO (Mantém-se igual)
     var rotBoxW = (2 * toolGapX) + tBoxSize;
     var rotBoxCX = toolStartX + (18 * toolGapX);
-    fill(250); stroke(238); strokeWeight(0.5); rect(rotBoxCX, ty, rotBoxW, tBoxSize, 6 * globalScale);
+    fill(249); stroke(238); strokeWeight(0.75); rect(rotBoxCX, ty, rotBoxW, tBoxSize, 6 * globalScale);
 
     noStroke();
     var hasActiveModule = (selectedModule >= 0 || selectedModule == -2);
@@ -3180,9 +3186,9 @@ function drawUI() {
         var mx = toolStartX + (i * toolGapX);
         var isH = (mouseX > mx - tBoxSize / 2 && mouseX < mx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2);
         if (isH) { activeTooltip = nf(i, 2); tooltipX = mx; tooltipY = my + tBoxSize / 2 + 15 * globalScale; }
-        fill(selectedModule == i ? [215, 245, 210] : (isH ? 235 : 250));
-        stroke(selectedModule == i ? [0, 200, 0] : 220);
-        strokeWeight(0.5); rect(mx, my, tBoxSize, tBoxSize, 6 * globalScale);
+        fill(selectedModule == i ? [215, 245, 210] : (isH ? 235 : 249));
+        stroke(selectedModule == i ? [0, 200, 0] : 238);
+        strokeWeight(0.75); rect(mx, my, tBoxSize, tBoxSize, 6 * globalScale);
         var dims = getModuleDims(i); var maxD = max(dims.len, dims.wid);
         if (modules[i]) image(modules[i], mx, my, (dims.len / maxD) * (tBoxSize - 10), (dims.wid / maxD) * (tBoxSize - 10));
     }
@@ -3219,8 +3225,8 @@ function drawUI() {
         var rx = rightMargin - (row1R.length - 1 - j) * toolGapX;
         var isH = (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2);
         if (isH) { activeTooltip = row1R[j].tip; tooltipX = rx; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
-        fill(row1R[j].isDestructive ? (isH ? [255, 200, 200] : [255, 230, 230]) : (isH ? 235 : 255));
-        stroke(row1R[j].isDestructive ? [255, 50, 50] : 200); strokeWeight(0.5); rect(rx, ty, tBoxSize, tBoxSize, 6 * globalScale);
+        fill(row1R[j].isDestructive ? (isH ? [255, 200, 200] : [255, 230, 230]) : (isH ? [220, 255, 220] : 249));
+        stroke(row1R[j].isDestructive ? [255, 50, 50] : (isH ? [0, 150, 0] : 238)); strokeWeight(0.75); rect(rx, ty, tBoxSize, tBoxSize, 6 * globalScale);
         if (row1R[j].img) { tint(row1R[j].isDestructive ? [255, 50, 50] : (isH ? 40 : 80)); image(row1R[j].img, rx, ty, 20 * globalScale, 20 * globalScale); noTint(); }
     }
     var row2R = [{ id: "letra", img: toolIcons.exportarLetra, tip: "Export letter SVG" }, { id: "alfa", img: toolIcons.exportarAlfabeto, tip: "Export alphabet SVG" }, { id: "zip", img: toolIcons.exportarZip, tip: "Export alphabet ZIP" }];
@@ -3228,7 +3234,7 @@ function drawUI() {
         var rx = rightMargin - (row2R.length - 1 - j) * toolGapX;
         var isH = (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2);
         if (isH) { activeTooltip = row2R[j].tip; tooltipX = rx; tooltipY = my + tBoxSize / 2 + 15 * globalScale; }
-        fill(isH ? [220, 255, 220] : 255); stroke(isH ? [0, 150, 0] : 200); strokeWeight(0.5); rect(rx, my, tBoxSize, tBoxSize, 6 * globalScale);
+        fill(isH ? [220, 255, 220] : 249); stroke(isH ? [0, 150, 0] : 238); strokeWeight(0.75); rect(rx, my, tBoxSize, tBoxSize, 6 * globalScale);
         if (row2R[j].img) { tint(isH ? 40 : 80); image(row2R[j].img, rx, my, 20 * globalScale, 20 * globalScale); noTint(); }
     }
 
@@ -3250,7 +3256,7 @@ function drawUI() {
         var col = i % 3; var row = floor(i / 3); var x = toolStartX + (col * toolGapX); var y = charStartY + (row * charGapY);
         if (y > topBarHeight - cSize && y < effectiveBottom - bottomPanelH + cSize) {
             var isH = (mouseX > x - cSize / 2 && mouseX < x + cSize / 2 && mouseY > y - cSize / 2 && mouseY < y + cSize / 2 && mouseY > topBarHeight && mouseY < effectiveBottom - bottomPanelH);
-            if (characters[i] == currentChar) { fill(220); stroke(0); strokeWeight(0.5); } else if (isH) { fill(235); stroke(180); strokeWeight(0.5); } else { fill(249); stroke(238); strokeWeight(0.5); }
+            if (characters[i] == currentChar) { fill(220); stroke([0, 200, 0]); strokeWeight(0.75); } else if (isH) { fill(235); stroke(238); strokeWeight(0.75); } else { fill(249); stroke(238); strokeWeight(0.75); }
             rect(x, y, cSize, cSize, 4 * globalScale);
             if (isGridEmpty(characters[i])) { noStroke(); fill(characters[i] == currentChar ? 0 : (isH ? 80 : 150)); text(characters[i], x, y); } else { drawThumbnail(characters[i], x - cSize / 2 + 2 * globalScale, y - cSize / 2 + 2 * globalScale, cSize - 4 * globalScale); }
         }
@@ -3259,7 +3265,7 @@ function drawUI() {
 
     // --- RODAPÉ FIXO DE CONFIGURAÇÕES ---
     fill(249); noStroke(); rectMode(CORNER); rect(0, effectiveBottom - bottomPanelH, sidebarWidth, bottomPanelH);
-    stroke(238); strokeWeight(0.5); line(0, effectiveBottom - bottomPanelH, sidebarWidth, effectiveBottom - bottomPanelH);
+    stroke(238); strokeWeight(0.75); line(0, effectiveBottom - bottomPanelH, sidebarWidth, effectiveBottom - bottomPanelH);
 
     var btnW_largo = (2 * toolGapX) + cSize; var btnH = 34 * globalScale; var btnX_centro = toolStartX + toolGapX;
 
@@ -3273,35 +3279,35 @@ function drawUI() {
     textSize(9.5 * globalScale); textStyle(BOLD); rectMode(CENTER);
 
     var isOffH = (mouseX > btnLetterpress.x - btnLetterpress.w / 2 && mouseX < btnLetterpress.x + btnLetterpress.w / 2 && mouseY > btnLetterpress.y - btnLetterpress.h / 2 && mouseY < btnLetterpress.y + btnLetterpress.h / 2);
-    fill(!isOverlapMode ? [0, 200, 0, 30] : (isOffH ? 235 : 255)); stroke(!isOverlapMode ? [0, 200, 0] : 200); strokeWeight(0.5);
+    fill(!isOverlapMode ? [0, 200, 0, 30] : (isOffH ? 235 : 249)); stroke(!isOverlapMode ? [0, 200, 0] : 238); strokeWeight(0.75);
     rect(btnLetterpress.x, btnLetterpress.y, btnLetterpress.w, btnLetterpress.h, 6 * globalScale);
     noStroke(); fill(!isOverlapMode ? [0, 200, 0] : 150); text("Letterpress mode", btnLetterpress.x, btnLetterpress.y);
 
     var isOnH = (mouseX > btnStencil.x - btnStencil.w / 2 && mouseX < btnStencil.x + btnStencil.w / 2 && mouseY > btnStencil.y - btnStencil.h / 2 && mouseY < btnStencil.y + btnStencil.h / 2);
-    fill(isOverlapMode ? [0, 200, 0, 30] : (isOnH ? 235 : 255)); stroke(isOverlapMode ? [0, 200, 0] : 200); strokeWeight(0.5);
+    fill(isOverlapMode ? [0, 200, 0, 30] : (isOnH ? 235 : 249)); stroke(isOverlapMode ? [0, 200, 0] : 238); strokeWeight(0.75);
     rect(btnStencil.x, btnStencil.y, btnStencil.w, btnStencil.h, 6 * globalScale);
     noStroke(); fill(isOverlapMode ? [0, 200, 0] : 150); text("Free mode", btnStencil.x, btnStencil.y);
 
     var isAtH = !showShortcutsModal && (mouseX > btnAtalhos.x - btnAtalhos.w / 2 && mouseX < btnAtalhos.x + btnAtalhos.w / 2 && mouseY > btnAtalhos.y - btnAtalhos.h / 2 && mouseY < btnAtalhos.y + btnAtalhos.h / 2);
-    fill(showShortcutsModal ? 220 : (isAtH ? 235 : 255)); stroke(showShortcutsModal ? 0 : 200); strokeWeight(0.5);
+    fill(showShortcutsModal ? 220 : (isAtH ? 235 : 249)); stroke(showShortcutsModal ? [0, 200, 0] : 238); strokeWeight(0.75);
     rect(btnAtalhos.x, btnAtalhos.y, btnAtalhos.w, btnAtalhos.h, 6 * globalScale);
     if (toolIcons.atalhos) { tint(isAtH ? 40 : 80); image(toolIcons.atalhos, btnAtalhos.x, btnAtalhos.y, 20 * globalScale, 20 * globalScale); noTint(); }
 
     // BOTÃO FLIP (Espelhar)
     var isFlipH = !isOverlapMode && !showShortcutsModal && (mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2);
     push();
-    if (isOverlapMode) { fill(249, 249, 249, 150); stroke(220, 150); } // CORRIGIDO AQUI
-    else { fill(isFlipH ? 235 : 255); stroke(238); }
-    strokeWeight(0.5); rect(btnFlip.x, btnFlip.y, btnFlip.w, btnFlip.h, 6 * globalScale);
+    if (isOverlapMode) { fill(249, 249, 249, 150); stroke(238, 150); } // CORRIGIDO AQUI
+    else { fill(isFlipH ? 235 : 249); stroke(238); }
+    strokeWeight(0.75); rect(btnFlip.x, btnFlip.y, btnFlip.w, btnFlip.h, 6 * globalScale);
     noStroke(); fill(isOverlapMode ? 180 : 100); textAlign(CENTER, CENTER); textSize(9 * globalScale); textStyle(BOLD); text("FLIP", btnFlip.x, btnFlip.y);
     pop();
 
     // BOTÃO HOME (Voltar ao site) — seta desenhada à mão, sem SVG novo
     var isHomeH = !showShortcutsModal && (mouseX > btnHome.x - btnHome.w / 2 && mouseX < btnHome.x + btnHome.w / 2 && mouseY > btnHome.y - btnHome.h / 2 && mouseY < btnHome.y + btnHome.h / 2);
     push();
-    fill(isHomeH ? 235 : 255); stroke(238); strokeWeight(0.5);
+    fill(isHomeH ? 235 : 249); stroke(238); strokeWeight(0.75);
     rect(btnHome.x, btnHome.y, btnHome.w, btnHome.h, 6 * globalScale);
-    stroke(isHomeH ? 40 : 100); strokeWeight(0.5); noFill();
+    stroke(isHomeH ? 40 : 100); strokeWeight(0.75); noFill();
     var aHalf = 5 * globalScale;
     var aHead = 4 * globalScale;
     line(btnHome.x + aHalf, btnHome.y, btnHome.x - aHalf, btnHome.y);
@@ -3315,7 +3321,7 @@ function drawUI() {
     if (isFlipH && !isOverlapMode) { activeTooltip = "Flip Horizontal Composition"; tooltipX = sidebarWidth + 70 * globalScale; tooltipY = btnFlip.y; }
     if (isHomeH) { activeTooltip = "Back to pragmatipo.pt"; tooltipX = sidebarWidth + 70 * globalScale; tooltipY = btnHome.y; }
 
-    stroke(238); strokeWeight(0.5); line(sidebarWidth, topBarHeight, sidebarWidth, effectiveBottom);
+    stroke(238); strokeWeight(0.75); line(sidebarWidth, topBarHeight, sidebarWidth, effectiveBottom);
 
     if (activeTooltip && !showShortcutsModal) {
         push(); textSize(10 * globalScale); textStyle(NORMAL); var tw = textWidth(activeTooltip) + 16 * globalScale;
@@ -3485,7 +3491,7 @@ function drawShortcutsModal() {
     var padX = 32 * globalScale;
 
     rectMode(CENTER);
-    fill(255); stroke(238); strokeWeight(0.5);
+    fill(255); stroke(238); strokeWeight(0.75);
     rect(b.x, b.y, b.w, b.h, 16 * globalScale);
 
     // --- CONTEÚDO (recortado à área visível e deslocado pelo scroll) ---
@@ -3553,7 +3559,7 @@ function drawShortcutsModal() {
             y += alturaCab;
 
             // Régua fina por baixo do cabeçalho
-            stroke(232); strokeWeight(0.5);
+            stroke(238); strokeWeight(0.75);
             line(left + padX, y, left + b.w - padX, y);
             noStroke();
             y += 6 * globalScale;
@@ -3616,7 +3622,7 @@ function drawShortcutsModal() {
 
             push();
             rectMode(CORNER);
-            fill(236, 250, 236); stroke(184, 224, 184); strokeWeight(0.5);
+            fill(236, 250, 236); stroke(184, 224, 184); strokeWeight(0.75);
             rect(textX, y, capW, capH, 4 * globalScale);
             pop();
 
@@ -3647,7 +3653,7 @@ function drawShortcutsModal() {
     text('Pragmatipo', left + padX, top + headerH / 2 - 11 * globalScale);
     textStyle(NORMAL); textSize(11 * globalScale); fill(140);
     text('Guide & keyboard shortcuts', left + padX, top + headerH / 2 + 20 * globalScale);
-    stroke(230); strokeWeight(0.5); line(left + padX, top + headerH, left + b.w - padX, top + headerH);
+    stroke(238); strokeWeight(0.75); line(left + padX, top + headerH, left + b.w - padX, top + headerH);
     noStroke();
 
     // --- BARRA DE SCROLL ---
@@ -4515,7 +4521,7 @@ function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
     var startX = cx - w / 2;
 
     // Fundo do Controlo
-    fill(249); stroke(238); strokeWeight(0.5);
+    fill(249); stroke(238); strokeWeight(0.75);
     rect(cx, cy, w, h, 6 * globalScale);
 
     for (var i = 0; i < options.length; i++) {
@@ -4524,7 +4530,7 @@ function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
 
         // Fundo do "Botão" selecionado
         if (i === selectedIdx) {
-            fill(255); stroke(238); strokeWeight(0.5);
+            fill(255); stroke(238); strokeWeight(0.75);
             rect(segCX, cy, segW - 4 * globalScale, h - 4 * globalScale, 4 * globalScale);
         } else if (isHover && !showShortcutsModal) {
             fill(235); noStroke();
@@ -4533,7 +4539,7 @@ function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
 
         // Linhas Divisórias
         if (i > 0) {
-            stroke(238); strokeWeight(0.5);
+            stroke(238); strokeWeight(0.75);
             line(startX + i * segW, cy - h / 3, startX + i * segW, cy + h / 3);
         }
 
