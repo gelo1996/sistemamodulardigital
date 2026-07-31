@@ -16,6 +16,14 @@ var btnLetterpress = { x: 0, y: 0, w: 100, h: 30 };
 var btnStencil = { x: 0, y: 0, w: 100, h: 30 };
 var btnFlip = { x: 0, y: 0, w: 30, h: 30 }; // <-- ADICIONAR AQUI
 var btnHome = { x: 0, y: 0, w: 30, h: 30 }; // Voltar a pragmatipo.pt
+var btnRodarEsq = { x: 0, y: 0, w: 26, h: 34 }; // seta anti-horária
+var btnRodarDir = { x: 0, y: 0, w: 26, h: 34 }; // seta horária
+
+// O rato está dentro de um botão (definido por centro + largura/altura)?
+function dentroDe(b) {
+    return mouseX > b.x - b.w / 2 && mouseX < b.x + b.w / 2 &&
+           mouseY > b.y - b.h / 2 && mouseY < b.y + b.h / 2;
+}
 var alphabetScrollY = 0;
 var modalScrollY = 0;    // posição do scroll dentro do modal
 var modalMaxScroll = 0;  // recalculado a cada frame conforme a altura do conteúdo
@@ -114,6 +122,19 @@ var guidesX = {
 var selectedModule = 0;
 var currentRotation = 0;
 
+// --- BOUNDING BOX COM PUNHO DE ROTAÇÃO ---
+var isRotatingSelection = false;   // punho a ser arrastado neste momento
+var rotateLastAngle = 0;           // último ângulo lido do rato
+var rotateAccum = 0;               // graus acumulados desde que se pegou no punho
+var rotateStepsApplied = 0;        // quantos saltos de 90º já foram aplicados
+var rotateOriginals = [];          // posições no momento em que se pegou no punho
+var rotateHandleAngle = -90;       // onde o punho está, em graus (-90 = topo)
+
+// Nome da tecla modificadora, para o manual mostrar o atalho certo em cada
+// sistema. O código aceita sempre as duas (metaKey || ctrlKey).
+var TECLA_CMD = /Mac|iPod|iPhone|iPad/.test(navigator.platform || '') ? 'Cmd' : 'Ctrl';
+var hoveringRotateHandle = false;  // para o cursor reagir
+
 // --- VARIÁVEIS DE SELEÇÃO E DRAG & DROP ---
 var selectedObjects = [];
 var isDraggingSelection = false;
@@ -160,6 +181,9 @@ function preload() {
     toolIcons.exportarZip = loadImage(BASE_PATH + 'exportar-zip.svg');
 
     toolIcons.atalhos = loadImage(BASE_PATH + 'atalhos.svg');
+
+    toolIcons.rodarEsq = loadImage(BASE_PATH + 'arrow-counter-clockwise.svg');
+    toolIcons.rodarDir = loadImage(BASE_PATH + 'arrow-clockwise.svg');
 
     toolIcons.sobrepor = loadImage(BASE_PATH + 'sobrepor.svg'); // Garante que tens este ficheiro
 }
@@ -272,6 +296,13 @@ function setup() {
 
     initAllCharacters();
     loadCharacter("A");
+
+    // Devolve o trabalho da sessão anterior, se existir
+    if (recuperarTrabalho()) {
+        avisoRecuperado = 300;              // ~5 segundos de nota no canto
+        ultimaAssinatura = assinaturaDoTrabalho();
+        calculateLayout();
+    }
 
     aplicarTipoDeLetraDoSite();
     mostrarManualNaPrimeiraVisita();
@@ -390,21 +421,28 @@ function draw() {
         pop();
     }
 
+    drawSelectionBoundingBox();
+
     handleInteraction();
     drawCustomCursor(); // desenhado ANTES da UI para os fantasmas ficarem por baixo dos painéis
     drawUI();
 
     drawShortcutsModal();
+    drawWordPreview();
 
     // Contador de módulos da letra atual (canto inferior direito)
     push(); noStroke(); fill(120); textAlign(RIGHT, BOTTOM); textSize(11);
     text('modules: ' + placedObjects.length, width - 8, height - 8);
     pop();
+
+    desenharReguaReferencia();
+    verificarAutosave();
+    desenharAvisoRecuperado();
 }
 
 function handleInteraction() {
-    // Bloqueia qualquer desenho se o pop-up estiver aberto!
-    if (showShortcutsModal) return;
+    // Bloqueia qualquer desenho se um painel estiver aberto por cima
+    if (showShortcutsModal || showWordPreview) return;
 
     // O clique que fechou o modal não pode desenhar: espera que o rato seja largado
     if (suppressDrawUntilRelease) {
@@ -460,6 +498,21 @@ function getHoveredGuide() {
 
 function mousePressed() {
     if (mouseButton == LEFT) {
+        // A pré-visualização apanha todos os cliques enquanto estiver aberta
+        if (showWordPreview) {
+            var pb = getPreviewBounds();
+            var pLeft = pb.x - pb.w / 2, pTop = pb.y - pb.h / 2;
+            var fecharX = pLeft + pb.w - 26 * globalScale;
+            var fecharY = pTop + 26 * globalScale;
+            if (dist(mouseX, mouseY, fecharX, fecharY) < 16 * globalScale ||
+                mouseX < pLeft || mouseX > pLeft + pb.w ||
+                mouseY < pTop || mouseY > pTop + pb.h) {
+                showWordPreview = false;
+                suppressDrawUntilRelease = true;
+            }
+            return;
+        }
+
         if (showShortcutsModal) {
             var b = getModalBounds();
 
@@ -527,6 +580,21 @@ function mousePressed() {
         }
         else {
             if (keyIsDown(32) || selectedModule === -3) return;
+
+            // Punho de rotação: tem de ser testado antes de tudo, porque fica
+            // por cima do artboard e pode sobrepor-se a módulos.
+            if (selectedModule == -2 && selectedObjects.length > 0 && !isDraggingSelection) {
+                var bb = getSelectionBounds();
+                if (bb && dist(mouseX, mouseY, bb.hx, bb.hy) < 12 * globalScale) {
+                    isRotatingSelection = true;
+                    rotateLastAngle = atan2(mouseY - bb.cy, mouseX - bb.cx);
+                    ensureRotationBase();
+                    rotateAccum = rotateStepsApplied * 90;
+                    saveHistory(); // um único registo de undo para todo o arrasto
+                    return;
+                }
+            }
+
             if (showGuides) {
                 var hGuide = getHoveredGuide();
                 if (hGuide) { draggedGuide = hGuide; return; }
@@ -539,6 +607,7 @@ function mousePressed() {
                     var clickedObj = placedObjects[clickedIdx];
                     if (!selectedObjects.includes(clickedObj)) {
                         if (!keyIsDown(SHIFT)) selectedObjects = [clickedObj]; else selectedObjects.push(clickedObj);
+                        resetRotationBase(); // seleção nova: base e punho a zero
                     }
                     if (selectedModule == -2) {
                         isDraggingSelection = true; dragStartGrid = { x: gX, y: gY }; currentRotation = 0;
@@ -553,6 +622,7 @@ function mousePressed() {
                     selectionBox.active = true; selectionBox.startX = mouseX; selectionBox.startY = mouseY;
                     selectionBox.currentX = mouseX; selectionBox.currentY = mouseY;
                     if (!keyIsDown(SHIFT)) selectedObjects = [];
+                    resetRotationBase(); // seleção nova: base e punho a zero
                 }
             }
         }
@@ -565,6 +635,10 @@ function mousePressed() {
 
 function mouseReleased() {
     if (isDraggingSlider) { isDraggingSlider = false; return; } // Liberta o slider
+    if (isRotatingSelection) {
+        isRotatingSelection = false; // o punho volta a seguir a rotação da peça
+        return;
+    }
 
     if (keyIsDown(32)) return; // BLOQUEIO DE CÂMARA
     if (draggedGuide) {
@@ -592,6 +666,7 @@ function mouseReleased() {
             if (obj.x >= gMinX && obj.x <= gMaxX && obj.y >= gMinY && obj.y <= gMaxY) {
                 if (!selectedObjects.includes(obj)) selectedObjects.push(obj);
             }
+            resetRotationBase(); // seleção nova por caixa
         }
     } else if (isDraggingSelection) {
         var localX = mouseX - centerX;
@@ -2665,6 +2740,10 @@ function drawCustomCursor() {
         var gY = floor(localY / tileSize) + GRID_CY;
 
         if (selectedModule == -2) {
+            if (hoveringRotateHandle || isRotatingSelection) {
+                cursor(isRotatingSelection ? 'grabbing' : 'grab');
+                return;
+            }
             if (isDraggingSelection) {
                 noCursor();
                 // ... (O código do fantasma a arrastar mantém-se igualzinho ao que já tinha aqui)
@@ -2989,6 +3068,13 @@ function checkTopBarClick() {
         }
     }
 
+    // 1a. Botão de pré-visualização de palavra
+    if (dentroDe(btnPreview)) { abrirPreview(); return; }
+
+    // 1b. Setas de rotação (dentro da caixa do ângulo)
+    if (dentroDe(btnRodarEsq)) { rodarPelasSetas(-1); return; }
+    if (dentroDe(btnRodarDir)) { rodarPelasSetas(1); return; }
+
     // 2. Clique Linha 2: Módulos
     for (var i = 0; i < modules.length; i++) {
         var mx = toolStartX + (i * toolGapX);
@@ -3176,10 +3262,57 @@ function drawUI() {
     fill(249); stroke(238); strokeWeight(0.75); rect(rotBoxCX, ty, rotBoxW, tBoxSize, 6 * globalScale);
 
     noStroke();
-    var hasActiveModule = (selectedModule >= 0 || selectedModule == -2);
-    fill(hasActiveModule ? [0, 200, 0] : 150); textAlign(CENTER, CENTER); textSize(10 * globalScale); textStyle(BOLD);
-    text(hasActiveModule ? "ROTATION: " + (currentRotation * 90) + "º" : "ROTATION: --", rotBoxCX, ty);
+    // O indicador mostra o ângulo do que está prestes a ser afetado:
+    // com um módulo escolhido, a rotação com que vai ser colocado;
+    // com a ferramenta Mover, a rotação já aplicada à seleção.
+    var anguloRot = null;
+    if (selectedModule >= 0) {
+        anguloRot = currentRotation * 90;
+    } else if (selectedModule == -2 && selectedObjects.length > 0) {
+        // Lido da própria peça (tal como o punho), para nunca divergirem
+        anguloRot = ((((selectedObjects[0].rot % 4) + 4) % 4)) * 90;
+    }
+
+    // Setas de rodar, encostadas às pontas da caixa; o número fica ao centro.
+    // As zonas de clique ficam guardadas para o checkTopBarClick as reutilizar.
+    var setaTam = 18 * globalScale;
+    var setaMargem = 12 * globalScale;
+    btnRodarEsq.x = rotBoxCX - rotBoxW / 2 + setaMargem + setaTam / 2;
+    btnRodarDir.x = rotBoxCX + rotBoxW / 2 - setaMargem - setaTam / 2;
+    btnRodarEsq.y = btnRodarDir.y = ty;
+    btnRodarEsq.w = btnRodarDir.w = setaTam + 8 * globalScale;
+    btnRodarEsq.h = btnRodarDir.h = tBoxSize;
+
+    var podeRodar = (anguloRot !== null);
+    var sobreEsq = podeRodar && !showShortcutsModal && dentroDe(btnRodarEsq);
+    var sobreDir = podeRodar && !showShortcutsModal && dentroDe(btnRodarDir);
+
+    // Fundo de destaque ao passar o rato, como nos restantes botões da barra
+    if (sobreEsq || sobreDir) {
+        push();
+        noStroke(); fill(235); rectMode(CENTER);
+        var alvo = sobreEsq ? btnRodarEsq : btnRodarDir;
+        rect(alvo.x, alvo.y, alvo.w, alvo.h - 6 * globalScale, 5 * globalScale);
+        pop();
+    }
+
+    if (toolIcons.rodarEsq) {
+        tint(!podeRodar ? 205 : (sobreEsq ? color(0, 150, 0) : color(0, 200, 0)));
+        image(toolIcons.rodarEsq, btnRodarEsq.x, ty, setaTam, setaTam);
+        noTint();
+    }
+    if (toolIcons.rodarDir) {
+        tint(!podeRodar ? 205 : (sobreDir ? color(0, 150, 0) : color(0, 200, 0)));
+        image(toolIcons.rodarDir, btnRodarDir.x, ty, setaTam, setaTam);
+        noTint();
+    }
+
+    fill(podeRodar ? [0, 200, 0] : 150); textAlign(CENTER, CENTER); textSize(11 * globalScale); textStyle(BOLD);
+    text(podeRodar ? anguloRot + "º" : "--", rotBoxCX, ty);
     textStyle(NORMAL);
+
+    if (sobreEsq) { activeTooltip = "Rotate left"; tooltipX = btnRodarEsq.x; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
+    if (sobreDir) { activeTooltip = "Rotate right"; tooltipX = btnRodarDir.x; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
 
     // --- LINHA 2: MÓDULOS ---
     for (var i = 0; i < modules.length; i++) {
@@ -3207,6 +3340,28 @@ function drawUI() {
     drawSegmentedControl(cx2, ly, styleBtnW, styleBtnH, ["Line grid", "Dot grid"], currentGridStyle === 'lines' ? 0 : 1);
     drawSegmentedControl(cx3, ly, styleBtnW, styleBtnH, ["F1", "F2", "F3"], currentArtboardIdx);
     drawSegmentedControl(cx4, ly, styleBtnW, styleBtnH, ["Portrait", "Landscape"], isLandscape ? 1 : 0);
+
+    // Botão de pré-visualização de palavra, a seguir aos controlos
+    btnPreview.w = (2 * toolGapX) + tBoxSize;
+    btnPreview.h = styleBtnH;
+    btnPreview.x = cx4 + styleBtnW / 2 + 18 * globalScale + btnPreview.w / 2;
+    btnPreview.y = ly;
+    var sobrePreview = !showShortcutsModal && !showWordPreview && dentroDe(btnPreview);
+    push();
+    rectMode(CENTER);
+    fill(showWordPreview ? [0, 200, 0, 30] : (sobrePreview ? 235 : 249));
+    stroke(showWordPreview ? [0, 200, 0] : 238); strokeWeight(0.75);
+    rect(btnPreview.x, btnPreview.y, btnPreview.w, btnPreview.h, 6 * globalScale);
+    noStroke();
+    fill(showWordPreview ? [0, 200, 0] : 120);
+    textAlign(CENTER, CENTER); textSize(10.5 * globalScale); textStyle(BOLD);
+    text('Preview word', btnPreview.x, btnPreview.y);
+    textStyle(NORMAL);
+    pop();
+    if (sobrePreview) {
+        activeTooltip = "See your letters composed together";
+        tooltipX = btnPreview.x; tooltipY = ly + styleBtnH / 2 + 15 * globalScale;
+    }
 
     if (mouseY > ly - styleBtnH / 2 && mouseY < ly + styleBtnH / 2 && !showShortcutsModal) {
         if (mouseX > cx3 - styleBtnW / 2 && mouseX < cx3 + styleBtnW / 2) {
@@ -3351,6 +3506,14 @@ var MANUAL = [
     { t: 'h', s: 'Move / select', ic: 'mover' },
     { t: 'li', s: 'Move or select modules on the artboard' },
     { t: 'li', s: 'Select them one at a time, or several at once by dragging' },
+    { t: 'li', s: 'Drag the handle above the selection to rotate it' },
+    { t: 'sc', k: TECLA_CMD + ' + A', s: 'Select every module' },
+    { t: 'sc', k: TECLA_CMD + ' + C', s: 'Copy the selection' },
+    { t: 'sc', k: TECLA_CMD + ' + X', s: 'Cut the selection' },
+    { t: 'sc', k: TECLA_CMD + ' + V', s: 'Paste at the pointer' },
+    { t: 'sc', k: TECLA_CMD + ' + Shift + V', s: 'Paste in place (great across letters)' },
+    { t: 'sc', k: TECLA_CMD + ' + D', s: 'Duplicate the selection in place' },
+    { t: 'sc', k: 'Arrow keys', s: 'Nudge the selection one cell' },
 
     { t: 'h', s: 'Eraser', ic: 'limpar' },
     { t: 'li', s: 'Delete one or more modules on the artboard' },
@@ -3371,9 +3534,11 @@ var MANUAL = [
 
     { t: 'h', s: 'Undo', ic: 'voltar' },
     { t: 'li', s: 'Step back through the last 15 actions' },
+    { t: 'sc', k: TECLA_CMD + ' + Z', s: 'Undo' },
 
     { t: 'h', s: 'Redo', ic: 'avancar' },
     { t: 'li', s: 'Step forward through the last 15 actions' },
+    { t: 'sc', k: TECLA_CMD + ' + Shift + Z', s: 'Redo' },
 
     { t: 'cat', s: 'View & guides' },
 
@@ -3712,6 +3877,394 @@ function fonteMesmoDisponivel(familia) {
     return ctx.measureText(amostra).width !== larguraBase;
 }
 
+// --- MOVER A SELEÇÃO COM AS SETAS -------------------------------------------
+var ultimoNudge = 0;   // para não encher o histórico com cada toque na seta
+
+function moverSelecao(dx, dy) {
+    if (selectedObjects.length === 0) return false;
+
+    // Uma rajada de setas conta como um só passo de undo
+    var agora = millis();
+    if (agora - ultimoNudge > 800) saveHistory();
+    ultimoNudge = agora;
+
+    var anteriores = selectedObjects.slice();
+    for (var i = 0; i < anteriores.length; i++) {
+        var idx = placedObjects.indexOf(anteriores[i]);
+        if (idx > -1) placedObjects.splice(idx, 1);
+        removeObjFromCollisionMap(anteriores[i]);
+    }
+
+    // Move e volta a gerar os espelhos, como faz o arrastar
+    var movidos = [];
+    for (var i = 0; i < anteriores.length; i++) {
+        var o = anteriores[i];
+        movidos.push({ type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot });
+    }
+    var completo = [];
+    for (var k = 0; k < movidos.length; k++) {
+        var ms = getMirroredGroup(movidos[k]);
+        for (var m = 0; m < ms.length; m++) {
+            if (!containsObj(completo, ms[m])) completo.push(ms[m]);
+        }
+    }
+
+    if (checkPlacementValidGroup(completo)) {
+        for (var i = 0; i < completo.length; i++) {
+            placedObjects.push(completo[i]);
+            addObjToCollisionMap(completo[i]);
+        }
+        selectedObjects = completo.slice(0, movidos.length);
+        rotateOriginals = [];   // a base de rotação deixa de valer
+        rotateStepsApplied = 0;
+        return true;
+    }
+
+    // Não coube: repõe tudo onde estava
+    for (var i = 0; i < anteriores.length; i++) {
+        placedObjects.push(anteriores[i]);
+        addObjToCollisionMap(anteriores[i]);
+    }
+    selectedObjects = anteriores;
+    return false;
+}
+
+// Régua de referência: a letra atual em corpo pequeno, no canto. Serve para
+// julgar como o desenho se comporta em tamanho reduzido — coisa que a grelha
+// ampliada esconde.
+function desenharReguaReferencia() {
+    if (showShortcutsModal || showWordPreview) return;
+    if (placedObjects.length === 0) return;
+
+    var tam = 76 * globalScale;
+    var margem = 14 * globalScale;
+    var x = width - tam - margem;
+    var y = height - tam - margem - 18 * globalScale;
+
+    push();
+    rectMode(CORNER); noStroke();
+    fill(249, 235);
+    rect(x - 6 * globalScale, y - 6 * globalScale, tam + 12 * globalScale, tam + 12 * globalScale, 6 * globalScale);
+    noFill(); stroke(238); strokeWeight(0.75);
+    rect(x - 6 * globalScale, y - 6 * globalScale, tam + 12 * globalScale, tam + 12 * globalScale, 6 * globalScale);
+    pop();
+
+    drawThumbnail(currentChar, x, y, tam);
+}
+
+function selecionarTudo() {
+    if (placedObjects.length === 0) return false;
+    selectedObjects = placedObjects.slice();
+    selectedModule = -2;      // ferramenta Mover, para se poder logo agir
+    resetRotationBase();
+    return true;
+}
+
+// --- PRÉ-VISUALIZAÇÃO DE PALAVRA -------------------------------------------
+// Desenhar tipos é sobretudo julgar as letras EM CONJUNTO: ritmo, peso,
+// consistência. Aqui compõem-se as letras já desenhadas, lado a lado.
+var showWordPreview = false;
+var previewText = '';
+var previewSpacing = 1;      // células entre letras
+var btnPreview = { x: 0, y: 0, w: 100, h: 34 };
+
+// Extensão horizontal e vertical de uma letra, em células
+function limitesDaLetra(char) {
+    var objs = (char === currentChar) ? placedObjects
+             : (storedCharacters[char] ? storedCharacters[char].objects : []);
+    if (!objs || objs.length === 0) return null;
+
+    var minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    for (var k = 0; k < objs.length; k++) {
+        var o = objs[k], d = getModuleDims(o.type), v = getFillVectors(o.rot);
+        var cs = [{ i: 0, j: 0 }, { i: d.len - 1, j: 0 }, { i: 0, j: d.wid - 1 }, { i: d.len - 1, j: d.wid - 1 }];
+        for (var c = 0; c < 4; c++) {
+            var px = o.x + v.p.x * cs[c].i + v.s.x * cs[c].j;
+            var py = o.y + v.p.y * cs[c].i + v.s.y * cs[c].j;
+            if (px < minX) minX = px; if (px > maxX) maxX = px;
+            if (py < minY) minY = py; if (py > maxY) maxY = py;
+        }
+    }
+    return { objs: objs, minX: minX, maxX: maxX, minY: minY, maxY: maxY,
+             larg: maxX - minX + 1, alt: maxY - minY + 1 };
+}
+
+// Onde cada letra do texto fica, em células, e a extensão total da linha
+function composicaoDoTexto(texto) {
+    var pecas = [], avanco = 0;
+    var topo = 1e9, base = -1e9;
+
+    for (var i = 0; i < texto.length; i++) {
+        var ch = texto[i].toUpperCase();
+        if (ch === ' ') { avanco += 4 + previewSpacing; continue; }
+
+        var L = limitesDaLetra(ch);
+        if (!L) continue;                       // letra por desenhar: salta
+        pecas.push({ char: ch, L: L, x: avanco - L.minX });
+        avanco += L.larg + previewSpacing;
+        if (L.minY < topo) topo = L.minY;
+        if (L.maxY > base) base = L.maxY;
+    }
+    if (pecas.length === 0) return null;
+    return { pecas: pecas, larg: avanco - previewSpacing, topo: topo, base: base,
+             alt: base - topo + 1 };
+}
+
+function getPreviewBounds() {
+    var w = min(1000 * globalScale, width * 0.92);
+    var h = min(520 * globalScale, height * 0.85);
+    return { w: w, h: h, x: width / 2, y: height / 2, headerH: 62 * globalScale };
+}
+
+function drawWordPreview() {
+    if (!showWordPreview) return;
+
+    var b = getPreviewBounds();
+    var left = b.x - b.w / 2, top = b.y - b.h / 2;
+    var padX = 28 * globalScale;
+
+    push();
+    rectMode(CORNER); fill(0, 160); noStroke(); rect(0, 0, width, height);
+
+    rectMode(CENTER);
+    fill(255); stroke(238); strokeWeight(0.75);
+    rect(b.x, b.y, b.w, b.h, 16 * globalScale);
+
+    // --- CABEÇALHO: o texto que se está a escrever ---
+    noStroke(); rectMode(CORNER);
+    fill(249);
+    rect(left + 1, top + 1, b.w - 2, b.headerH - 1, 15 * globalScale, 15 * globalScale, 0, 0);
+
+    fill(150); textAlign(LEFT, CENTER); textSize(10 * globalScale); textStyle(NORMAL);
+    text('TYPE TO TEST YOUR LETTERS', left + padX, top + 18 * globalScale);
+
+    fill(0); textSize(17 * globalScale); textStyle(BOLD);
+    var mostrado = previewText.length ? previewText : 'type something…';
+    fill(previewText.length ? 0 : 190);
+    text(mostrado, left + padX, top + 40 * globalScale);
+    // cursor a piscar
+    if (previewText.length && frameCount % 60 < 30) {
+        var cw = textWidth(previewText);
+        stroke(0, 200, 0); strokeWeight(1.5 * globalScale);
+        line(left + padX + cw + 3 * globalScale, top + 30 * globalScale,
+             left + padX + cw + 3 * globalScale, top + 50 * globalScale);
+        noStroke();
+    }
+    textStyle(NORMAL);
+    stroke(238); strokeWeight(0.75);
+    line(left, top + b.headerH, left + b.w, top + b.headerH);
+    noStroke();
+
+    // --- ÁREA DE COMPOSIÇÃO ---
+    var areaTop = top + b.headerH;
+    var areaH = b.h - b.headerH - 46 * globalScale;
+    var areaW = b.w - padX * 2;
+
+    var comp = composicaoDoTexto(previewText);
+    if (!comp) {
+        fill(190); textAlign(CENTER, CENTER); textSize(12 * globalScale);
+        var aviso = previewText.length
+            ? 'None of those letters are drawn yet'
+            : 'Draw some letters, then type them here';
+        text(aviso, b.x, areaTop + areaH / 2);
+    } else {
+        // Escala que faz a linha caber, com folga
+        var esc = min(areaW / comp.larg, areaH / (comp.alt + 2));
+        esc = min(esc, 40 * globalScale);          // não aumentar demasiado
+
+        var totalW = comp.larg * esc;
+        var x0 = b.x - totalW / 2;
+        var y0 = areaTop + (areaH - comp.alt * esc) / 2 - comp.topo * esc;
+
+        // linha de base, como referência visual
+        var baseY = y0 + (guidesY.baseline) * esc;
+        if (baseY > areaTop && baseY < areaTop + areaH) {
+            stroke(0, 200, 0, 60); strokeWeight(0.75);
+            line(left + padX, baseY, left + b.w - padX, baseY);
+            noStroke();
+        }
+
+        drawingContext.save();
+        drawingContext.beginPath();
+        drawingContext.rect(left, areaTop, b.w, areaH);
+        drawingContext.clip();
+
+        imageMode(CENTER);
+        for (var p = 0; p < comp.pecas.length; p++) {
+            var pc = comp.pecas[p];
+            for (var k = 0; k < pc.L.objs.length; k++) {
+                var o = pc.L.objs[k];
+                var dims = getModuleDims(o.type);
+                var cx = x0 + (o.x + pc.x) * esc + esc / 2;
+                var cy = y0 + o.y * esc + esc / 2;
+                var offX = (dims.len - 1) * (esc / 2);
+                var offY = (dims.wid - 1) * (esc / 2);
+
+                push();
+                translate(cx, cy);
+                rotate(o.rot * 90);
+                if (modules[o.type] && modules[o.type].width > 1) {
+                    image(modules[o.type], offX, offY, dims.len * esc, dims.wid * esc);
+                } else {
+                    fill(0); noStroke(); rectMode(CENTER);
+                    rect(offX, offY, dims.len * esc, dims.wid * esc);
+                }
+                pop();
+            }
+        }
+        drawingContext.restore();
+    }
+
+    // --- RODAPÉ: espaçamento ---
+    var rodapeY = top + b.h - 24 * globalScale;
+    fill(150); textAlign(LEFT, CENTER); textSize(10.5 * globalScale); textStyle(NORMAL);
+    text('Letter spacing: ' + previewSpacing + '   ( ← →  to adjust )', left + padX, rodapeY);
+    fill(190); textAlign(RIGHT, CENTER);
+    text('esc to close', left + b.w - padX, rodapeY);
+
+    // --- BOTÃO FECHAR ---
+    rectMode(CENTER);
+    var closeX = left + b.w - 26 * globalScale, closeY = top + 26 * globalScale;
+    var sobreFechar = dist(mouseX, mouseY, closeX, closeY) < 16 * globalScale;
+    noStroke();
+    fill(sobreFechar ? color(255, 100, 100) : color(238));
+    circle(closeX, closeY, 26 * globalScale);
+    fill(sobreFechar ? 255 : 150); textAlign(CENTER, CENTER); textSize(13 * globalScale);
+    text('✕', closeX, closeY + 1 * globalScale);
+
+    pop();
+}
+
+// Abre com as letras que já existem, para haver logo algo a ver
+function abrirPreview() {
+    showWordPreview = true;
+    if (previewText.length === 0) {
+        var desenhadas = '';
+        for (var i = 0; i < characters.length && desenhadas.length < 8; i++) {
+            if (!isGridEmpty(characters[i])) desenhadas += characters[i];
+        }
+        previewText = desenhadas;
+    }
+}
+
+// --- GUARDAR AUTOMATICAMENTE -----------------------------------------------
+// A app vive só em memória: um crash, uma bateria a acabar ou um separador
+// fechado por engano apagavam o alfabeto inteiro. Isto guarda o trabalho no
+// browser e devolve-o na visita seguinte.
+//
+// Guarda apenas os desenhos, não o histórico de undo — são 15 cópias por letra
+// e estoirariam o limite de espaço do browser sem grande proveito.
+var CHAVE_AUTOSAVE = 'pragmatipo-trabalho';
+var ultimaAssinatura = '';
+var avisoRecuperado = 0;   // frames que falta mostrar a nota de recuperação
+var autosaveOK = true;     // falso se o browser não deixar guardar (janela privada, espaço cheio)
+
+// Impressão digital barata do estado: deteta peças acrescentadas, apagadas,
+// movidas ou rodadas sem ter de serializar tudo a cada segundo.
+function assinaturaDoTrabalho() {
+    var s = currentArtboardIdx + (isLandscape ? 'L' : 'P');
+    for (var i = 0; i < characters.length; i++) {
+        var c = characters[i];
+        var objs = (c === currentChar) ? placedObjects
+                 : (storedCharacters[c] ? storedCharacters[c].objects : []);
+        if (!objs || objs.length === 0) continue;
+        var soma = 0;
+        for (var k = 0; k < objs.length; k++) {
+            soma += objs[k].x * 31 + objs[k].y * 17 + objs[k].rot * 7 + objs[k].type * 3;
+        }
+        s += '|' + c + objs.length + ',' + soma;
+    }
+    return s;
+}
+
+function guardarTrabalho() {
+    try {
+        var chars = {};
+        for (var i = 0; i < characters.length; i++) {
+            var c = characters[i];
+            var objs = (c === currentChar) ? placedObjects
+                     : (storedCharacters[c] ? storedCharacters[c].objects : []);
+            if (objs && objs.length > 0) chars[c] = objs;
+        }
+        // Alfabeto vazio: apaga o registo em vez de guardar um vazio, para não
+        // ressuscitar trabalho que a pessoa apagou de propósito.
+        if (Object.keys(chars).length === 0) {
+            localStorage.removeItem(CHAVE_AUTOSAVE);
+            return;
+        }
+        localStorage.setItem(CHAVE_AUTOSAVE, JSON.stringify({
+            v: 1,
+            quando: Date.now(),
+            artboard: currentArtboardIdx,
+            landscape: isLandscape,
+            letra: currentChar,
+            chars: chars
+        }));
+        autosaveOK = true;
+    } catch (e) {
+        // Espaço esgotado ou localStorage bloqueado (janela privada). Deixa de
+        // haver rede de segurança, por isso o aviso ao sair volta a fazer falta.
+        autosaveOK = false;
+    }
+}
+
+function recuperarTrabalho() {
+    try {
+        var bruto = localStorage.getItem(CHAVE_AUTOSAVE);
+        if (!bruto) return false;
+        var d = JSON.parse(bruto);
+        if (!d || !d.chars || Object.keys(d.chars).length === 0) return false;
+
+        for (var c in d.chars) {
+            if (storedCharacters[c]) storedCharacters[c].objects = d.chars[c];
+        }
+        if (typeof d.artboard === 'number') currentArtboardIdx = d.artboard;
+        if (typeof d.landscape === 'boolean') isLandscape = d.landscape;
+        updateArtboardBounds();
+
+        var letra = (d.letra && storedCharacters[d.letra]) ? d.letra : 'A';
+        loadCharacter(letra);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+// Chamado a cada frame; só escreve quando algo mudou de facto, e no máximo
+// uma vez por segundo, para não pesar no desenho.
+function verificarAutosave() {
+    if (frameCount % 60 !== 0) return;
+    var a = assinaturaDoTrabalho();
+    if (a === ultimaAssinatura) return;
+    ultimaAssinatura = a;
+    guardarTrabalho();
+}
+
+// Nota discreta a dizer que o trabalho anterior foi devolvido. Desvanece
+// sozinha — não é um alerta, só uma explicação para o desenho já lá estar.
+function desenharAvisoRecuperado() {
+    if (avisoRecuperado <= 0) return;
+    avisoRecuperado--;
+
+    var opacidade = min(255, avisoRecuperado * 4);   // desvanece no fim
+    var texto = 'Work recovered from your last session';
+
+    push();
+    textSize(11 * globalScale); textStyle(NORMAL);
+    var largura = textWidth(texto) + 24 * globalScale;
+    var altura = 28 * globalScale;
+    var cx = width - largura / 2 - 12 * globalScale;
+    var cy = height - altura / 2 - 30 * globalScale;
+
+    noStroke(); rectMode(CENTER);
+    fill(0, 200, 0, opacidade * 0.12);
+    rect(cx, cy, largura, altura, 6 * globalScale);
+    fill(0, 150, 0, opacidade);
+    textAlign(CENTER, CENTER);
+    text(texto, cx, cy);
+    pop();
+}
+
 // Abre o manual só na primeira vez que cada pessoa entra na plataforma.
 // Nas visitas seguintes fica fechado; o botão de atalhos abre-o sempre.
 function mostrarManualNaPrimeiraVisita() {
@@ -3732,7 +4285,30 @@ function abrirManual() {
     categoriasAbertas = {};
 }
 
-function keyPressed() {
+function keyPressed(event) {
+    // Atalhos do sistema (Cmd+R recarregar, Cmd+S guardar página...) passam
+    // intactos: sem isto, um Cmd+R rodava a peça E recarregava a página.
+    // O Cmd+C/Cmd+V é tratado à parte, num listener próprio — ver mais abaixo.
+    if (event && (event.metaKey || event.ctrlKey)) return;
+
+    // Com a pré-visualização aberta, o teclado escreve o texto de teste
+    if (showWordPreview) {
+        if (keyCode === ESCAPE) { showWordPreview = false; return false; }
+        if (keyCode === BACKSPACE || keyCode === DELETE) {
+            previewText = previewText.slice(0, -1);
+            return false;
+        }
+        if (keyCode === LEFT_ARROW) { previewSpacing = max(0, previewSpacing - 1); return false; }
+        if (keyCode === RIGHT_ARROW) { previewSpacing = min(12, previewSpacing + 1); return false; }
+        // só aceita o que o alfabeto conhece, mais o espaço
+        var ch = (key || '').toUpperCase();
+        if (ch === ' ' || characters.indexOf(ch) !== -1) {
+            if (previewText.length < 40) previewText += ch;
+            return false;
+        }
+        return false;
+    }
+
     // Com o manual aberto, as teclas não devem mexer no desenho por trás dele
     if (showShortcutsModal) {
         if (keyCode === ESCAPE) showShortcutsModal = false;
@@ -3758,24 +4334,15 @@ function keyPressed() {
     if (key == 'Z' && keyIsDown(SHIFT)) exportAlphabetZIP();
 
     if (keyCode == DELETE || keyCode == BACKSPACE) {
-        if ((selectedModule === -2 || selectedModule === -1) && selectedObjects.length > 0) {
-            saveHistory();
-            for (var s = 0; s < selectedObjects.length; s++) {
-                var groupToDelete = getMirroredGroup(selectedObjects[s]);
-                for (var g = 0; g < groupToDelete.length; g++) {
-                    var m = groupToDelete[g];
-                    for (var j = placedObjects.length - 1; j >= 0; j--) {
-                        var p = placedObjects[j];
-                        if (p.type == m.type && p.x == m.x && p.y == m.y && p.rot == m.rot) {
-                            placedObjects.splice(j, 1);
-                            removeObjFromCollisionMap(p);
-                            break;
-                        }
-                    }
-                }
-            }
-            selectedObjects = [];
-        }
+        if (selectedModule === -2 || selectedModule === -1) apagarSelecao();
+    }
+
+    // Setas movem a seleção célula a célula
+    if (selectedModule == -2 && selectedObjects.length > 0) {
+        if (keyCode === LEFT_ARROW) { moverSelecao(-1, 0); return false; }
+        if (keyCode === RIGHT_ARROW) { moverSelecao(1, 0); return false; }
+        if (keyCode === UP_ARROW) { moverSelecao(0, -1); return false; }
+        if (keyCode === DOWN_ARROW) { moverSelecao(0, 1); return false; }
     }
 
     if (key == 'g' || key == 'G') showSmallGrid = !showSmallGrid;
@@ -3807,6 +4374,27 @@ function windowResized() {
 function mouseDragged() {
     if (isDraggingSlider) {
         updateSliderFromMouse();
+        return false;
+    }
+
+    // Rotação pelo punho: acumula o ângulo percorrido e aplica um salto de 90º
+    // sempre que se atravessa um quadrante.
+    if (isRotatingSelection) {
+        var bb = getSelectionBounds();
+        if (bb) {
+            var ang = atan2(mouseY - bb.cy, mouseX - bb.cx);
+            var d = ang - rotateLastAngle;
+            while (d > 180) d -= 360;   // evita o salto ao passar por 180º
+            while (d < -180) d += 360;
+            rotateAccum += d;
+            rotateLastAngle = ang;
+            rotateHandleAngle = ang;   // o punho fica debaixo do rato
+
+            var alvo = Math.round(rotateAccum / 90);
+            if (alvo !== rotateStepsApplied) {
+                if (applyRotationSteps(alvo)) rotateStepsApplied = alvo;
+            }
+        }
         return false;
     }
 
@@ -3899,7 +4487,7 @@ function getDrawingCenterGrid() {
     return { x: minX + (maxX - minX) / 2, y: minY + (maxY - minY) / 2 };
 }
 
-function revolveGroup(group) {
+function revolveGroup(group, ccw) {
     if (group.length === 0) return;
     var minX = 99999, maxX = -99999, minY = 99999, maxY = -99999;
 
@@ -3930,56 +4518,416 @@ function revolveGroup(group) {
     // 3. Aplica a translação de 90º a todas as peças
     for (var k = 0; k < group.length; k++) {
         var o = group[k];
-        var newX = cx - (o.y - cy);
-        var newY = cy + (o.x - cx);
+        var newX, newY;
+        if (ccw) {
+            newX = cx + (o.y - cy);
+            newY = cy - (o.x - cx);
+            o.rot = (o.rot + 3) % 4;
+        } else {
+            newX = cx - (o.y - cy);
+            newY = cy + (o.x - cx);
+            o.rot = (o.rot + 1) % 4;
+        }
         o.x = newX;
         o.y = newY;
-        o.rot = (o.rot + 1) % 4;
     }
 }
 
-function rotateSelectedObjects() {
-    if (selectedObjects.length === 0) return;
+// --- COPIAR / COLAR ---------------------------------------------------------
+var areaTransferencia = [];  // módulos copiados (guardados com posição absoluta)
+
+function copiarSelecao() {
+    if (selectedObjects.length === 0) return false;
+    areaTransferencia = JSON.parse(JSON.stringify(selectedObjects));
+    return true;
+}
+
+// Apaga o que está selecionado (usada pelo Delete e pelo Cortar).
+// Remove também os espelhos gerados pela simetria, tal como o Delete fazia.
+function apagarSelecao() {
+    if (selectedObjects.length === 0) return false;
     saveHistory();
-
-    // Remove temporariamente da grelha
-    for (var i = 0; i < selectedObjects.length; i++) {
-        var idx = placedObjects.indexOf(selectedObjects[i]);
-        if (idx > -1) placedObjects.splice(idx, 1);
-        removeObjFromCollisionMap(selectedObjects[i]);
-    }
-
-    // Clona e roda
-    var groupToTest = JSON.parse(JSON.stringify(selectedObjects));
-    revolveGroup(groupToTest);
-
-    // Expande para incluir os espelhos visuais ativos
-    var fullGroupToTest = [];
-    for (var k = 0; k < groupToTest.length; k++) {
-        var mirrors = getMirroredGroup(groupToTest[k]);
-        for (var m = 0; m < mirrors.length; m++) {
-            if (!containsObj(fullGroupToTest, mirrors[m])) {
-                fullGroupToTest.push(mirrors[m]);
+    for (var s = 0; s < selectedObjects.length; s++) {
+        var grupo = getMirroredGroup(selectedObjects[s]);
+        for (var g = 0; g < grupo.length; g++) {
+            var m = grupo[g];
+            for (var j = placedObjects.length - 1; j >= 0; j--) {
+                var p = placedObjects[j];
+                if (p.type == m.type && p.x == m.x && p.y == m.y && p.rot == m.rot) {
+                    placedObjects.splice(j, 1);
+                    removeObjFromCollisionMap(p);
+                    break;
+                }
             }
         }
     }
+    selectedObjects = [];
+    resetRotationBase();
+    return true;
+}
 
-    // Testa se a nova rotação cabe no espaço
-    if (checkPlacementValidGroup(fullGroupToTest)) {
-        selectedObjects = [];
-        for (var i = 0; i < fullGroupToTest.length; i++) {
-            placedObjects.push(fullGroupToTest[i]);
-            addObjToCollisionMap(fullGroupToTest[i]);
+function cortarSelecao() {
+    if (selectedObjects.length === 0) return false;
+    copiarSelecao();
+    return apagarSelecao();
+}
+
+// Duplica no lugar, ligeiramente ao lado — sem passar pela área de
+// transferência, para não perder o que lá estiver copiado.
+function duplicarSelecao() {
+    if (selectedObjects.length === 0) return false;
+    var original = JSON.parse(JSON.stringify(selectedObjects));
+    var tentativas = [[2, 2], [1, 1], [3, 3], [0, 2], [2, 0], [-2, -2], [4, 4], [-1, -1]];
+
+    for (var t = 0; t < tentativas.length; t++) {
+        var dx = tentativas[t][0], dy = tentativas[t][1];
+        var copia = [];
+        for (var k = 0; k < original.length; k++) {
+            var o = original[k];
+            copia.push({ type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot });
         }
-        selectedObjects = fullGroupToTest.slice(0, groupToTest.length);
-    } else {
-        // Reverte se bater nalguma peça vizinha
-        for (var i = 0; i < selectedObjects.length; i++) {
-            placedObjects.push(selectedObjects[i]);
-            addObjToCollisionMap(selectedObjects[i]);
+        if (checkPlacementValidGroup(copia)) {
+            saveHistory();
+            for (var k = 0; k < copia.length; k++) {
+                placedObjects.push(copia[k]);
+                addObjToCollisionMap(copia[k]);
+            }
+            selectedObjects = copia;   // a cópia fica selecionada
+            selectedModule = -2;
+            resetRotationBase();
+            return true;
         }
     }
+    return false;
 }
+
+// Canto superior-esquerdo do conjunto, em células
+function cantoDoGrupo(grupo) {
+    var minX = 1e9, minY = 1e9;
+    for (var k = 0; k < grupo.length; k++) {
+        var o = grupo[k], d = getModuleDims(o.type), v = getFillVectors(o.rot);
+        var cs = [{ i: 0, j: 0 }, { i: d.len - 1, j: 0 }, { i: 0, j: d.wid - 1 }, { i: d.len - 1, j: d.wid - 1 }];
+        for (var c = 0; c < 4; c++) {
+            var px = o.x + v.p.x * cs[c].i + v.s.x * cs[c].j;
+            var py = o.y + v.p.y * cs[c].i + v.s.y * cs[c].j;
+            if (px < minX) minX = px;
+            if (py < minY) minY = py;
+        }
+    }
+    return { x: minX, y: minY };
+}
+
+// noSitio = cola nas coordenadas originais, sem seguir o rato. É o que permite
+// levar uma letra inteira para outro artboard sem a desalinhar.
+function colarAreaTransferencia(noSitio) {
+    if (areaTransferencia.length === 0) return false;
+
+    var canto = cantoDoGrupo(areaTransferencia);
+
+    if (noSitio) {
+        var grupo = JSON.parse(JSON.stringify(areaTransferencia));
+        if (checkPlacementValidGroup(grupo)) {
+            saveHistory();
+            for (var k = 0; k < grupo.length; k++) {
+                placedObjects.push(grupo[k]);
+                addObjToCollisionMap(grupo[k]);
+            }
+            selectedObjects = grupo;
+            selectedModule = -2;
+            resetRotationBase();
+            return true;
+        }
+        return false;   // não cabe exatamente aí; não inventa outro sítio
+    }
+
+    // Cola onde está o rato (se estiver sobre o artboard); caso contrário,
+    // ligeiramente ao lado do original, para a cópia não ficar escondida.
+    var destX, destY;
+    if (mouseX > sidebarWidth && mouseY > topBarHeight) {
+        destX = floor((mouseX - centerX) / tileSize) + GRID_CX;
+        destY = floor((mouseY - centerY) / tileSize) + GRID_CY;
+    } else {
+        destX = canto.x + 2;
+        destY = canto.y + 2;
+    }
+
+    // Se não couber no sítio pedido, procura um lugar próximo em vez de falhar
+    var tentativas = [[0, 0], [1, 1], [2, 2], [-1, -1], [3, 3], [0, 2], [2, 0], [-2, -2], [4, 4]];
+    for (var t = 0; t < tentativas.length; t++) {
+        var dx = destX - canto.x + tentativas[t][0];
+        var dy = destY - canto.y + tentativas[t][1];
+
+        var grupo = [];
+        for (var k = 0; k < areaTransferencia.length; k++) {
+            var o = areaTransferencia[k];
+            grupo.push({ type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot });
+        }
+
+        if (checkPlacementValidGroup(grupo)) {
+            saveHistory();
+            for (var k = 0; k < grupo.length; k++) {
+                placedObjects.push(grupo[k]);
+                addObjToCollisionMap(grupo[k]);
+            }
+            selectedObjects = grupo;      // fica selecionado, pronto a mover
+            selectedModule = -2;          // e com a ferramenta certa ativa
+            resetRotationBase();
+            return true;
+        }
+    }
+    return false; // não coube em lado nenhum por perto
+}
+
+// O Cmd+C/Cmd+V NÃO passa pelo keyPressed do p5 de propósito.
+// O p5 ignora keydowns repetidos da mesma tecla enquanto não receber o keyup
+// correspondente — e no macOS, com o Command premido, o sistema nunca envia
+// esses keyup. Resultado: o atalho funcionava uma única vez e ficava preso.
+// Este listener próprio não tem esse mecanismo, por isso responde sempre.
+window.addEventListener('keydown', function (e) {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    if (typeof placedObjects === 'undefined') return;  // p5 ainda a arrancar
+    if (showShortcutsModal || showWordPreview) return; // painéis abertos: nada de atalhos por trás
+
+    var tecla = (e.key || '').toLowerCase();
+    if (tecla === 'z') {
+        // Shift+Z (ou Cmd+Y, à maneira do Windows) refaz
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+    } else if (tecla === 'y') {
+        e.preventDefault();
+        redo();
+    } else if (tecla === 'a') {
+        if (selecionarTudo()) e.preventDefault();
+    } else if (tecla === 'c') {
+        if (copiarSelecao()) e.preventDefault();
+    } else if (tecla === 'x') {
+        if (cortarSelecao()) e.preventDefault();
+    } else if (tecla === 'v') {
+        // Shift+V cola nas coordenadas originais — para levar uma letra
+        // inteira para outro artboard sem a desalinhar.
+        if (colarAreaTransferencia(e.shiftKey)) e.preventDefault();
+    } else if (tecla === 'd') {
+        // Havendo seleção, o atalho é nosso: bloqueia sempre o "adicionar aos
+        // favoritos" do browser, mesmo que não haja espaço para a cópia.
+        if (selectedObjects.length > 0) {
+            e.preventDefault();
+            duplicarSelecao();
+        }
+    }
+});
+
+// Onde o punho deve estar. Enquanto se arrasta, segue o rato; fora disso é
+// SEMPRE derivado da rotação real da peça — assim acompanha a tecla R e, ao
+// reselecionar mais tarde, aparece já no ângulo em que a peça está.
+function anguloDoPunho() {
+    if (isRotatingSelection) return rotateHandleAngle;
+    if (selectedObjects.length === 0) return -90;
+    return -90 + ((selectedObjects[0].rot % 4) + 4) % 4 * 90;
+}
+
+// Caixa que envolve os módulos selecionados, já em coordenadas de ecrã.
+// Devolve null se não houver seleção.
+function getSelectionBounds() {
+    if (selectedObjects.length === 0) return null;
+
+    var minX = 99999, maxX = -99999, minY = 99999, maxY = -99999;
+    for (var k = 0; k < selectedObjects.length; k++) {
+        var o = selectedObjects[k];
+        var dims = getModuleDims(o.type);
+        var v = getFillVectors(o.rot);
+        var corners = [
+            { i: 0, j: 0 }, { i: dims.len - 1, j: 0 },
+            { i: 0, j: dims.wid - 1 }, { i: dims.len - 1, j: dims.wid - 1 }
+        ];
+        for (var c = 0; c < corners.length; c++) {
+            var px = o.x + v.p.x * corners[c].i + v.s.x * corners[c].j;
+            var py = o.y + v.p.y * corners[c].i + v.s.y * corners[c].j;
+            if (px < minX) minX = px; if (px > maxX) maxX = px;
+            if (py < minY) minY = py; if (py > maxY) maxY = py;
+        }
+    }
+
+    // +1 na ponta porque cada célula ocupa um tileSize inteiro
+    var x0 = centerX + (minX - GRID_CX) * tileSize;
+    var y0 = centerY + (minY - GRID_CY) * tileSize;
+    var x1 = centerX + (maxX + 1 - GRID_CX) * tileSize;
+    var y1 = centerY + (maxY + 1 - GRID_CY) * tileSize;
+
+    var ccx = (x0 + x1) / 2, ccy = (y0 + y1) / 2;
+    var ang = anguloDoPunho();
+
+    // O punho orbita o centro: usa o maior lado para se manter sempre fora da
+    // caixa, seja qual for o ângulo, e não saltar quando a caixa muda de forma.
+    var raio = max(x1 - x0, y1 - y0) / 2 + 26 * globalScale;
+
+    return {
+        x0: x0, y0: y0, x1: x1, y1: y1,
+        cx: ccx, cy: ccy, raio: raio,
+        ang: ang,
+        hx: ccx + cos(ang) * raio,
+        hy: ccy + sin(ang) * raio
+    };
+}
+
+function drawSelectionBoundingBox() {
+    hoveringRotateHandle = false;
+
+    // Só na ferramenta Mover, com seleção, e fora de outras interações
+    if (selectedModule !== -2 || selectedObjects.length === 0) return;
+    if (isDraggingSelection || selectionBox.active || showShortcutsModal) return;
+
+    var b = getSelectionBounds();
+    if (!b) return;
+
+    push();
+    // Caixa tracejada
+    rectMode(CORNERS); noFill();
+    stroke(0, 200, 0); strokeWeight(0.75);
+    drawingContext.setLineDash([4, 3]);
+    rect(b.x0, b.y0, b.x1, b.y1);
+    drawingContext.setLineDash([]);
+
+    // Haste: começa onde o raio cruza a margem da caixa, para não riscar as peças
+    var dx = cos(b.ang), dy = sin(b.ang);
+    var hw = (b.x1 - b.x0) / 2, hh = (b.y1 - b.y0) / 2;
+    var tX = Math.abs(dx) > 0.0001 ? hw / Math.abs(dx) : 1e9;
+    var tY = Math.abs(dy) > 0.0001 ? hh / Math.abs(dy) : 1e9;
+    var t = min(tX, tY);
+    line(b.cx + dx * t, b.cy + dy * t, b.hx, b.hy);
+
+    // Punho
+    var sobre = dist(mouseX, mouseY, b.hx, b.hy) < 12 * globalScale;
+    hoveringRotateHandle = sobre;
+    if (sobre || isRotatingSelection) fill(0, 200, 0); else fill(249);
+    stroke(0, 200, 0); strokeWeight(0.75);
+    circle(b.hx, b.hy, 12 * globalScale);
+    pop();
+}
+
+// Roda uma cópia do grupo n×90º NUMA SÓ operação, em torno do centro visual.
+//
+// Porquê de uma só vez: peças de dimensões ímpar×par (12, 13, 14, 17-20) têm o
+// centro entre células, e cada rotação obriga a um arredondamento de meia
+// célula. Encadeando rotações esse erro acumula — quatro voltas deixavam a peça
+// 2 células fora do sítio. Assim o erro nunca passa de meia célula e n=0 ou n=4
+// devolvem a posição original exata. Rotações de 180º ficam sempre exatas.
+function rotateGroupBy(originals, n) {
+    var g = JSON.parse(JSON.stringify(originals));
+    n = ((n % 4) + 4) % 4;
+    if (n === 0 || g.length === 0) return g;
+
+    var minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    for (var k = 0; k < g.length; k++) {
+        var o = g[k], d = getModuleDims(o.type), v = getFillVectors(o.rot);
+        var cs = [{ i: 0, j: 0 }, { i: d.len - 1, j: 0 }, { i: 0, j: d.wid - 1 }, { i: d.len - 1, j: d.wid - 1 }];
+        for (var c = 0; c < 4; c++) {
+            var px = o.x + v.p.x * cs[c].i + v.s.x * cs[c].j;
+            var py = o.y + v.p.y * cs[c].i + v.s.y * cs[c].j;
+            if (px < minX) minX = px; if (px > maxX) maxX = px;
+            if (py < minY) minY = py; if (py > maxY) maxY = py;
+        }
+    }
+    var Cx = (minX + maxX + 1) / 2, Cy = (minY + maxY + 1) / 2;
+
+    for (var k = 0; k < g.length; k++) {
+        var o = g[k];
+        var dx = (o.x + 0.5) - Cx, dy = (o.y + 0.5) - Cy;
+        var nx, ny;
+        if (n === 1) { nx = Cx - dy; ny = Cy + dx; }
+        else if (n === 2) { nx = Cx - dx; ny = Cy - dy; }
+        else { nx = Cx + dy; ny = Cy - dx; }
+        o.x = Math.round(nx - 0.5);
+        o.y = Math.round(ny - 0.5);
+        o.rot = (o.rot + n) % 4;
+    }
+    return g;
+}
+
+// A base de rotação é fixada uma vez por seleção: tanto o punho como a tecla R
+// trabalham em relação a ela, por isso nunca há acumulação de erro.
+function resetRotationBase() {
+    rotateOriginals = [];
+    rotateStepsApplied = 0;
+    rotateHandleAngle = -90;
+}
+
+function ensureRotationBase() {
+    if (rotateOriginals.length === 0 && selectedObjects.length > 0) {
+        rotateOriginals = JSON.parse(JSON.stringify(selectedObjects));
+        rotateStepsApplied = 0;
+    }
+}
+
+// Aplica N saltos de 90º partindo SEMPRE da base guardada.
+function applyRotationSteps(n) {
+    if (rotateOriginals.length === 0) return false;
+    n = ((n % 4) + 4) % 4;
+
+    // Tira da grelha o que lá está neste momento
+    var anteriores = selectedObjects.slice();
+    for (var i = 0; i < anteriores.length; i++) {
+        var idx = placedObjects.indexOf(anteriores[i]);
+        if (idx > -1) placedObjects.splice(idx, 1);
+        removeObjFromCollisionMap(anteriores[i]);
+    }
+
+    // Parte sempre do original e roda n vezes
+    var grupo = rotateGroupBy(rotateOriginals, n);
+
+    // Junta os espelhos ativos
+    var completo = [];
+    for (var k = 0; k < grupo.length; k++) {
+        var ms = getMirroredGroup(grupo[k]);
+        for (var m = 0; m < ms.length; m++) {
+            if (!containsObj(completo, ms[m])) completo.push(ms[m]);
+        }
+    }
+
+    if (checkPlacementValidGroup(completo)) {
+        for (var i = 0; i < completo.length; i++) {
+            placedObjects.push(completo[i]);
+            addObjToCollisionMap(completo[i]);
+        }
+        selectedObjects = completo.slice(0, grupo.length);
+        return true;
+    }
+
+    // Não coube: repõe o que lá estava
+    for (var i = 0; i < anteriores.length; i++) {
+        placedObjects.push(anteriores[i]);
+        addObjToCollisionMap(anteriores[i]);
+    }
+    selectedObjects = anteriores;
+    return false;
+}
+
+// direcao: +1 horário, -1 anti-horário
+function rodarSelecao(direcao) {
+    if (selectedObjects.length === 0) return false;
+    ensureRotationBase();
+    saveHistory();
+    var alvo = rotateStepsApplied + direcao;
+    if (applyRotationSteps(alvo)) { rotateStepsApplied = alvo; return true; }
+    return false;
+}
+
+function rotateSelectedObjects() {
+    return rodarSelecao(1);
+}
+
+// Clique nas setas: roda a seleção, ou o módulo que está prestes a ser colocado
+function rodarPelasSetas(direcao) {
+    if (selectedModule >= 0) {
+        currentRotation = (((currentRotation + direcao) % 4) + 4) % 4;
+        return true;
+    }
+    if (selectedModule == -2 && selectedObjects.length > 0) {
+        return rodarSelecao(direcao);
+    }
+    return false;
+}
+
+
 
 function exportProjectJSON() {
     // 1. GUARDA O ESTADO ATUAL (A linha mágica que faltava!)
@@ -4584,11 +5532,26 @@ function hasUnsavedWork() {
     return false;
 }
 
+// Rede de segurança: a app não guarda nada em disco, por isso um Cmd+R
+// distraído, um fechar de separador ou um clique no "voltar" apagavam o
+// alfabeto inteiro sem aviso. Isto dá ao browser motivo para perguntar antes.
+var saidaIntencional = false;
+
+window.addEventListener('beforeunload', function (e) {
+    if (saidaIntencional) return;      // o botão ← já fez a sua própria pergunta
+    if (autosaveOK) return;            // está guardado no browser: sair é seguro
+    if (!hasUnsavedWork()) return;     // nada para perder
+    e.preventDefault();
+    e.returnValue = '';                // exigido por alguns browsers
+    return '';
+});
+
 function goToSite() {
-    if (hasUnsavedWork()) {
+    if (!autosaveOK && hasUnsavedWork()) {
         var leave = perguntar("You have work on the canvas that isn't saved.\n\nLeaving now will discard it — use \"Save project (JSON)\" first if you want to keep it.\n\nLeave anyway?");
-        if (!leave) return;
+        if (!leave) return; // fica: a proteção do beforeunload mantém-se ativa
     }
+    saidaIntencional = true; // só agora, para não haver dupla pergunta
     window.location.href = 'https://pragmatipo.pt';
 }
 
