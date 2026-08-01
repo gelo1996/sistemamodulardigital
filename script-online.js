@@ -147,7 +147,7 @@ function preload() {
     modulesFill = []; moduleSVGStringsFill = [];
     modulesDotted = []; moduleSVGStringsDotted = [];
 
-    for (var i = 0; i < 21; i++) {
+    for (var i = 0; i < 22; i++) {
         // Carrega as versões Fill
         var fileFill = BASE_PATH + nf(i, 2) + '.svg';
         modulesFill[i] = loadImage(fileFill);
@@ -283,7 +283,7 @@ function setup() {
 
     collisionMap = createCollisionMap();
 
-    for (var i = 0; i < 21; i++) {
+    for (var i = 0; i < 22; i++) {
         redModulesFill[i] = createRedVersion(modulesFill[i]);
         blueModulesFill[i] = createBlueVersion(modulesFill[i]);
         redModulesDotted[i] = createRedVersion(modulesDotted[i]);
@@ -574,11 +574,11 @@ function mousePressed(evento) {
         }
         else if (mouseX < sidebarWidth) {
             if (mouseX > btnLetterpress.x - btnLetterpress.w / 2 && mouseX < btnLetterpress.x + btnLetterpress.w / 2 && mouseY > btnLetterpress.y - btnLetterpress.h / 2 && mouseY < btnLetterpress.y + btnLetterpress.h / 2) {
-                isOverlapMode = false;
+                definirModo(false);
                 return;
             }
             if (mouseX > btnStencil.x - btnStencil.w / 2 && mouseX < btnStencil.x + btnStencil.w / 2 && mouseY > btnStencil.y - btnStencil.h / 2 && mouseY < btnStencil.y + btnStencil.h / 2) {
-                isOverlapMode = true;
+                definirModo(true);
                 return;
             }
             if (mouseX > btnAtalhos.x - btnAtalhos.w / 2 && mouseX < btnAtalhos.x + btnAtalhos.w / 2 && mouseY > btnAtalhos.y - btnAtalhos.h / 2 && mouseY < btnAtalhos.y + btnAtalhos.h / 2) {
@@ -914,8 +914,32 @@ const MODULE_DIMS = [
     { len: 3, wid: 2 },    // 17
     { len: 3, wid: 2 },    // 18
     { len: 3, wid: 2 },    // 19
-    { len: 3, wid: 2 }     // 20 <-- NOVO MÓDULO 20
+    { len: 3, wid: 2 },    // 20
+    { len: 2, wid: 1 }     // 21 — meia altura, 100x50 (50 unidades = 1 célula)
 ];
+
+// Ordem em que os módulos aparecem na barra. Quem estiver aqui abre a fila;
+// os restantes seguem a seguir, pela ordem natural — assim acrescentar um
+// módulo novo não exige mexer nesta lista para ele aparecer.
+const ORDEM_MODULOS = [21];
+
+function ordemDosModulos() {
+    var ordem = ORDEM_MODULOS.filter(function (i) { return i < modules.length; });
+    for (var i = 0; i < modules.length; i++) {
+        if (ordem.indexOf(i) === -1) ordem.push(i);
+    }
+    return ordem;
+}
+
+// O número que se mostra não é o índice interno. O índice é posição no array
+// e está gravado em cada peça — mexer nele partia todos os alfabetos já
+// guardados. Isto é só a etiqueta, e vive num sítio só.
+const ETIQUETAS_MODULOS = { 21: '01' };   // casos próprios; o resto soma 2
+
+function etiquetaDoModulo(id) {
+    if (ETIQUETAS_MODULOS[id]) return ETIQUETAS_MODULOS[id];
+    return nf(id + 2, 2);
+}
 
 function getModuleDims(id) {
     return MODULE_DIMS[id] || { len: (id + 1) * 2, wid: 2 };
@@ -924,7 +948,7 @@ function getModuleDims(id) {
 function isCurveGroup(id) { return id >= 6 && id <= 11; }
 function isArchGroup(id) { return id >= 12 && id <= 14; }
 function isDiagonalGroup(id) { return id >= 16 && id <= 20; } // <-- Atualizado para 20
-function hasGeneticMap(id) { return (id >= 0 && id <= 20); }  // <-- Atualizado para 20
+function hasGeneticMap(id) { return (id >= 0 && id <= 21); }  // <-- Atualizado para 21
 
 function getCurveCenter(gx, gy, type, rot) {
     var dims = getModuleDims(type);
@@ -970,7 +994,8 @@ const MODULE_COLORS = [
     /* 17 */[['B', 'Y', 'B'], ['Y', 'Y', 'B']], // ADN do 17: J0=[Azul,Amarelo,Azul], J1=[Amarelo,Amarelo,Azul]
     /* 18 */[['B', 'Y', 'B'], ['B', 'Y', 'Y']], // <-- O ADN do 18
     /* 19 */[['B', 'Y', 'G'], ['G', 'Y', 'B']], // <-- Adicionar vírgula aqui
-    /* 20 */[['Y', 'Y', 'B'], ['B', 'Y', 'Y']]  // <-- ADN DO 20 (Amarelo e Azul)
+    /* 20 */[['Y', 'Y', 'B'], ['B', 'Y', 'Y']], // <-- ADN DO 20 (Amarelo e Azul)
+    /* 21 */[['Y', 'Y']]                        // duas células cheias: não sobrepõe cor nenhuma
 ];
 
 function getModuleColor(type, i, j) {
@@ -2511,11 +2536,18 @@ function attemptSetTile(type) {
     var groupToTest = getMirroredGroup(baseObj);
 
     if (checkPlacementValidGroup(groupToTest)) {
+        ultimaRecusa = '';
         saveHistory();
         for (var i = 0; i < groupToTest.length; i++) {
             placedObjects.push(groupToTest[i]);
             addObjToCollisionMap(groupToTest[i]);
         }
+    } else {
+        // Isto corre a cada frame com o rato premido: sem desduplicar, parar
+        // um segundo em cima de uma peça valia 60 recusas. Só conta quando o
+        // alvo muda — uma recusa por tentativa, não por frame.
+        var alvo = gridX + ',' + gridY + ',' + type + ',' + currentRotation;
+        if (alvo !== ultimaRecusa) { ultimaRecusa = alvo; acoes.recusas++; }
     }
 }
 
@@ -2967,6 +2999,7 @@ function saveHistory() {
 }
 
 function undo() {
+    if (typeof acoes !== 'undefined') acoes.undos++;
     var hist = storedCharacters[currentChar].history;
     var redoHist = storedCharacters[currentChar].redoHistory;
 
@@ -3152,8 +3185,10 @@ function checkTopBarClick() {
     if (dentroDe(btnRodarDir)) { rodarPelasSetas(1); return; }
 
     // 2. Clique Linha 2: Módulos
-    for (var i = 0; i < modules.length; i++) {
-        var mx = toolStartX + (i * toolGapX);
+    var ordemMods = ordemDosModulos();
+    for (var pos = 0; pos < ordemMods.length; pos++) {
+        var i = ordemMods[pos];
+        var mx = toolStartX + (pos * toolGapX);
         if (mouseX > mx - tBoxSize / 2 && mouseX < mx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2) {
             selectedModule = i; currentRotation = 0; selectedObjects = []; return;
         }
@@ -3397,10 +3432,12 @@ function drawUI() {
     if (sobreDir) { activeTooltip = "Rotate right"; tooltipX = btnRodarDir.x; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
 
     // --- LINHA 2: MÓDULOS ---
-    for (var i = 0; i < modules.length; i++) {
-        var mx = toolStartX + (i * toolGapX);
+    var ordemMods = ordemDosModulos();
+    for (var pos = 0; pos < ordemMods.length; pos++) {
+        var i = ordemMods[pos];
+        var mx = toolStartX + (pos * toolGapX);
         var isH = (mouseX > mx - tBoxSize / 2 && mouseX < mx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2);
-        if (isH) { activeTooltip = nf(i, 2); tooltipX = mx; tooltipY = my + tBoxSize / 2 + 15 * globalScale; }
+        if (isH) { activeTooltip = etiquetaDoModulo(i); tooltipX = mx; tooltipY = my + tBoxSize / 2 + 15 * globalScale; }
         fill(selectedModule == i ? [215, 245, 210] : (isH ? 235 : 249));
         stroke(selectedModule == i ? [0, 200, 0] : 238);
         strokeWeight(0.75); rect(mx, my, tBoxSize, tBoxSize, 6 * globalScale);
@@ -4322,6 +4359,7 @@ function sobreFaixaPreview() {
 
 // Abre com as letras que já existem, para haver logo algo a ver
 function abrirPreview() {
+    acoes.preview++;
     showWordPreview = true;
     if (previewText.length === 0) {
         var desenhadas = '';
@@ -5138,6 +5176,7 @@ function rodarPelasSetas(direcao) {
 
 
 function exportProjectJSON() {
+    acoes.expProjeto++;
     // 1. GUARDA O ESTADO ATUAL (A linha mágica que faltava!)
     saveCharacter(currentChar);
 
@@ -5211,6 +5250,7 @@ function importProjectJSON() {
 
                     loadCharacter(currentChar);         // Atualiza a grelha visual
                     calculateLayout();                  // Refaz as matemáticas
+                    realinharContagens();               // importar não é colocar
                 } else {
                     avisar("This file doesn't look like a valid project for this platform.");
                 }
@@ -5229,6 +5269,7 @@ function importProjectJSON() {
 }
 
 function exportCharacterSVG(charToExport) {
+    acoes.expLetra++;
     if (charToExport === currentChar) {
         saveCharacter(currentChar);
     }
@@ -5338,7 +5379,7 @@ function exportCharacterSVG(charToExport) {
         var scaleY = drawH / vbH;
 
         // 3. O Illustrator adora Matrizes de Transformação separadas (Grupos <g> dentro de Grupos <g>)
-        svgStr += '  <!-- Módulo ' + nf(o.type, 2) + ' -->\n';
+        svgStr += '  <!-- Módulo ' + etiquetaDoModulo(o.type) + ' -->\n';
         svgStr += '  <g transform="translate(' + svgPivotX + ' ' + svgPivotY + ') rotate(' + rotDeg + ')">\n';
         svgStr += '    <g transform="translate(' + (-exportScale / 2) + ' ' + (-exportScale / 2) + ') scale(' + scaleX + ' ' + scaleY + ') translate(' + (-vbX) + ' ' + (-vbY) + ')">\n';
         svgStr += '      ' + innerSVG + '\n';
@@ -5367,6 +5408,7 @@ function exportCharacterSVG(charToExport) {
 }
 
 function exportAlphabetSVG() {
+    acoes.expAlfabeto++;
     // 1. Atualiza a memória com o que está no ecrã neste momento
     saveCharacter(currentChar);
 
@@ -5488,6 +5530,7 @@ function exportAlphabetSVG() {
 }
 
 function exportAlphabetZIP() {
+    acoes.expZip++;
     // 1. Verifica se a biblioteca JSZip foi bem carregada no HTML
     if (typeof JSZip === 'undefined') {
         avisar("Error: To export as ZIP, you need to add the JSZip link to your index.html file.");
@@ -5572,7 +5615,7 @@ function exportAlphabetZIP() {
                 var scaleX = drawW / vbW;
                 var scaleY = drawH / vbH;
 
-                svgStr += '  <!-- Módulo ' + nf(o.type, 2) + ' -->\n';
+                svgStr += '  <!-- Módulo ' + etiquetaDoModulo(o.type) + ' -->\n';
                 svgStr += '  <g transform="translate(' + svgPivotX + ' ' + svgPivotY + ') rotate(' + rotDeg + ')">\n';
                 svgStr += '    <g transform="translate(' + (-exportScale / 2) + ' ' + (-exportScale / 2) + ') scale(' + scaleX + ' ' + scaleY + ') translate(' + (-vbX) + ' ' + (-vbY) + ')">\n';
                 svgStr += '      ' + innerSVG + '\n';
@@ -5761,7 +5804,7 @@ window.addEventListener('beforeunload', function (e) {
 function goToSite() {
     // Carregar em voltar ao site é a declaração mais clara de "terminei" que
     // esta ferramenta recebe. Aproveita-se, antes de a pessoa desaparecer.
-    if (podePerguntarAvaliacao() && sessao.letras >= 1) { mostrarAvaliacao(true); return; }
+    if (podePerguntarAvaliacao() && (sessao.letras + sessao.numeros) >= 1) { mostrarAvaliacao(true); return; }
     sairMesmo();
 }
 
@@ -5885,9 +5928,11 @@ function updateSliderFromMouse() {
 // Nota: isto não é segurança — quem abrir o código-fonte lê a lista. Serve
 // para saber de que grupo veio cada resposta, não para trancar a porta.
 var CODIGOS_COORTE = {
-    'pragma16et': '16ET',
-    'pragmaesmad': 'ESMAD',
-    'pragmateste': 'TESTE'
+    'pragmatipo-teste': 'TESTE',
+    'pragmatipo-16et': '16ET',
+    'pragmatipo-esmad': 'ESMAD',
+    'pragmatipo-diadaesmad': 'ESMAD'
+
 };
 
 // Endereço do Web App do Google Apps Script (ver apps-script-respostas.js).
@@ -5900,7 +5945,7 @@ var EMAIL_CONTACTO = 'adg@esmad.pt';
 
 // Muda isto sempre que alterares o texto dos consentimentos: fica gravado em
 // cada resposta, para saberes quem aceitou que versão.
-var VERSAO_CONSENTIMENTO = '2026-08-01c';
+var VERSAO_CONSENTIMENTO = '2026-08-02';
 
 var CONSENTIMENTOS = [
     { id: 'rgpd', obrigatorio: true,
@@ -5953,8 +5998,9 @@ var TEXTO_RGPD =
     'This tool is part of doctoral research on modular letterpress type systems. ' +
     'The answers below are collected by Ângelo Gonçalves and used only for that research. ' +
     'No name, e-mail or any other direct identifier is asked for, and your answers are stored under an anonymous code. ' +
-    'Alongside your answers, the research also records how the tool is used — how many times you come back to draw, ' +
-    'how long a session lasts, and how many letters and modules you make. Nothing you type into the tool itself is recorded. ' +
+    'Alongside your answers, the research also records how the tool is used: how often you come back, how long you work, ' +
+    'which letters and modules you build, how you rotate and arrange them, which working mode you choose, and which ' +
+    'commands you reach for. Nothing you type into the tool itself is recorded, and the letterforms themselves are never sent. ' +
     'You can ask for your data to be deleted at any time by sending that code to ' + EMAIL_CONTACTO + '.';
 
 // --- ESTADO ----------------------------------------------------------------
@@ -6276,19 +6322,119 @@ function iniciarPortao() {
 // no fim (sendBeacon) ou, se o separador morrer sem aviso, no arranque
 // seguinte. Assim um crash custa os últimos segundos, não a sessão inteira.
 
+// Três medidas distintas do uso dos módulos. Todas derivadas de comparar
+// fotografias do alfabeto, e não de apanhar cada colocação à mão: os módulos
+// entram no artboard por doze caminhos diferentes (desenhar, colar, duplicar,
+// espelho, rollback…) e hooká-los um a um seria frágil. Comparar contagens
+// apanha-os todos, venham de onde vierem.
+var CHAVE_USOS = 'pragmatipo-usos';        // colocações acumuladas, por participante
+var usosAcumulados = {};                   // nunca desce
+var baseSessao = {};                       // fotografia no início da sessão
+var ultimaContagem = {};                   // fotografia do tique anterior
+
+// Comportamento da sessão. Tudo somado em memória e despejado no registo.
+var acoes = {
+    recusas: 0,          // colocações barradas pelo modo Letterpress
+    undos: 0,
+    preview: 0,          // vezes que abriu o Preview word
+    expLetra: 0, expAlfabeto: 0, expZip: 0, expProjeto: 0,
+    trocasDeModo: 0
+};
+var tempoModo = { letterpress: 0, livre: 0 };   // segundos em cada modo
+var modoDesde = Date.now();
+var ultimaRecusa = '';       // desduplica recusas repetidas na mesma célula
+var CHAVE_PRIMEIRO = 'pragmatipo-primeiro-caractere';
+var primeiroCaractere = null;
+
+var CHAVE_USOS_LETRA = 'pragmatipo-usos-letra';   // o mesmo, desdobrado por caractere
+var usosPorLetra = {};
+var baseLetra = {};
+var ultimaLetra = {};
+
 var CHAVE_SESSAO = 'pragmatipo-sessao';
 var CHAVE_N_SESSOES = 'pragmatipo-n-sessoes';
 var sessao = null;
 
 function contarTrabalho() {
-    var letras = 0, modulos = 0;
+    var letras = 0, numeros = 0, modulos = 0;
+
+    // Contagem por módulo, com o NOME DO FICHEIRO (00.svg -> "00"), não com a
+    // etiqueta da interface. O ficheiro é identificador estável; a etiqueta é
+    // uma escolha de apresentação, e essa já mudou uma vez. Arranca a zeros
+    // para que um módulo nunca usado apareça como 0 em vez de faltar: a
+    // ausência também é resultado.
+    var porModulo = {};
+    for (var m = 0; m < modules.length; m++) porModulo[nf(m, 2)] = 0;
+
+    // Contagem desdobrada por caractere: chaves "A|00", "7|21". Só entram as
+    // combinações usadas, para não guardar 792 zeros a cada segundo.
+    var porLetra = {};
+
+    // Rotações usadas, por módulo. Um módulo usado nas quatro orientações
+    // rende quatro vezes mais ao sistema do que um preso a uma só.
+    var porRotacao = {};
+
     for (var i = 0; i < characters.length; i++) {
         var c = characters[i];
         var objs = (c === currentChar) ? placedObjects
                  : (storedCharacters[c] ? storedCharacters[c].objects : []);
-        if (objs && objs.length) { letras++; modulos += objs.length; }
+        if (!objs || !objs.length) continue;
+        if (c >= '0' && c <= '9') numeros++; else letras++;
+        modulos += objs.length;
+        for (var k = 0; k < objs.length; k++) {
+            var ficheiro = nf(objs[k].type, 2);
+            if (porModulo[ficheiro] !== undefined) porModulo[ficheiro]++;
+            var chave = c + '|' + ficheiro;
+            porLetra[chave] = (porLetra[chave] || 0) + 1;
+            var kr = ficheiro + '|' + (objs[k].rot % 4);
+            porRotacao[kr] = (porRotacao[kr] || 0) + 1;
+        }
     }
-    return { letras: letras, modulos: modulos };
+    return { letras: letras, numeros: numeros, desenhados: letras + numeros,
+             modulos: modulos, porModulo: porModulo, porLetra: porLetra,
+             porRotacao: porRotacao };
+}
+
+// Copia uma contagem, para as fotografias não ficarem ligadas à mesma memória.
+// O tempo em cada modo é fechado quando o modo muda e antes de gravar. Assim
+// não é preciso um contador a correr: a diferença entre instantes basta.
+function fecharJanelaDeModo() {
+    var agora = Date.now();
+    var decorrido = (agora - modoDesde) / 1000;
+    if (decorrido > 0) {
+        if (isOverlapMode) tempoModo.livre += decorrido;
+        else tempoModo.letterpress += decorrido;
+    }
+    modoDesde = agora;
+}
+
+function definirModo(livre) {
+    if (isOverlapMode === livre) return;
+    fecharJanelaDeModo();
+    isOverlapMode = livre;
+    acoes.trocasDeModo++;
+}
+
+function copiaContagem(c) {
+    var out = {};
+    for (var k in c) out[k] = c[k];
+    return out;
+}
+
+function contagemVazia() {
+    var out = {};
+    for (var m = 0; m < modules.length; m++) out[nf(m, 2)] = 0;
+    return out;
+}
+
+// Usado depois de importar um projeto: alinha as referências sem contar nada.
+// Sem isto, abrir um ficheiro com 300 módulos registava 300 colocações.
+function realinharContagens() {
+    var t = contarTrabalho();
+    ultimaContagem = copiaContagem(t.porModulo);
+    baseSessao = copiaContagem(t.porModulo);
+    ultimaLetra = copiaContagem(t.porLetra);
+    baseLetra = copiaContagem(t.porLetra);
 }
 
 function guardarSessao() {
@@ -6302,9 +6448,30 @@ function iniciarSessao() {
     // que chegaram a ser gravados.
     try {
         var pendente = JSON.parse(localStorage.getItem(CHAVE_SESSAO) || 'null');
-        if (pendente && pendente.desenhou) enfileirarResposta(pendente);
+        if (pendente && pendente.desenhou) despacharSessao(pendente);
     } catch (e) {}
     try { localStorage.removeItem(CHAVE_SESSAO); } catch (e) {}
+
+    try {
+        usosAcumulados = JSON.parse(localStorage.getItem(CHAVE_USOS) || '{}') || {};
+    } catch (e) { usosAcumulados = {}; }
+    try {
+        usosPorLetra = JSON.parse(localStorage.getItem(CHAVE_USOS_LETRA) || '{}') || {};
+    } catch (e) { usosPorLetra = {}; }
+
+    // A base da sessão é o alfabeto tal como chegou — já com o que veio do
+    // autosave. Assim o "dif" mede esta sessão e não o histórico todo.
+    acoes = { recusas: 0, undos: 0, preview: 0,
+              expLetra: 0, expAlfabeto: 0, expZip: 0, expProjeto: 0, trocasDeModo: 0 };
+    tempoModo = { letterpress: 0, livre: 0 };
+    modoDesde = Date.now();
+    try { primeiroCaractere = localStorage.getItem(CHAVE_PRIMEIRO) || null; } catch (e) {}
+
+    var inicial = contarTrabalho();
+    baseSessao = copiaContagem(inicial.porModulo);
+    ultimaContagem = copiaContagem(inicial.porModulo);
+    baseLetra = copiaContagem(inicial.porLetra);
+    ultimaLetra = copiaContagem(inicial.porLetra);
 
     sessao = {
         tipo: 'sessao',
@@ -6314,7 +6481,7 @@ function iniciarSessao() {
         numero: null,                        // atribuído ao primeiro módulo
         inicio: new Date().toISOString(),
         fim: null, segundos: 0,
-        desenhou: false, letras: 0, modulos: 0
+        desenhou: false, letras: 0, numeros: 0, modulos: 0
     };
     escoarFila();
 }
@@ -6334,23 +6501,175 @@ function registarActividade() {
     }
     sessao.fim = new Date().toISOString();
     sessao.segundos = Math.round((Date.now() - Date.parse(sessao.inicio)) / 1000);
-    sessao.letras = t.letras;
+    sessao.letras = t.letras;     // A–Z
+    sessao.numeros = t.numeros;   // 0–9
     sessao.modulos = t.modulos;
+
+    // B — colocações acumuladas: só as subidas contam. Apagar não desconta,
+    // por isso o número mede quantas vezes se pegou no módulo, não o que ficou.
+    for (var m = 0; m < modules.length; m++) {
+        var fich = nf(m, 2);
+        var subida = (t.porModulo[fich] || 0) - (ultimaContagem[fich] || 0);
+        if (subida > 0) usosAcumulados[fich] = (usosAcumulados[fich] || 0) + subida;
+    }
+    ultimaContagem = copiaContagem(t.porModulo);
+    try { localStorage.setItem(CHAVE_USOS, JSON.stringify(usosAcumulados)); } catch (e) {}
+
+    // O mesmo raciocínio, desdobrado por caractere.
+    for (var chave in t.porLetra) {
+        var sobe = t.porLetra[chave] - (ultimaLetra[chave] || 0);
+        if (sobe > 0) usosPorLetra[chave] = (usosPorLetra[chave] || 0) + sobe;
+    }
+    ultimaLetra = copiaContagem(t.porLetra);
+    try { localStorage.setItem(CHAVE_USOS_LETRA, JSON.stringify(usosPorLetra)); } catch (e) {}
+
+    // A primeira letra que a pessoa desenhou, alguma vez. Começar pelo A ou
+    // pelo H/O diz coisas diferentes sobre como se aproxima do problema.
+    if (!primeiroCaractere) {
+        primeiroCaractere = currentChar;
+        try { localStorage.setItem(CHAVE_PRIMEIRO, primeiroCaractere); } catch (e) {}
+    }
+    sessao.primeiroCaractere = primeiroCaractere;
+
+    fecharJanelaDeModo();
+    sessao.segLetterpress = Math.round(tempoModo.letterpress);
+    sessao.segLivre = Math.round(tempoModo.livre);
+    sessao.modoFinal = isOverlapMode ? 'livre' : 'letterpress';
+    sessao.trocasDeModo = acoes.trocasDeModo;
+    sessao.recusas = acoes.recusas;
+    sessao.undos = acoes.undos;
+    sessao.preview = acoes.preview;
+    sessao.expLetra = acoes.expLetra;
+    sessao.expAlfabeto = acoes.expAlfabeto;
+    sessao.expZip = acoes.expZip;
+    sessao.expProjeto = acoes.expProjeto;
+
+    sessao.linhas = linhasPorCaractere(t);
+    sessao.modulosDetalhe = linhasPorModulo(t);
+    // Uma coluna por módulo: mod_00 … mod_21, na ordem dos ficheiros. São
+    // inseridas por esta ordem de propósito — percorrer o objeto directamente
+    // não servia, porque o JavaScript promove chaves como "10" a índices e
+    // baralha-as, e o cabeçalho da folha sai pela ordem das chaves.
+    //
+    // Atenção na leitura: é o estado do alfabeto no FIM desta sessão, não o
+    // que foi feito nela — o alfabeto vem da sessão anterior. Para o total por
+    // participante, usar a linha de numero mais alto, não somar as linhas.
+    for (var q = 0; q < modules.length; q++) {
+        var ficheiro = nf(q, 2);
+        sessao['mod_' + ficheiro] = t.porModulo[ficheiro] || 0;
+        sessao['usos_' + ficheiro] = usosAcumulados[ficheiro] || 0;
+        sessao['dif_' + ficheiro] = (t.porModulo[ficheiro] || 0) - (baseSessao[ficheiro] || 0);
+    }
     ultimaActividade = Date.now();
     guardarSessao();
 }
 
+// Uma linha por caractere que tenha desenho, ou que tenha mudado nesta sessão.
+// Vai como registo próprio para a folha Letras: em colunas seriam 2376 numa
+// linha só, e a folha deixava de servir para alguma coisa.
+function linhasPorCaractere(t) {
+    var linhas = [];
+    for (var i = 0; i < characters.length; i++) {
+        var c = characters[i];
+        var objs = (c === currentChar) ? placedObjects
+                 : (storedCharacters[c] ? storedCharacters[c].objects : []);
+        var total = (objs && objs.length) ? objs.length : 0;
+
+        var linha = {
+            caractere: c,
+            tipoCaractere: (c >= '0' && c <= '9') ? 'numero' : 'letra',
+            total: total
+        };
+        var mudou = false;
+        for (var m = 0; m < modules.length; m++) {
+            var f = nf(m, 2), k = c + '|' + f;
+            var agora = t.porLetra[k] || 0;
+            var dif = agora - (baseLetra[k] || 0);
+            linha['mod_' + f] = agora;
+            linha['dif_' + f] = dif;
+            linha['usos_' + f] = usosPorLetra[k] || 0;
+            if (dif !== 0) mudou = true;
+        }
+        if (total > 0 || mudou) linhas.push(linha);
+    }
+    return linhas;
+}
+
+// Uma linha por módulo, com as quatro rotações. Em colunas seriam mais 88 na
+// folha das sessões, que já é larga — e em linhas isto pivota-se bem.
+function linhasPorModulo(t) {
+    var linhas = [];
+    for (var m = 0; m < modules.length; m++) {
+        var f = nf(m, 2);
+        var linha = {
+            modulo: f,
+            etiqueta: etiquetaDoModulo(m),
+            total: t.porModulo[f] || 0,
+            dif: (t.porModulo[f] || 0) - (baseSessao[f] || 0),
+            usos: usosAcumulados[f] || 0
+        };
+        for (var r = 0; r < 4; r++) linha['rot_' + r] = t.porRotacao[f + '|' + r] || 0;
+        linhas.push(linha);
+    }
+    return linhas;
+}
+
+// Separa a sessão das linhas por caractere: são folhas diferentes, e um array
+// dentro de um registo chegava à folha como "[object Object]".
+function despacharSessao(s) {
+    if (!s || !s.desenhou) return;
+    var linhas = s.linhas || [];
+    var detalhe = s.modulosDetalhe || [];
+    var resumo = {};
+    for (var k in s) if (k !== 'linhas' && k !== 'modulosDetalhe') resumo[k] = s[k];
+    enfileirarResposta(resumo);
+    if (detalhe.length) {
+        enfileirarResposta({
+            tipo: 'modulos',
+            sessaoId: s.sessaoId, participante: s.participante,
+            coorte: s.coorte, numero: s.numero,
+            quando: s.fim || new Date().toISOString(),
+            linhas: detalhe
+        });
+    }
+    if (linhas.length) {
+        enfileirarResposta({
+            tipo: 'letras',
+            sessaoId: s.sessaoId,
+            participante: s.participante,
+            coorte: s.coorte,
+            numero: s.numero,
+            quando: s.fim || new Date().toISOString(),
+            linhas: linhas
+        });
+    }
+}
+
 // pagehide dispara onde o unload já não é de fiar (Safari, iOS, bfcache).
 window.addEventListener('pagehide', function () {
-    if (!sessao || !sessao.desenhou || !ENDPOINT_RESPOSTAS) return;
-    try {
-        var corpo = new Blob([JSON.stringify(sessao)], { type: 'text/plain;charset=utf-8' });
-        if (navigator.sendBeacon(ENDPOINT_RESPOSTAS, corpo)) {
-            localStorage.removeItem(CHAVE_SESSAO);   // entregue, não repetir
-        }
-    } catch (e) {
-        // fica em CHAVE_SESSAO e segue no arranque seguinte
+    if (!sessao || !sessao.desenhou) return;
+
+    // Grava primeiro na fila — localStorage é síncrono e sobrevive ao fecho.
+    // Só depois se tenta entregar. Se a entrega falhar, fica para a visita
+    // seguinte em vez de se perder.
+    despacharSessao(sessao);
+    try { localStorage.removeItem(CHAVE_SESSAO); } catch (e) {}
+
+    if (!ENDPOINT_RESPOSTAS) return;
+
+    // O fetch não sobrevive ao unload; o sendBeacon foi feito para isto.
+    var fila = [];
+    try { fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]'); } catch (e) { return; }
+    var porEnviar = [];
+    for (var i = 0; i < fila.length; i++) {
+        var entregue = false;
+        try {
+            var corpo = new Blob([JSON.stringify(fila[i])], { type: 'text/plain;charset=utf-8' });
+            entregue = navigator.sendBeacon(ENDPOINT_RESPOSTAS, corpo);
+        } catch (e) { entregue = false; }
+        if (!entregue) porEnviar.push(fila[i]);   // demasiado grande, ou recusado
     }
+    try { localStorage.setItem(CHAVE_POR_ENVIAR, JSON.stringify(porEnviar)); } catch (e) {}
 });
 
 // ===========================================================================
@@ -6410,7 +6729,8 @@ function podePerguntarAvaliacao() {
 function verificarAvaliacao() {
     if (frameCount % 60 !== 0) return;
     if (!podePerguntarAvaliacao()) return;
-    if (sessao.letras < AVALIACAO_MIN_LETRAS) return;
+    // Conta letras e números: quem só desenhou dígitos trabalhou na mesma.
+    if ((sessao.letras + sessao.numeros) < AVALIACAO_MIN_LETRAS) return;
     var decorridos = (Date.now() - Date.parse(sessao.inicio)) / 1000;
     if (decorridos < AVALIACAO_MIN_SEGUNDOS) return;
     if ((Date.now() - ultimaActividade) / 1000 < AVALIACAO_PARADO_SEGUNDOS) return;
@@ -6527,6 +6847,7 @@ function mostrarAvaliacao(aoSair) {
             quando: new Date().toISOString(),
             minutos: sessao ? Math.round((Date.now() - Date.parse(sessao.inicio)) / 60000) : null,
             letras: sessao ? sessao.letras : null,
+            numeros: sessao ? sessao.numeros : null,
             modulos: sessao ? sessao.modulos : null
         };
         PERGUNTAS_SAIDA.forEach(function (p) {
