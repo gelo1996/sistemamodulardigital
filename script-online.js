@@ -5927,14 +5927,51 @@ function updateSliderFromMouse() {
 // que fica nos dados. Acrescentar um grupo é acrescentar uma linha.
 // Nota: isto não é segurança — quem abrir o código-fonte lê a lista. Serve
 // para saber de que grupo veio cada resposta, não para trancar a porta.
-var CODIGOS_COORTE = {
-    'pragmatipo-teste': 'TESTE',
-    'pragmatipo-angelo': 'Angelo',    
-    'pragmatipo-16et': '16ET',
-    'pragmatipo-esmad': 'ESMAD',
-    'pragmatipo-diadaesmad': 'ESMAD'
+// CÓDIGOS DE ACESSO
+// -----------------------------------------------------------------------------
+// Cada código determina duas colunas nos dados, e é decidido no momento em que o
+// entregas a alguém:
+//
+//   coorte    — o grupo. Ex.: 'ESMAD', '16ET'.
+//   material  — com que sistema FÍSICO essa pessoa trabalha na oficina.
+//               'tipos'  = tipos móveis
+//               'stencil'
+//               'ambos'
+//               'nenhum' = só usou a app
+//               ''       = não registado
+//
+// O material vive aqui e não numa pergunta porque tu sabes melhor do que eles, e
+// porque uma pergunta à entrada só apanharia "ainda não" quando a parte física
+// vem depois da app.
+//
+// Para variantes dentro do mesmo grupo, duplica a linha e muda o material —
+// entregas o código conforme o que cada metade da sala vai fazer.
+//
+// Nota: fica fixo à primeira entrada. Quem volta noutra sessão herda o mesmo
+// código, por isso o material é o da altura em que se inscreveu.
 
+var CODIGOS_COORTE = {
+    //  código de acesso                   grupo                 material
+    'pragmatipo-teste':        { coorte: 'TESTE',    material: 'nenhum'  },
+    'pragmatipo-angelo':       { coorte: 'Angelo',   material: 'nenhum'  },
+
+    'pragmatipo-16et':         { coorte: '16ET',     material: ''        },
+    'pragmatipo-esmad':        { coorte: 'ESMAD',    material: ''        },
+    'pragmatipo-diadaesmad':   { coorte: 'ESMAD',    material: ''        },
+
+    'pragmatipo-esmad-tipos':   { coorte: 'ESMAD',   material: 'tipos'   },
+    'pragmatipo-esmad-stencil': { coorte: 'ESMAD',   material: 'stencil' },
+    'pragmatipo-esmad-ambos':   { coorte: 'ESMAD',   material: 'ambos'   }
 };
+
+// Aceita também a forma antiga, só com o nome do grupo — rede de segurança para
+// quando acrescentares um código à pressa antes de uma oficina.
+function resolverCodigo(codigo) {
+    var v = CODIGOS_COORTE[codigo];
+    if (!v) return null;
+    if (typeof v === 'string') return { coorte: v, material: '' };
+    return { coorte: v.coorte || '', material: v.material || '' };
+}
 
 // Endereço do Web App do Google Apps Script (ver apps-script-respostas.js).
 // Enquanto estiver vazio, as respostas ficam só guardadas no browser.
@@ -6160,13 +6197,13 @@ function passoCodigo(caixa) {
 
     function tentar() {
         var codigo = (inp.value || '').trim().toLowerCase();
-        var coorte = CODIGOS_COORTE[codigo];
-        if (!coorte) {
+        var grupo = resolverCodigo(codigo);
+        if (!grupo) {
             if (!msg) msg = erro(caixa, 'That code is not recognised. Check it and try again.');
             estilo(inp, { 'border-color': '#c00' });
             return;
         }
-        passoFormulario(caixa, coorte);
+        passoFormulario(caixa, grupo);
     }
     b.addEventListener('click', tentar);
     inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') tentar(); });
@@ -6175,7 +6212,7 @@ function passoCodigo(caixa) {
 
 // --- PASSO 2: CONSENTIMENTOS E QUESTIONÁRIO -------------------------------
 
-function passoFormulario(caixa, coorte) {
+function passoFormulario(caixa, grupo) {
     titulo(caixa, 'Before you start', 'A few questions for the research behind this tool');
 
     var intro = document.createElement('div');
@@ -6262,18 +6299,20 @@ function passoFormulario(caixa, coorte) {
             msg = erro(caixa, 'Still missing: ' + faltam.join(', '));
             return;
         }
-        concluirPortao(coorte, respostas);
+        concluirPortao(grupo, respostas);
     });
 }
 
 // --- CONCLUSÃO -------------------------------------------------------------
 
-function concluirPortao(coorte, respostas) {
-    participante = { id: novoIdParticipante(), coorte: coorte, quando: new Date().toISOString() };
+function concluirPortao(grupo, respostas) {
+    participante = { id: novoIdParticipante(), coorte: grupo.coorte,
+                     material: grupo.material, quando: new Date().toISOString() };
 
     var registo = {
         participante: participante.id,
-        coorte: coorte,
+        coorte: participante.coorte,
+        material: participante.material,
         quando: participante.quando,
         versaoConsentimento: VERSAO_CONSENTIMENTO,
         ecra: window.innerWidth + 'x' + window.innerHeight,   // não as globais do p5
@@ -6479,6 +6518,7 @@ function iniciarSessao() {
         sessaoId: novoIdParticipante(),      // permite despistar duplicados
         participante: participante.id,
         coorte: participante.coorte,
+        material: participante.material || '',
         numero: null,                        // atribuído ao primeiro módulo
         inicio: new Date().toISOString(),
         fim: null, segundos: 0,
