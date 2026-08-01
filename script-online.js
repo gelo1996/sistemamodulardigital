@@ -380,6 +380,7 @@ function draw() {
 
     try {
         drawGrid();
+        desenharLetraReferencia();   // por baixo da letra atual, nunca por cima
         drawModules();
     } catch (e) {
         console.error(e);
@@ -430,19 +431,33 @@ function draw() {
     drawShortcutsModal();
     drawWordPreview();
 
-    // Contador de módulos da letra atual (canto inferior direito)
-    push(); noStroke(); fill(120); textAlign(RIGHT, BOTTOM); textSize(11);
-    text('modules: ' + placedObjects.length, width - 8, height - 8);
-    pop();
-
     desenharReguaReferencia();
+
+    // Contagem de módulos: a mesma cápsula do aviso de recuperação, em cinzento.
+    // Pousa por cima da miniatura da letra; sem miniatura, encosta ao fundo (ou
+    // ao topo da faixa da palavra, para não cair sobre a composição).
+    // É uma nota do canvas: com o manual aberto não deve flutuar por cima dele.
+    if (!showShortcutsModal) {
+        var reg = getReguaBounds();
+        var meiaAltura = 14 * globalScale;
+        var contCy;
+        if (reg.visivel) contCy = reg.y - 6 * globalScale - meiaAltura - 8 * globalScale;
+        else if (showWordPreview) contCy = getPreviewBounds().y - meiaAltura - 8 * globalScale;
+        else contCy = height - meiaAltura - 14 * globalScale;
+        desenharPilula('modules: ' + placedObjects.length,
+                       reg.x + reg.tam / 2, contCy, [249, 235], [120],
+                       { largura: reg.tam + 12 * globalScale, contorno: 238 });
+    }
+
     verificarAutosave();
     desenharAvisoRecuperado();
 }
 
 function handleInteraction() {
-    // Bloqueia qualquer desenho se um painel estiver aberto por cima
-    if (showShortcutsModal || showWordPreview) return;
+    // Bloqueia o desenho se o manual estiver aberto, ou se o rato estiver
+    // sobre a faixa da pré-visualização (fora dela continua tudo a funcionar)
+    if (showShortcutsModal) return;
+    if (sobreFaixaPreview()) return;
 
     // O clique que fechou o modal não pode desenhar: espera que o rato seja largado
     if (suppressDrawUntilRelease) {
@@ -496,18 +511,17 @@ function getHoveredGuide() {
     return closest;
 }
 
-function mousePressed() {
+function mousePressed(evento) {
+    shiftNoClique = evento ? !!evento.shiftKey : keyIsDown(SHIFT);
     if (mouseButton == LEFT) {
-        // A pré-visualização apanha todos os cliques enquanto estiver aberta
-        if (showWordPreview) {
+        // A faixa da pré-visualização só apanha os cliques que caem sobre ela;
+        // o resto da ferramenta continua a funcionar normalmente.
+        if (showWordPreview && sobreFaixaPreview()) {
             var pb = getPreviewBounds();
-            var pLeft = pb.x - pb.w / 2, pTop = pb.y - pb.h / 2;
-            var fecharX = pLeft + pb.w - 26 * globalScale;
-            var fecharY = pTop + 26 * globalScale;
-            if (dist(mouseX, mouseY, fecharX, fecharY) < 16 * globalScale ||
-                mouseX < pLeft || mouseX > pLeft + pb.w ||
-                mouseY < pTop || mouseY > pTop + pb.h) {
-                showWordPreview = false;
+            var fecharX = pb.x + pb.w - 24 * globalScale;
+            var fecharY = pb.y + pb.barraH / 2;
+            if (dist(mouseX, mouseY, fecharX, fecharY) < 15 * globalScale) {
+                fecharPreview();
                 suppressDrawUntilRelease = true;
             }
             return;
@@ -574,6 +588,10 @@ function mousePressed() {
             }
             if (mouseX > btnHome.x - btnHome.w / 2 && mouseX < btnHome.x + btnHome.w / 2 && mouseY > btnHome.y - btnHome.h / 2 && mouseY < btnHome.y + btnHome.h / 2) {
                 goToSite();
+                return;
+            }
+            if (btnPreview.visivel && dentroDe(btnPreview)) {
+                if (showWordPreview) fecharPreview(); else abrirPreview();
                 return;
             }
             checkSidebarClick();
@@ -2666,6 +2684,60 @@ function drawGrid() {
     rectMode(CENTER);
 }
 
+// --- LETRA DE REFERÊNCIA (onion skin) -------------------------------------
+// A parte difícil de um alfabeto não é desenhar uma letra, é a seguinte
+// concordar com a primeira. Isto fixa uma letra já desenhada e mostra-a
+// esbatida por baixo da atual, para se comparar hastes e larguras sem saltar
+// de artboard. Fica em cinzento e não a preto: é referência, não desenho.
+var shiftNoClique = false;   // Shift no momento do clique, lido do evento
+var letraReferencia = null;
+var ALPHA_REFERENCIA = 45;
+var bufferReferencia = null;   // recriado quando a janela muda de tamanho
+
+function desenharLetraReferencia() {
+    if (!letraReferencia || letraReferencia === currentChar) return;
+    var ref = storedCharacters[letraReferencia];
+    if (!ref || !ref.objects || ref.objects.length === 0) return;
+
+    // Desenha-se a letra opaca num buffer e só no fim se esbate tudo de uma vez.
+    // Com alfa módulo a módulo, as sobreposições — possíveis em modo livre —
+    // somavam-se e a referência ganhava manchas escuras que se liam como
+    // densidade do desenho, que é precisamente o juízo que isto vem apoiar.
+    if (!bufferReferencia || bufferReferencia.width !== width || bufferReferencia.height !== height) {
+        bufferReferencia = createGraphics(width, height);
+    }
+    var g = bufferReferencia;
+    g.clear();
+    g.angleMode(DEGREES);            // o buffer tem o seu próprio estado
+    g.imageMode(CENTER); g.rectMode(CENTER); g.noStroke();
+
+    for (var k = 0; k < ref.objects.length; k++) {
+        var obj = ref.objects[k];
+        var cellCenterX = centerX + (obj.x - GRID_CX) * tileSize + tileSize / 2;
+        var cellCenterY = centerY + (obj.y - GRID_CY) * tileSize + tileSize / 2;
+        var dims = getModuleDims(obj.type);
+        var offX = (dims.len - 1) * (tileSize / 2);
+        var offY = (dims.wid - 1) * (tileSize / 2);
+
+        g.push();
+        g.translate(cellCenterX, cellCenterY);
+        g.rotate(obj.rot * 90);
+        if (modules[obj.type] && modules[obj.type].width > 1) {
+            g.image(modules[obj.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+        } else {
+            g.fill(150);
+            g.rect(offX, offY, tileSize * dims.len, tileSize * dims.wid);
+        }
+        g.pop();
+    }
+
+    push();
+    imageMode(CORNER);
+    tint(255, ALPHA_REFERENCIA);     // esbate o conjunto, sem recolorir
+    image(g, 0, 0);
+    pop();
+}
+
 function drawModules() {
     for (var k = 0; k < placedObjects.length; k++) {
         var obj = placedObjects[k];
@@ -2716,6 +2788,9 @@ function drawModules() {
 
 function drawCustomCursor() {
     if (showShortcutsModal) { cursor(ARROW); return; } // <-- ADICIONE ESTA LINHA AQUI!
+    // A faixa da palavra é zona de leitura, não de desenho: sobre ela o rato
+    // volta a ser um rato normal, sem fantasma do módulo por baixo.
+    if (sobreFaixaPreview()) { cursor(ARROW); return; }
 
     if (mouseX > sidebarWidth && mouseY > topBarHeight) {
 
@@ -3068,9 +3143,6 @@ function checkTopBarClick() {
         }
     }
 
-    // 1a. Botão de pré-visualização de palavra
-    if (dentroDe(btnPreview)) { abrirPreview(); return; }
-
     // 1b. Setas de rotação (dentro da caixa do ângulo)
     if (dentroDe(btnRodarEsq)) { rodarPelasSetas(-1); return; }
     if (dentroDe(btnRodarDir)) { rodarPelasSetas(1); return; }
@@ -3168,7 +3240,13 @@ function checkSidebarClick() {
         // Verificamos o clique respeitando a base virtual (effectiveBottom)
         if (mouseY > topBarHeight && mouseY < effectiveBottom - bottomPanelH) {
             if (mouseX > x - cSize / 2 && mouseX < x + cSize / 2 && mouseY > y - cSize / 2 && mouseY < y + cSize / 2) {
-                switchCharacter(characters[i]);
+                // Shift fixa a letra como referência em vez de saltar para ela;
+                // repetir no mesmo thumbnail solta-a.
+                if (shiftNoClique) {
+                    letraReferencia = (letraReferencia === characters[i]) ? null : characters[i];
+                } else {
+                    switchCharacter(characters[i]);
+                }
                 return;
             }
         }
@@ -3341,28 +3419,6 @@ function drawUI() {
     drawSegmentedControl(cx3, ly, styleBtnW, styleBtnH, ["F1", "F2", "F3"], currentArtboardIdx);
     drawSegmentedControl(cx4, ly, styleBtnW, styleBtnH, ["Portrait", "Landscape"], isLandscape ? 1 : 0);
 
-    // Botão de pré-visualização de palavra, a seguir aos controlos
-    btnPreview.w = (2 * toolGapX) + tBoxSize;
-    btnPreview.h = styleBtnH;
-    btnPreview.x = cx4 + styleBtnW / 2 + 18 * globalScale + btnPreview.w / 2;
-    btnPreview.y = ly;
-    var sobrePreview = !showShortcutsModal && !showWordPreview && dentroDe(btnPreview);
-    push();
-    rectMode(CENTER);
-    fill(showWordPreview ? [0, 200, 0, 30] : (sobrePreview ? 235 : 249));
-    stroke(showWordPreview ? [0, 200, 0] : 238); strokeWeight(0.75);
-    rect(btnPreview.x, btnPreview.y, btnPreview.w, btnPreview.h, 6 * globalScale);
-    noStroke();
-    fill(showWordPreview ? [0, 200, 0] : 120);
-    textAlign(CENTER, CENTER); textSize(10.5 * globalScale); textStyle(BOLD);
-    text('Preview word', btnPreview.x, btnPreview.y);
-    textStyle(NORMAL);
-    pop();
-    if (sobrePreview) {
-        activeTooltip = "See your letters composed together";
-        tooltipX = btnPreview.x; tooltipY = ly + styleBtnH / 2 + 15 * globalScale;
-    }
-
     if (mouseY > ly - styleBtnH / 2 && mouseY < ly + styleBtnH / 2 && !showShortcutsModal) {
         if (mouseX > cx3 - styleBtnW / 2 && mouseX < cx3 + styleBtnW / 2) {
             var segW = styleBtnW / 3;
@@ -3399,23 +3455,53 @@ function drawUI() {
     var minSafeHeight = topBarHeight + bottomPanelH + (50 * globalScale);
     var effectiveBottom = max(height, minSafeHeight);
 
-    var availableHForChars = effectiveBottom - topBarHeight - bottomPanelH;
+    var charTop = topBarHeight;
+    var availableHForChars = effectiveBottom - charTop - bottomPanelH;
     var charRows = Math.ceil(characters.length / 3);
-    var maxScroll = max(0, (charRows * charGapY + 20 * globalScale) - availableHForChars);
+    // A lista rola até revelar o botão da palavra, que fecha o alfabeto.
+    var maxScroll = max(0, (charRows * charGapY + charGapY + 20 * globalScale) - availableHForChars);
     alphabetScrollY = constrain(alphabetScrollY, 0, maxScroll);
-    var charStartY = topBarHeight + 30 * globalScale - alphabetScrollY;
+    var charStartY = charTop + 30 * globalScale - alphabetScrollY;
 
-    push(); drawingContext.save(); drawingContext.beginPath(); drawingContext.rect(0, topBarHeight, sidebarWidth, availableHForChars); drawingContext.clip();
+    push(); drawingContext.save(); drawingContext.beginPath(); drawingContext.rect(0, charTop, sidebarWidth, availableHForChars); drawingContext.clip();
     textSize(12 * globalScale); textStyle(NORMAL); rectMode(CENTER);
     for (var i = 0; i < characters.length; i++) {
         var col = i % 3; var row = floor(i / 3); var x = toolStartX + (col * toolGapX); var y = charStartY + (row * charGapY);
-        if (y > topBarHeight - cSize && y < effectiveBottom - bottomPanelH + cSize) {
+        if (y > charTop - cSize && y < effectiveBottom - bottomPanelH + cSize) {
             var isH = (mouseX > x - cSize / 2 && mouseX < x + cSize / 2 && mouseY > y - cSize / 2 && mouseY < y + cSize / 2 && mouseY > topBarHeight && mouseY < effectiveBottom - bottomPanelH);
-            if (characters[i] == currentChar) { fill(220); stroke([0, 200, 0]); strokeWeight(0.75); } else if (isH) { fill(235); stroke(238); strokeWeight(0.75); } else { fill(249); stroke(238); strokeWeight(0.75); }
+            if (characters[i] == currentChar) { fill(220); stroke([0, 200, 0]); strokeWeight(0.75); } else if (characters[i] === letraReferencia) { fill(isH ? 235 : 249); stroke(120); strokeWeight(0.75); } else if (isH) { fill(235); stroke(238); strokeWeight(0.75); } else { fill(249); stroke(238); strokeWeight(0.75); }
+            // Só aparece com Shift em baixo: o gesto explica-se no momento em
+            // que se tenta, sem estar sempre a saltar durante o uso normal.
+            if (isH && keyIsDown(SHIFT)) {   // a paira ainda não há evento de clique
+                activeTooltip = (characters[i] === letraReferencia) ? 'Unpin reference letter' : 'Pin as reference letter';
+                tooltipX = sidebarWidth + 90 * globalScale; tooltipY = y;
+            }
             rect(x, y, cSize, cSize, 4 * globalScale);
             if (isGridEmpty(characters[i])) { noStroke(); fill(characters[i] == currentChar ? 0 : (isH ? 80 : 150)); text(characters[i], x, y); } else { drawThumbnail(characters[i], x - cSize / 2 + 2 * globalScale, y - cSize / 2 + 2 * globalScale, cSize - 4 * globalScale); }
         }
     }
+    // BOTÃO DA PALAVRA: última coisa da lista, logo abaixo do 789. Como vive
+    // dentro do recorte, rola com o alfabeto e só responde enquanto se vê.
+    btnPreview.w = (2 * toolGapX) + cSize; btnPreview.h = 30 * globalScale;
+    btnPreview.x = toolStartX + toolGapX;
+    btnPreview.y = charStartY + charRows * charGapY;
+    btnPreview.visivel = (btnPreview.y - btnPreview.h / 2 > topBarHeight &&
+                          btnPreview.y + btnPreview.h / 2 < effectiveBottom - bottomPanelH);
+
+    var sobrePreview = !showShortcutsModal && btnPreview.visivel && dentroDe(btnPreview);
+    push(); rectMode(CENTER);
+    fill(showWordPreview ? [220, 255, 220] : (sobrePreview ? 235 : 249));
+    stroke(showWordPreview ? [0, 150, 0] : 238); strokeWeight(0.75);
+    rect(btnPreview.x, btnPreview.y, btnPreview.w, btnPreview.h, 6 * globalScale);
+    noStroke(); fill(showWordPreview ? [0, 150, 0] : (sobrePreview ? 80 : 150));
+    textAlign(CENTER, CENTER); textSize(9.5 * globalScale); textStyle(BOLD);
+    text('Preview word', btnPreview.x, btnPreview.y);
+    textStyle(NORMAL); pop();
+    if (sobrePreview) {
+        activeTooltip = "See your letters composed together";
+        tooltipX = sidebarWidth + 80 * globalScale; tooltipY = btnPreview.y;
+    }
+
     drawingContext.restore(); pop();
 
     // --- RODAPÉ FIXO DE CONFIGURAÇÕES ---
@@ -3425,8 +3511,8 @@ function drawUI() {
     var btnW_largo = (2 * toolGapX) + cSize; var btnH = 34 * globalScale; var btnX_centro = toolStartX + toolGapX;
 
     // Posicionamento
-    btnLetterpress.x = btnX_centro; btnLetterpress.y = effectiveBottom - 115 * globalScale; btnLetterpress.w = btnW_largo; btnLetterpress.h = btnH;
-    btnStencil.x = btnX_centro; btnStencil.y = effectiveBottom - 70 * globalScale; btnStencil.w = btnW_largo; btnStencil.h = btnH;
+    btnLetterpress.x = btnX_centro; btnLetterpress.y = effectiveBottom - 114 * globalScale; btnLetterpress.w = btnW_largo; btnLetterpress.h = btnH;
+    btnStencil.x = btnX_centro; btnStencil.y = effectiveBottom - 71 * globalScale; btnStencil.w = btnW_largo; btnStencil.h = btnH;
     btnAtalhos.w = btnH; btnAtalhos.h = btnH; btnAtalhos.x = toolStartX; btnAtalhos.y = effectiveBottom - 25 * globalScale;
     btnFlip.w = btnH; btnFlip.h = btnH; btnFlip.x = toolStartX + toolGapX; btnFlip.y = effectiveBottom - 25 * globalScale;
     btnHome.w = btnH; btnHome.h = btnH; btnHome.x = toolStartX + 2 * toolGapX; btnHome.y = effectiveBottom - 25 * globalScale;
@@ -3564,6 +3650,14 @@ var MANUAL = [
     { t: 'h', s: 'Slider' },
     { t: 'li', s: 'Zoom in and out' },
 
+    { t: 'h', s: 'Reference letter' },
+    { t: 'li', s: 'Shift-click any letter in the side list to pin it. It is then drawn faded underneath whichever letter you are working on, so you can match stems and widths without jumping between artboards' },
+    { t: 'li', s: 'Shift-click it again to unpin. The pinned letter is outlined in grey in the list, and stays pinned while you go through the alphabet' },
+
+    { t: 'h', s: 'Reference ruler' },
+    { t: 'li', s: 'The small box in the bottom-right corner shows the letter you are drawing at a reduced size' },
+    { t: 'li', s: 'It is there to show how the drawing holds up small — something the magnified grid hides. It appears on its own once the artboard has modules' },
+
     { t: 'cat', s: 'Canvas & display' },
 
     { t: 'h', s: 'Fill / Dot' },
@@ -3586,6 +3680,13 @@ var MANUAL = [
     { t: 'h', s: '36 side thumbnails' },
     { t: 'li', s: '26 of them correspond to the letters of the Latin alphabet; the remaining 10 to the digits' },
 
+    { t: 'h', s: 'Preview word' },
+    { t: 'li', s: 'Sits at the end of the thumbnail list. Opens a strip at the bottom of the screen where the letters you have drawn are set side by side' },
+    { t: 'li', s: 'Type any letters in the box to compose them; the ones you have not drawn yet are skipped' },
+    { t: 'li', s: 'The strip is not a dialog: the whole tool stays live above it, so editing a letter reshapes the word as you go. The letter you are editing is highlighted in the composition' },
+    { t: 'sc', k: 'Arrow keys', s: 'Adjust the spacing between letters (pointer over the strip)' },
+    { t: 'sc', k: 'Esc', s: 'Close the strip' },
+
     { t: 'cat', s: 'Projects & export' },
 
     { t: 'h', s: 'Import project', ic: 'importar' },
@@ -3607,6 +3708,14 @@ var MANUAL = [
     { t: 'h', s: 'Export alphabet (ZIP)', ic: 'exportarZip' },
     { t: 'li', s: 'Export the whole alphabet as separate SVG files inside a ZIP' },
     { t: 'sc', k: 'Shift + Z', s: 'Export ZIP file (individual letters)' },
+
+    { t: 'h', s: 'Automatic saving' },
+    { t: 'li', s: 'Your alphabet is kept in this browser as you work, so a crash or a tab closed by mistake does not cost you the session' },
+    { t: 'li', s: 'It comes back on its own next time you open the tool, with a short note saying so' },
+    { t: 'li', s: 'It is a safety net, not an archive: it lives in this browser only, and clearing the browser data erases it. To keep work for good, or to move it elsewhere, save the project as JSON' },
+
+    { t: 'h', s: 'Back to pragmatipo.pt' },
+    { t: 'li', s: 'Leaves the tool and returns to the site. If there is work that has never been saved to a file, it asks first' },
 
     { t: 'cat', s: 'Clearing' },
 
@@ -3932,14 +4041,24 @@ function moverSelecao(dx, dy) {
 // Régua de referência: a letra atual em corpo pequeno, no canto. Serve para
 // julgar como o desenho se comporta em tamanho reduzido — coisa que a grelha
 // ampliada esconde.
-function desenharReguaReferencia() {
-    if (showShortcutsModal || showWordPreview) return;
-    if (placedObjects.length === 0) return;
-
+// A contagem de módulos pousa por cima desta miniatura, por isso a geometria
+// vive num sítio só — assim as duas não se desalinham.
+function getReguaBounds() {
     var tam = 76 * globalScale;
     var margem = 14 * globalScale;
-    var x = width - tam - margem;
-    var y = height - tam - margem - 18 * globalScale;
+    return { tam: tam,
+             x: width - tam - margem,
+             y: height - tam - margem - 18 * globalScale,
+             visivel: !showShortcutsModal && !showWordPreview && placedObjects.length > 0 };
+}
+
+function desenharReguaReferencia() {
+    var r = getReguaBounds();
+    if (!r.visivel) return;
+
+    var tam = r.tam;
+    var x = r.x;
+    var y = r.y;
 
     push();
     rectMode(CORNER); noStroke();
@@ -3966,7 +4085,7 @@ function selecionarTudo() {
 var showWordPreview = false;
 var previewText = '';
 var previewSpacing = 1;      // células entre letras
-var btnPreview = { x: 0, y: 0, w: 100, h: 34 };
+var btnPreview = { x: 0, y: 0, w: 100, h: 34, visivel: false };
 
 // Extensão horizontal e vertical de uma letra, em células
 function limitesDaLetra(char) {
@@ -4010,129 +4129,191 @@ function composicaoDoTexto(texto) {
              alt: base - topo + 1 };
 }
 
+// Faixa fixa no fundo do ecrã. Não é modal: a ferramenta continua toda
+// utilizável por cima, para se poder corrigir a letra e ver o efeito na
+// palavra ao mesmo tempo.
 function getPreviewBounds() {
-    var w = min(1000 * globalScale, width * 0.92);
-    var h = min(520 * globalScale, height * 0.85);
-    return { w: w, h: h, x: width / 2, y: height / 2, headerH: 62 * globalScale };
+    var h = min(210 * globalScale, height * 0.4);
+    return { x: sidebarWidth, y: height - h, w: width - sidebarWidth, h: h,
+             barraH: 44 * globalScale };
+}
+
+// --- CAMPO DE TEXTO ---------------------------------------------------------
+// É um <input> HTML a sério, não texto desenhado. Assim o cursor, a seleção,
+// o Cmd+A e o copiar/colar de texto funcionam como em qualquer caixa — e o
+// Cmd+A deixa de apanhar os módulos do artboard.
+var previewInput = null;
+
+function garantirCampoPreview() {
+    if (previewInput) return previewInput;
+    var el = document.createElement('input');
+    el.type = 'text';
+    el.id = 'preview-word-input';
+    el.setAttribute('placeholder', 'Type letters to test…');
+    el.setAttribute('autocomplete', 'off');
+    el.setAttribute('spellcheck', 'false');
+    document.body.appendChild(el);
+    el.addEventListener('input', function () { previewText = el.value; });
+    // Esc devolve o teclado ao desenho sem fechar o painel
+    el.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') { el.blur(); ev.stopPropagation(); }
+    });
+    previewInput = el;
+    return el;
+}
+
+function previewInputTemFoco() {
+    return !!previewInput && document.activeElement === previewInput;
+}
+
+// Posiciona e estiliza por JS — o Cargo esvazia CSS de <style>, como já vimos.
+function posicionarCampoPreview() {
+    var el = garantirCampoPreview();
+    if (!showWordPreview) {
+        el.style.setProperty('display', 'none', 'important');
+        return;
+    }
+    var b = getPreviewBounds();
+    var padX = 20 * globalScale;
+    var alturaCampo = 26 * globalScale;
+
+    var estilos = {
+        'display': 'block',
+        'position': 'fixed',
+        'left': (b.x + padX) + 'px',
+        'top': (b.y + (b.barraH - alturaCampo) / 2) + 'px',
+        'width': min(380 * globalScale, b.w * 0.45) + 'px',
+        'height': alturaCampo + 'px',
+        'z-index': '9999',
+        'font-size': (13 * globalScale) + 'px',
+        'font-family': 'inherit',
+        'font-weight': '700',
+        'letter-spacing': '0.04em',
+        'text-transform': 'uppercase',
+        'color': '#323232',
+        'background': '#ffffff',
+        'border': '0.75px solid #eeeeee',
+        'border-radius': (5 * globalScale) + 'px',
+        'padding': '0 ' + (10 * globalScale) + 'px',
+        'outline': 'none',
+        'box-sizing': 'border-box',
+        'margin': '0'
+    };
+    for (var k in estilos) el.style.setProperty(k, estilos[k], 'important');
 }
 
 function drawWordPreview() {
+    posicionarCampoPreview();
     if (!showWordPreview) return;
 
     var b = getPreviewBounds();
-    var left = b.x - b.w / 2, top = b.y - b.h / 2;
-    var padX = 28 * globalScale;
+    var padX = 20 * globalScale;
 
     push();
-    rectMode(CORNER); fill(0, 160); noStroke(); rect(0, 0, width, height);
-
-    rectMode(CENTER);
-    fill(255); stroke(238); strokeWeight(0.75);
-    rect(b.x, b.y, b.w, b.h, 16 * globalScale);
-
-    // --- CABEÇALHO: o texto que se está a escrever ---
-    noStroke(); rectMode(CORNER);
+    // Faixa opaca no fundo — sem escurecer o resto, porque o resto continua a
+    // ser utilizável enquanto se vê a palavra.
+    rectMode(CORNER); noStroke();
     fill(249);
-    rect(left + 1, top + 1, b.w - 2, b.headerH - 1, 15 * globalScale, 15 * globalScale, 0, 0);
-
-    fill(150); textAlign(LEFT, CENTER); textSize(10 * globalScale); textStyle(NORMAL);
-    text('TYPE TO TEST YOUR LETTERS', left + padX, top + 18 * globalScale);
-
-    fill(0); textSize(17 * globalScale); textStyle(BOLD);
-    var mostrado = previewText.length ? previewText : 'type something…';
-    fill(previewText.length ? 0 : 190);
-    text(mostrado, left + padX, top + 40 * globalScale);
-    // cursor a piscar
-    if (previewText.length && frameCount % 60 < 30) {
-        var cw = textWidth(previewText);
-        stroke(0, 200, 0); strokeWeight(1.5 * globalScale);
-        line(left + padX + cw + 3 * globalScale, top + 30 * globalScale,
-             left + padX + cw + 3 * globalScale, top + 50 * globalScale);
-        noStroke();
-    }
-    textStyle(NORMAL);
+    rect(b.x, b.y, b.w, b.h);
     stroke(238); strokeWeight(0.75);
-    line(left, top + b.headerH, left + b.w, top + b.headerH);
+    line(b.x, b.y, b.x + b.w, b.y);
+    line(b.x, b.y + b.barraH, b.x + b.w, b.y + b.barraH);
     noStroke();
 
-    // --- ÁREA DE COMPOSIÇÃO ---
-    var areaTop = top + b.headerH;
-    var areaH = b.h - b.headerH - 46 * globalScale;
+    // --- BARRA DE CIMA: o campo de texto (HTML) vive aqui; à direita, ajustes
+    var infoX = b.x + padX + min(380 * globalScale, b.w * 0.45) + 18 * globalScale;
+    fill(150); textAlign(LEFT, CENTER); textSize(10 * globalScale); textStyle(NORMAL);
+    text('spacing ' + previewSpacing + '  (\u2190 \u2192)', infoX, b.y + b.barraH / 2);
+
+    // Botão fechar
+    rectMode(CENTER);
+    var fecharX = b.x + b.w - 24 * globalScale;
+    var fecharY = b.y + b.barraH / 2;
+    var sobreFechar = dist(mouseX, mouseY, fecharX, fecharY) < 15 * globalScale;
+    noStroke();
+    fill(sobreFechar ? color(255, 100, 100) : color(238));
+    circle(fecharX, fecharY, 24 * globalScale);
+    fill(sobreFechar ? 255 : 150); textAlign(CENTER, CENTER); textSize(12 * globalScale);
+    text('\u2715', fecharX, fecharY + 1 * globalScale);
+
+    // --- ÁREA DA PALAVRA ---
+    var areaTop = b.y + b.barraH;
+    var areaH = b.h - b.barraH;
     var areaW = b.w - padX * 2;
 
     var comp = composicaoDoTexto(previewText);
     if (!comp) {
-        fill(190); textAlign(CENTER, CENTER); textSize(12 * globalScale);
-        var aviso = previewText.length
-            ? 'None of those letters are drawn yet'
-            : 'Draw some letters, then type them here';
-        text(aviso, b.x, areaTop + areaH / 2);
-    } else {
-        // Escala que faz a linha caber, com folga
-        var esc = min(areaW / comp.larg, areaH / (comp.alt + 2));
-        esc = min(esc, 40 * globalScale);          // não aumentar demasiado
-
-        var totalW = comp.larg * esc;
-        var x0 = b.x - totalW / 2;
-        var y0 = areaTop + (areaH - comp.alt * esc) / 2 - comp.topo * esc;
-
-        // linha de base, como referência visual
-        var baseY = y0 + (guidesY.baseline) * esc;
-        if (baseY > areaTop && baseY < areaTop + areaH) {
-            stroke(0, 200, 0, 60); strokeWeight(0.75);
-            line(left + padX, baseY, left + b.w - padX, baseY);
-            noStroke();
-        }
-
-        drawingContext.save();
-        drawingContext.beginPath();
-        drawingContext.rect(left, areaTop, b.w, areaH);
-        drawingContext.clip();
-
-        imageMode(CENTER);
-        for (var p = 0; p < comp.pecas.length; p++) {
-            var pc = comp.pecas[p];
-            for (var k = 0; k < pc.L.objs.length; k++) {
-                var o = pc.L.objs[k];
-                var dims = getModuleDims(o.type);
-                var cx = x0 + (o.x + pc.x) * esc + esc / 2;
-                var cy = y0 + o.y * esc + esc / 2;
-                var offX = (dims.len - 1) * (esc / 2);
-                var offY = (dims.wid - 1) * (esc / 2);
-
-                push();
-                translate(cx, cy);
-                rotate(o.rot * 90);
-                if (modules[o.type] && modules[o.type].width > 1) {
-                    image(modules[o.type], offX, offY, dims.len * esc, dims.wid * esc);
-                } else {
-                    fill(0); noStroke(); rectMode(CENTER);
-                    rect(offX, offY, dims.len * esc, dims.wid * esc);
-                }
-                pop();
-            }
-        }
-        drawingContext.restore();
+        fill(190); textAlign(CENTER, CENTER); textSize(11.5 * globalScale);
+        text(previewText.length ? 'None of those letters are drawn yet'
+                                : 'Draw some letters, then type them above',
+             b.x + b.w / 2, areaTop + areaH / 2);
+        pop();
+        return;
     }
 
-    // --- RODAPÉ: espaçamento ---
-    var rodapeY = top + b.h - 24 * globalScale;
-    fill(150); textAlign(LEFT, CENTER); textSize(10.5 * globalScale); textStyle(NORMAL);
-    text('Letter spacing: ' + previewSpacing + '   ( ← →  to adjust )', left + padX, rodapeY);
-    fill(190); textAlign(RIGHT, CENTER);
-    text('esc to close', left + b.w - padX, rodapeY);
+    var esc = min(areaW / comp.larg, (areaH - 24 * globalScale) / (comp.alt + 1));
+    esc = min(esc, 26 * globalScale);
 
-    // --- BOTÃO FECHAR ---
-    rectMode(CENTER);
-    var closeX = left + b.w - 26 * globalScale, closeY = top + 26 * globalScale;
-    var sobreFechar = dist(mouseX, mouseY, closeX, closeY) < 16 * globalScale;
-    noStroke();
-    fill(sobreFechar ? color(255, 100, 100) : color(238));
-    circle(closeX, closeY, 26 * globalScale);
-    fill(sobreFechar ? 255 : 150); textAlign(CENTER, CENTER); textSize(13 * globalScale);
-    text('✕', closeX, closeY + 1 * globalScale);
+    var totalW = comp.larg * esc;
+    var x0 = b.x + b.w / 2 - totalW / 2;
+    var y0 = areaTop + (areaH - comp.alt * esc) / 2 - comp.topo * esc;
 
+    drawingContext.save();
+    drawingContext.beginPath();
+    drawingContext.rect(b.x, areaTop, b.w, areaH);
+    drawingContext.clip();
+
+    // linha de base como referência
+    var baseY = y0 + guidesY.baseline * esc;
+    if (baseY > areaTop && baseY < areaTop + areaH) {
+        stroke(0, 200, 0, 55); strokeWeight(0.75);
+        line(b.x + padX, baseY, b.x + b.w - padX, baseY);
+        noStroke();
+    }
+
+    // A letra que se está a editar leva um realce por trás. Pintar os módulos
+    // de verde não servia: tint() multiplica, e arte preta tingida fica preta.
+    for (var q = 0; q < comp.pecas.length; q++) {
+        if (comp.pecas[q].char !== currentChar) continue;
+        var pq = comp.pecas[q], mg = 3 * globalScale;
+        noStroke(); fill(0, 200, 0, 22); rectMode(CORNER);
+        rect(x0 + (pq.L.minX + pq.x) * esc - mg, y0 + pq.L.minY * esc - mg,
+             pq.L.larg * esc + mg * 2, (pq.L.maxY - pq.L.minY + 1) * esc + mg * 2,
+             3 * globalScale);
+    }
+
+    imageMode(CENTER);
+    for (var p = 0; p < comp.pecas.length; p++) {
+        var pc = comp.pecas[p];
+        for (var k = 0; k < pc.L.objs.length; k++) {
+            var o = pc.L.objs[k];
+            var dims = getModuleDims(o.type);
+            var cx = x0 + (o.x + pc.x) * esc + esc / 2;
+            var cy = y0 + o.y * esc + esc / 2;
+            var offX = (dims.len - 1) * (esc / 2);
+            var offY = (dims.wid - 1) * (esc / 2);
+
+            push();
+            translate(cx, cy);
+            rotate(o.rot * 90);
+            if (modules[o.type] && modules[o.type].width > 1) {
+                image(modules[o.type], offX, offY, dims.len * esc, dims.wid * esc);
+            } else {
+                fill(0); noStroke(); rectMode(CENTER);
+                rect(offX, offY, dims.len * esc, dims.wid * esc);
+            }
+            pop();
+        }
+    }
+    drawingContext.restore();
     pop();
+}
+
+// O rato está sobre a faixa da pré-visualização?
+function sobreFaixaPreview() {
+    if (!showWordPreview) return false;
+    var b = getPreviewBounds();
+    return mouseX >= b.x && mouseX <= b.x + b.w && mouseY >= b.y && mouseY <= b.y + b.h;
 }
 
 // Abre com as letras que já existem, para haver logo algo a ver
@@ -4145,6 +4326,15 @@ function abrirPreview() {
         }
         previewText = desenhadas;
     }
+    var el = garantirCampoPreview();
+    el.value = previewText;
+    posicionarCampoPreview();
+    setTimeout(function () { el.focus(); el.select(); }, 0);
+}
+
+function fecharPreview() {
+    showWordPreview = false;
+    if (previewInput) { previewInput.blur(); posicionarCampoPreview(); }
 }
 
 // --- GUARDAR AUTOMATICAMENTE -----------------------------------------------
@@ -4198,6 +4388,7 @@ function guardarTrabalho() {
             artboard: currentArtboardIdx,
             landscape: isLandscape,
             letra: currentChar,
+            ref: letraReferencia,
             chars: chars
         }));
         autosaveOK = true;
@@ -4220,6 +4411,7 @@ function recuperarTrabalho() {
         }
         if (typeof d.artboard === 'number') currentArtboardIdx = d.artboard;
         if (typeof d.landscape === 'boolean') isLandscape = d.landscape;
+        letraReferencia = (d.ref && storedCharacters[d.ref]) ? d.ref : null;
         updateArtboardBounds();
 
         var letra = (d.letra && storedCharacters[d.letra]) ? d.letra : 'A';
@@ -4245,24 +4437,33 @@ function verificarAutosave() {
 function desenharAvisoRecuperado() {
     if (avisoRecuperado <= 0) return;
     avisoRecuperado--;
+    if (showShortcutsModal) return;   // como a contagem: não flutua sobre o manual
 
     var opacidade = min(255, avisoRecuperado * 4);   // desvanece no fim
     var texto = 'Work recovered from your last session';
+    var meiaAltura = 14 * globalScale;
+    // Ao centro, em baixo: é uma nota sobre o desenho todo, não sobre um canto.
+    var base = showWordPreview ? getPreviewBounds().y : height;
+    desenharPilula(texto, width / 2, base - meiaAltura - 22 * globalScale,
+                   [0, 200, 0, opacidade * 0.12], [0, 150, 0, opacidade]);
+}
 
+// Formato comum das notas flutuantes: cápsula com fundo suave e texto ao
+// centro. Partilhado para a contagem e o aviso ficarem visualmente irmãos.
+function desenharPilula(texto, cx, cy, corFundo, corTexto, opcoes) {
+    opcoes = opcoes || {};
     push();
-    textSize(11 * globalScale); textStyle(NORMAL);
-    var largura = textWidth(texto) + 24 * globalScale;
+    textSize(11 * globalScale); textStyle(NORMAL); textAlign(CENTER, CENTER);
+    var largura = max(textWidth(texto) + 24 * globalScale, opcoes.largura || 0);
     var altura = 28 * globalScale;
-    var cx = width - largura / 2 - 12 * globalScale;
-    var cy = height - altura / 2 - 30 * globalScale;
-
-    noStroke(); rectMode(CENTER);
-    fill(0, 200, 0, opacidade * 0.12);
+    rectMode(CENTER);
+    if (opcoes.contorno) { stroke(opcoes.contorno); strokeWeight(0.75); } else noStroke();
+    fill(corFundo);
     rect(cx, cy, largura, altura, 6 * globalScale);
-    fill(0, 150, 0, opacidade);
-    textAlign(CENTER, CENTER);
+    noStroke(); fill(corTexto);
     text(texto, cx, cy);
     pop();
+    return { w: largura, h: altura };
 }
 
 // Abre o manual só na primeira vez que cada pessoa entra na plataforma.
@@ -4291,22 +4492,18 @@ function keyPressed(event) {
     // O Cmd+C/Cmd+V é tratado à parte, num listener próprio — ver mais abaixo.
     if (event && (event.metaKey || event.ctrlKey)) return;
 
-    // Com a pré-visualização aberta, o teclado escreve o texto de teste
+    // Com o cursor dentro da caixa de texto, o teclado é todo dela: escrever
+    // "r" escreve um r, e o Cmd+A seleciona o texto — não os módulos.
+    if (previewInputTemFoco()) return;
+
+    // Faixa aberta, mas a escrever fora dela: as setas afinam o espaçamento
+    // enquanto o rato estiver sobre a faixa; ESC fecha-a.
     if (showWordPreview) {
-        if (keyCode === ESCAPE) { showWordPreview = false; return false; }
-        if (keyCode === BACKSPACE || keyCode === DELETE) {
-            previewText = previewText.slice(0, -1);
-            return false;
+        if (keyCode === ESCAPE) { fecharPreview(); return false; }
+        if (sobreFaixaPreview()) {
+            if (keyCode === LEFT_ARROW) { previewSpacing = max(0, previewSpacing - 1); return false; }
+            if (keyCode === RIGHT_ARROW) { previewSpacing = min(12, previewSpacing + 1); return false; }
         }
-        if (keyCode === LEFT_ARROW) { previewSpacing = max(0, previewSpacing - 1); return false; }
-        if (keyCode === RIGHT_ARROW) { previewSpacing = min(12, previewSpacing + 1); return false; }
-        // só aceita o que o alfabeto conhece, mais o espaço
-        var ch = (key || '').toUpperCase();
-        if (ch === ' ' || characters.indexOf(ch) !== -1) {
-            if (previewText.length < 40) previewText += ch;
-            return false;
-        }
-        return false;
     }
 
     // Com o manual aberto, as teclas não devem mexer no desenho por trás dele
@@ -4686,7 +4883,9 @@ function colarAreaTransferencia(noSitio) {
 window.addEventListener('keydown', function (e) {
     if (!(e.metaKey || e.ctrlKey)) return;
     if (typeof placedObjects === 'undefined') return;  // p5 ainda a arrancar
-    if (showShortcutsModal || showWordPreview) return; // painéis abertos: nada de atalhos por trás
+    if (showShortcutsModal) return;                    // manual aberto por cima
+    // Cursor na caixa de texto: o Cmd+A, Cmd+C etc. são dela, não do artboard
+    if (previewInputTemFoco()) return;
 
     var tecla = (e.key || '').toLowerCase();
     if (tecla === 'z') {
