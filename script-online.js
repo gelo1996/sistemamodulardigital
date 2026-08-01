@@ -305,7 +305,7 @@ function setup() {
     }
 
     aplicarTipoDeLetraDoSite();
-    mostrarManualNaPrimeiraVisita();
+    iniciarPortao();   // o manual só abre depois do portão
 }
 
 function createRedVersion(img) {
@@ -450,12 +450,14 @@ function draw() {
     }
 
     verificarAutosave();
+    verificarAvaliacao();
     desenharAvisoRecuperado();
 }
 
 function handleInteraction() {
     // Bloqueia o desenho se o manual estiver aberto, ou se o rato estiver
     // sobre a faixa da pré-visualização (fora dela continua tudo a funcionar)
+    if (interfaceBloqueada()) return;
     if (showShortcutsModal) return;
     if (sobreFaixaPreview()) return;
 
@@ -512,6 +514,7 @@ function getHoveredGuide() {
 }
 
 function mousePressed(evento) {
+    if (interfaceBloqueada()) return;
     shiftNoClique = evento ? !!evento.shiftKey : keyIsDown(SHIFT);
     if (mouseButton == LEFT) {
         // A faixa da pré-visualização só apanha os cliques que caem sobre ela;
@@ -2787,6 +2790,7 @@ function drawModules() {
 }
 
 function drawCustomCursor() {
+    if (interfaceBloqueada()) { cursor(ARROW); return; }
     if (showShortcutsModal) { cursor(ARROW); return; } // <-- ADICIONE ESTA LINHA AQUI!
     // A faixa da palavra é zona de leitura, não de desenho: sobre ela o rato
     // volta a ser um rato normal, sem fantasma do módulo por baixo.
@@ -4389,6 +4393,8 @@ function guardarTrabalho() {
             landscape: isLandscape,
             letra: currentChar,
             ref: letraReferencia,
+            participante: participante ? participante.id : null,
+            coorte: participante ? participante.coorte : null,
             chars: chars
         }));
         autosaveOK = true;
@@ -4430,6 +4436,7 @@ function verificarAutosave() {
     if (a === ultimaAssinatura) return;
     ultimaAssinatura = a;
     guardarTrabalho();
+    registarActividade();
 }
 
 // Nota discreta a dizer que o trabalho anterior foi devolvido. Desvanece
@@ -4493,6 +4500,7 @@ function keyPressed(event) {
     if (event && (event.metaKey || event.ctrlKey)) return;
 
     // Com o cursor dentro da caixa de texto, o teclado é todo dela: escrever
+    if (interfaceBloqueada()) return;
     // "r" escreve um r, e o Cmd+A seleciona o texto — não os módulos.
     if (previewInputTemFoco()) return;
 
@@ -4882,6 +4890,7 @@ function colarAreaTransferencia(noSitio) {
 // Este listener próprio não tem esse mecanismo, por isso responde sempre.
 window.addEventListener('keydown', function (e) {
     if (!(e.metaKey || e.ctrlKey)) return;
+    if (interfaceBloqueada()) return;
     if (typeof placedObjects === 'undefined') return;  // p5 ainda a arrancar
     if (showShortcutsModal) return;                    // manual aberto por cima
     // Cursor na caixa de texto: o Cmd+A, Cmd+C etc. são dela, não do artboard
@@ -5136,6 +5145,10 @@ function exportProjectJSON() {
     var projectData = {
         version: "1.0",
         appName: "Plataforma Modular Tipográfica",
+        // Carimbo da coorte: um alfabeto que te chegue por e-mail traz consigo
+        // de que grupo veio, sem teres de perguntar.
+        participante: participante ? participante.id : null,
+        coorte: participante ? participante.coorte : null,
         characters: storedCharacters
     };
 
@@ -5746,6 +5759,13 @@ window.addEventListener('beforeunload', function (e) {
 });
 
 function goToSite() {
+    // Carregar em voltar ao site é a declaração mais clara de "terminei" que
+    // esta ferramenta recebe. Aproveita-se, antes de a pessoa desaparecer.
+    if (podePerguntarAvaliacao() && sessao.letras >= 1) { mostrarAvaliacao(true); return; }
+    sairMesmo();
+}
+
+function sairMesmo() {
     if (!autosaveOK && hasUnsavedWork()) {
         var leave = perguntar("You have work on the canvas that isn't saved.\n\nLeaving now will discard it — use \"Save project (JSON)\" first if you want to keep it.\n\nLeave anyway?");
         if (!leave) return; // fica: a proteção do beforeunload mantém-se ativa
@@ -5847,4 +5867,732 @@ function updateSliderFromMouse() {
         }
         calculateLayout();
     }
+}
+// ===========================================================================
+// PORTÃO DE ENTRADA — código de coorte, consentimentos e questionário
+// ===========================================================================
+// Antes de a ferramenta abrir: identifica-se o grupo, recolhem-se os
+// consentimentos e responde-se ao questionário. Só depois o manual aparece.
+//
+// O formulário é HTML sobreposto ao canvas, não desenhado nele — de outro modo
+// não haveria cursor, seleção nem teclado de sistema nos campos. E como o Cargo
+// esvazia os blocos <style>, todo o CSS é aplicado por JS com !important.
+
+// --- O QUE VAIS QUERER EDITAR ---------------------------------------------
+
+// Códigos de coorte. À esquerda o que a pessoa escreve, à direita a etiqueta
+// que fica nos dados. Acrescentar um grupo é acrescentar uma linha.
+// Nota: isto não é segurança — quem abrir o código-fonte lê a lista. Serve
+// para saber de que grupo veio cada resposta, não para trancar a porta.
+var CODIGOS_COORTE = {
+    'pragma16et': '16ET',
+    'pragmaesmad': 'ESMAD',
+    'pragmateste': 'TESTE'
+};
+
+// Endereço do Web App do Google Apps Script (ver apps-script-respostas.js).
+// Enquanto estiver vazio, as respostas ficam só guardadas no browser.
+var ENDPOINT_RESPOSTAS = 'https://script.google.com/macros/s/AKfycbwl4nbi9HfWLvnrH8WcJJBSTWoq0ts-g_vbhTl-bGi8XnelVowcRfzgnpajpqgeusynrQ/exec';
+
+// Endereço de contacto. Aparece no texto do RGPD e no ecrã do código, para
+// quem chegue sem ele. Num sítio só, para não divergirem.
+var EMAIL_CONTACTO = 'adg@esmad.pt';
+
+// Muda isto sempre que alterares o texto dos consentimentos: fica gravado em
+// cada resposta, para saberes quem aceitou que versão.
+var VERSAO_CONSENTIMENTO = '2026-08-01c';
+
+var CONSENTIMENTOS = [
+    { id: 'rgpd', obrigatorio: true,
+      texto: 'I agree that the information I provide here may be processed for this phd research, under the terms described above.' },
+    { id: 'obra', obrigatorio: true,
+      texto: 'I agree that the letterforms I produce with this tool may be reproduced and discussed in the thesis and in related academic publications.' }
+];
+
+var PERGUNTAS = [
+    { id: 'escola', tipo: 'texto', obrigatoria: true,
+      label: 'School or institution' },
+    { id: 'pais', tipo: 'escolha', obrigatoria: true,
+      label: 'Where are you based?',
+      opcoes: ['Portugal', 'Another country'] },
+    { id: 'idade', tipo: 'numero', obrigatoria: true, min: 10, max: 120,
+      label: 'Age' },
+    { id: 'genero', tipo: 'escolha', obrigatoria: true,
+      label: 'Gender',
+      opcoes: ['Female', 'Male', 'Other', 'Prefer not to say'] },
+    { id: 'grau', tipo: 'escolha', obrigatoria: true,
+      label: 'Level of study',
+      opcoes: ['Secondary school', 'Vocational course',
+               'Bachelor — 1st year', 'Bachelor — 2nd year', 'Bachelor — 3rd year',
+               'Master — 1st year', 'Master — 2nd year', 'PhD',
+               'Not studying right now'] },
+    { id: 'profissao', tipo: 'escolha', obrigatoria: true,
+      label: 'What do you do?',
+      opcoes: ['Student', 'Graphic or communication designer', 'Type designer',
+               'Illustrator', 'Teacher or lecturer', 'Printer or letterpress practitioner',
+               'Artist', 'Architect', 'Other'] },
+    { id: 'comoConheceu', tipo: 'escolha', obrigatoria: true,
+      label: 'How did you hear about Pragmatipo?',
+      opcoes: ['A workshop or class', 'A teacher', 'A friend or colleague',
+               'Social media', 'A talk or conference', 'Found it online', 'Other'] },
+
+    // As tres seguintes partilham a mesma escala de propósito: assim as
+    // respostas comparam-se entre si em vez de serem tres coisas soltas.
+    { id: 'experiencia', tipo: 'escolha', obrigatoria: true,
+      label: 'Have you designed type before?',
+      opcoes: ['Never', 'Once or twice', 'Several times', 'Regularly'] },
+    { id: 'letterpress', tipo: 'escolha', obrigatoria: true,
+      label: 'Have you worked with movable type (letterpress)?',
+      opcoes: ['Never', 'Once or twice', 'Several times', 'Regularly'] },
+    { id: 'stencil', tipo: 'escolha', obrigatoria: true,
+      label: 'Have you used stencils to draw letters?',
+      opcoes: ['Never', 'Once or twice', 'Several times', 'Regularly'] }
+];
+
+var TEXTO_RGPD =
+    'This tool is part of doctoral research on modular letterpress type systems. ' +
+    'The answers below are collected by Ângelo Gonçalves and used only for that research. ' +
+    'No name, e-mail or any other direct identifier is asked for, and your answers are stored under an anonymous code. ' +
+    'Alongside your answers, the research also records how the tool is used — how many times you come back to draw, ' +
+    'how long a session lasts, and how many letters and modules you make. Nothing you type into the tool itself is recorded. ' +
+    'You can ask for your data to be deleted at any time by sending that code to ' + EMAIL_CONTACTO + '.';
+
+// --- ESTADO ----------------------------------------------------------------
+
+var CHAVE_PARTICIPANTE = 'pragmatipo-participante';
+var CHAVE_POR_ENVIAR = 'pragmatipo-por-enviar';
+var portaoAberto = false;
+var participante = null;     // { id, coorte, quando }
+var overlayPortao = null;
+
+// Estilos aplicados por JS com !important: o Cargo esvazia CSS em <style>.
+function estilo(el, props) {
+    for (var k in props) el.style.setProperty(k, props[k], 'important');
+    return el;
+}
+
+function novoIdParticipante() {
+    var s = 'P';
+    for (var i = 0; i < 8; i++) s += '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ'[floor(random(34))];
+    return s;
+}
+
+// --- ENVIO -----------------------------------------------------------------
+// Grava primeiro localmente e só depois tenta enviar. Numa oficina com rede
+// fraca, uma resposta perdida é um participante perdido — por isso o que não
+// sai fica em fila e volta a ser tentado na visita seguinte.
+
+function enfileirarResposta(resposta) {
+    var fila = [];
+    try { fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]'); } catch (e) {}
+    fila.push(resposta);
+    try { localStorage.setItem(CHAVE_POR_ENVIAR, JSON.stringify(fila)); } catch (e) {}
+}
+
+function escoarFila() {
+    if (!ENDPOINT_RESPOSTAS) return;
+    var fila = [];
+    try { fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]'); } catch (e) { return; }
+    if (fila.length === 0) return;
+
+    // Esvazia já: se falhar, volta a entrar. Evita enviar duas vezes o mesmo.
+    try { localStorage.setItem(CHAVE_POR_ENVIAR, '[]'); } catch (e) {}
+    fila.forEach(function (r) {
+        // text/plain não desencadeia preflight, por isso dá para pedir em modo
+        // cors e LER a resposta. Vale a pena: em no-cors, um erro do Apps Script
+        // era indistinguível de sucesso e a resposta perdia-se em silêncio —
+        // péssimo modo de falhar quando o que se perde são dados de investigação.
+        fetch(ENDPOINT_RESPOSTAS, {
+            method: 'POST', mode: 'cors',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(r)
+        })
+        .then(function (resp) {
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return resp.text();
+        })
+        .then(function (texto) {
+            var d = null;
+            try { d = JSON.parse(texto); } catch (e) {}
+            if (!d || !d.ok) throw new Error('resposta inesperada');
+        })
+        .catch(function () { enfileirarResposta(r); });   // volta à fila
+    });
+}
+
+// --- CONSTRUÇÃO DO FORMULÁRIO ---------------------------------------------
+
+function campoBase() {
+    return { 'width': '100%', 'box-sizing': 'border-box', 'font': '400 13px Helvetica, Arial, sans-serif',
+             'color': '#111', 'background': '#fff', 'border': '0.75px solid #ddd',
+             'border-radius': '6px', 'padding': '9px 10px', 'margin': '0', 'outline': 'none' };
+}
+
+function construirPortao() {
+    var ov = document.createElement('div');
+    ov.id = 'pragmatipo-portao';
+    estilo(ov, {
+        'position': 'fixed', 'inset': '0', 'left': '0', 'top': '0',
+        'width': '100%', 'height': '100%', 'z-index': '2147483000',
+        'background': 'rgba(0,0,0,0.55)', 'display': 'flex',
+        'align-items': 'center', 'justify-content': 'center',
+        'overflow': 'auto', 'padding': '24px'
+    });
+
+    var caixa = document.createElement('div');
+    estilo(caixa, {
+        'width': '100%', 'max-width': '520px', 'background': '#fff',
+        'border-radius': '16px', 'padding': '32px', 'box-sizing': 'border-box',
+        'font': '400 13px Helvetica, Arial, sans-serif', 'color': '#111',
+        'max-height': '100%', 'overflow-y': 'auto'
+    });
+    ov.appendChild(caixa);
+    document.body.appendChild(ov);
+    overlayPortao = ov;
+    passoCodigo(caixa);
+    return ov;
+}
+
+function titulo(caixa, t, sub) {
+    caixa.innerHTML = '';
+    var h = document.createElement('div');
+    h.textContent = t;
+    estilo(h, { 'font': '700 26px Helvetica, Arial, sans-serif', 'margin': '0 0 4px' });
+    caixa.appendChild(h);
+    var s = document.createElement('div');
+    s.textContent = sub;
+    estilo(s, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#888', 'margin': '0 0 22px' });
+    caixa.appendChild(s);
+}
+
+function botao(texto) {
+    var b = document.createElement('button');
+    b.textContent = texto;
+    estilo(b, {
+        'width': '100%', 'padding': '12px', 'margin': '18px 0 0', 'cursor': 'pointer',
+        'font': '700 12px Helvetica, Arial, sans-serif', 'color': '#0a0',
+        'background': '#f2fff2', 'border': '0.75px solid #0a0', 'border-radius': '6px'
+    });
+    return b;
+}
+
+function erro(caixa, msg) {
+    var e = document.createElement('div');
+    e.textContent = msg;
+    estilo(e, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#c00', 'margin': '10px 0 0' });
+    caixa.appendChild(e);
+    return e;
+}
+
+// --- PASSO 1: CÓDIGO DE COORTE --------------------------------------------
+
+function passoCodigo(caixa) {
+    titulo(caixa, 'Pragmatipo', 'Enter the code you were given');
+
+    var inp = document.createElement('input');
+    inp.type = 'text'; inp.setAttribute('autocomplete', 'off');
+    inp.setAttribute('placeholder', 'Access code');
+    estilo(inp, campoBase());
+    caixa.appendChild(inp);
+
+    var msg = null;
+    var b = botao('Continue');
+    caixa.appendChild(b);
+
+    // Quem chega sem código não pode ficar num beco: dá-se-lhe para onde escrever.
+    var ajuda = document.createElement('div');
+    estilo(ajuda, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#888',
+                    'margin': '16px 0 0', 'text-align': 'center', 'line-height': '1.5' });
+    ajuda.appendChild(document.createTextNode('No code? Get in touch: '));
+    var lnk = document.createElement('a');
+    lnk.href = 'mailto:' + EMAIL_CONTACTO + '?subject=' + encodeURIComponent('Pragmatipo — access code');
+    lnk.textContent = EMAIL_CONTACTO;
+    estilo(lnk, { 'color': '#0a0', 'text-decoration': 'underline' });
+    ajuda.appendChild(lnk);
+    caixa.appendChild(ajuda);
+
+    function tentar() {
+        var codigo = (inp.value || '').trim().toLowerCase();
+        var coorte = CODIGOS_COORTE[codigo];
+        if (!coorte) {
+            if (!msg) msg = erro(caixa, 'That code is not recognised. Check it and try again.');
+            estilo(inp, { 'border-color': '#c00' });
+            return;
+        }
+        passoFormulario(caixa, coorte);
+    }
+    b.addEventListener('click', tentar);
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') tentar(); });
+    setTimeout(function () { inp.focus(); }, 0);
+}
+
+// --- PASSO 2: CONSENTIMENTOS E QUESTIONÁRIO -------------------------------
+
+function passoFormulario(caixa, coorte) {
+    titulo(caixa, 'Before you start', 'A few questions for the research behind this tool');
+
+    var intro = document.createElement('div');
+    intro.textContent = TEXTO_RGPD;
+    estilo(intro, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#555',
+                    'line-height': '1.55', 'margin': '0 0 22px' });
+    caixa.appendChild(intro);
+
+    // -- perguntas
+    var campos = {};
+    PERGUNTAS.forEach(function (p) {
+        var lbl = document.createElement('label');
+        lbl.textContent = p.label + (p.obrigatoria ? '' : ' (optional)');
+        estilo(lbl, { 'display': 'block', 'font': '700 11px Helvetica, Arial, sans-serif',
+                      'color': '#555', 'margin': '0 0 6px' });
+        caixa.appendChild(lbl);
+
+        var el;
+        if (p.tipo === 'escolha') {
+            el = document.createElement('select');
+            var vazio = document.createElement('option');
+            vazio.value = ''; vazio.textContent = '—';
+            el.appendChild(vazio);
+            p.opcoes.forEach(function (o) {
+                var op = document.createElement('option');
+                op.value = o; op.textContent = o;
+                el.appendChild(op);
+            });
+        } else {
+            el = document.createElement('input');
+            el.type = (p.tipo === 'numero') ? 'number' : 'text';
+            if (p.min != null) el.min = p.min;
+            if (p.max != null) el.max = p.max;
+            el.setAttribute('autocomplete', 'off');
+        }
+        estilo(el, campoBase());
+        estilo(el, { 'margin': '0 0 16px' });
+        caixa.appendChild(el);
+        campos[p.id] = el;
+    });
+
+    // -- consentimentos, um a um e não num "aceito tudo"
+    var caixasConsent = {};
+    CONSENTIMENTOS.forEach(function (c) {
+        var linha = document.createElement('label');
+        estilo(linha, { 'display': 'flex', 'gap': '10px', 'align-items': 'flex-start',
+                        'margin': '0 0 12px', 'cursor': 'pointer',
+                        'font': '400 12px Helvetica, Arial, sans-serif',
+                        'color': '#333', 'line-height': '1.5' });
+        var chk = document.createElement('input');
+        chk.type = 'checkbox';
+        estilo(chk, { 'margin': '2px 0 0', 'flex': '0 0 auto', 'width': '15px', 'height': '15px' });
+        var txt = document.createElement('span');
+        txt.textContent = c.texto;
+        linha.appendChild(chk); linha.appendChild(txt);
+        caixa.appendChild(linha);
+        caixasConsent[c.id] = chk;
+    });
+
+    var msg = null;
+    var b = botao('Start drawing');
+    caixa.appendChild(b);
+
+    b.addEventListener('click', function () {
+        var respostas = {}, faltam = [];
+        PERGUNTAS.forEach(function (p) {
+            var v = (campos[p.id].value || '').trim();
+            if (p.obrigatoria && !v) faltam.push(p.label);
+            if (p.tipo === 'numero' && v) {
+                var n = parseInt(v, 10);
+                if (isNaN(n) || (p.min != null && n < p.min) || (p.max != null && n > p.max)) faltam.push(p.label);
+            }
+            respostas[p.id] = v;
+        });
+        var faltaConsentir = false;
+        CONSENTIMENTOS.forEach(function (c) {
+            if (c.obrigatorio && !caixasConsent[c.id].checked) faltaConsentir = true;
+            respostas['consent_' + c.id] = !!caixasConsent[c.id].checked;
+        });
+        // Uma menção só, por muitas caixas que faltem assinalar.
+        if (faltaConsentir) faltam.push('the agreements above');
+        if (faltam.length) {
+            if (msg) msg.remove();
+            msg = erro(caixa, 'Still missing: ' + faltam.join(', '));
+            return;
+        }
+        concluirPortao(coorte, respostas);
+    });
+}
+
+// --- CONCLUSÃO -------------------------------------------------------------
+
+function concluirPortao(coorte, respostas) {
+    participante = { id: novoIdParticipante(), coorte: coorte, quando: new Date().toISOString() };
+
+    var registo = {
+        participante: participante.id,
+        coorte: coorte,
+        quando: participante.quando,
+        versaoConsentimento: VERSAO_CONSENTIMENTO,
+        ecra: window.innerWidth + 'x' + window.innerHeight,   // não as globais do p5
+        idioma: navigator.language || ''
+    };
+    for (var k in respostas) registo[k] = respostas[k];
+
+    enfileirarResposta(registo);   // guardar antes de enviar, sempre
+    escoarFila();
+
+    try { localStorage.setItem(CHAVE_PARTICIPANTE, JSON.stringify(participante)); } catch (e) {}
+
+    abrirPortao();
+}
+
+function abrirPortao() {
+    portaoAberto = true;
+    if (overlayPortao) { overlayPortao.remove(); overlayPortao = null; }
+    iniciarSessao();
+    mostrarManualNaPrimeiraVisita();
+}
+
+// Chamado no setup(). Quem já respondeu não volta a ser interrogado.
+function iniciarPortao() {
+    try {
+        var guardado = JSON.parse(localStorage.getItem(CHAVE_PARTICIPANTE) || 'null');
+        if (guardado && guardado.id) {
+            participante = guardado;
+            portaoAberto = true;
+            escoarFila();            // resgata respostas que não chegaram a sair
+            iniciarSessao();
+            mostrarManualNaPrimeiraVisita();
+            return;
+        }
+    } catch (e) {
+        // localStorage bloqueado: pergunta na mesma, e a resposta perde-se ao
+        // fechar. Preferível a deixar entrar sem consentimento.
+    }
+    construirPortao();
+}
+
+// --- SESSÕES ---------------------------------------------------------------
+// Conta quantas vezes cada participante voltou *para desenhar*. Abrir a página
+// e não tocar em nada não conta — senão a métrica media curiosidade, não uso.
+//
+// O resumo vai sendo gravado no browser enquanto se trabalha, e é despachado
+// no fim (sendBeacon) ou, se o separador morrer sem aviso, no arranque
+// seguinte. Assim um crash custa os últimos segundos, não a sessão inteira.
+
+var CHAVE_SESSAO = 'pragmatipo-sessao';
+var CHAVE_N_SESSOES = 'pragmatipo-n-sessoes';
+var sessao = null;
+
+function contarTrabalho() {
+    var letras = 0, modulos = 0;
+    for (var i = 0; i < characters.length; i++) {
+        var c = characters[i];
+        var objs = (c === currentChar) ? placedObjects
+                 : (storedCharacters[c] ? storedCharacters[c].objects : []);
+        if (objs && objs.length) { letras++; modulos += objs.length; }
+    }
+    return { letras: letras, modulos: modulos };
+}
+
+function guardarSessao() {
+    try { localStorage.setItem(CHAVE_SESSAO, JSON.stringify(sessao)); } catch (e) {}
+}
+
+function iniciarSessao() {
+    if (!participante) return;
+
+    // Sessão anterior que ficou por fechar: vai agora, com os últimos números
+    // que chegaram a ser gravados.
+    try {
+        var pendente = JSON.parse(localStorage.getItem(CHAVE_SESSAO) || 'null');
+        if (pendente && pendente.desenhou) enfileirarResposta(pendente);
+    } catch (e) {}
+    try { localStorage.removeItem(CHAVE_SESSAO); } catch (e) {}
+
+    sessao = {
+        tipo: 'sessao',
+        sessaoId: novoIdParticipante(),      // permite despistar duplicados
+        participante: participante.id,
+        coorte: participante.coorte,
+        numero: null,                        // atribuído ao primeiro módulo
+        inicio: new Date().toISOString(),
+        fim: null, segundos: 0,
+        desenhou: false, letras: 0, modulos: 0
+    };
+    escoarFila();
+}
+
+// Chamado quando o trabalho muda de facto. É aqui que a sessão passa a contar.
+function registarActividade() {
+    if (!sessao) return;
+    var t = contarTrabalho();
+    if (t.modulos === 0) return;             // alfabeto vazio não é desenhar
+
+    if (!sessao.desenhou) {
+        sessao.desenhou = true;
+        var n = 0;
+        try { n = parseInt(localStorage.getItem(CHAVE_N_SESSOES) || '0', 10) || 0; } catch (e) {}
+        sessao.numero = n + 1;
+        try { localStorage.setItem(CHAVE_N_SESSOES, String(sessao.numero)); } catch (e) {}
+    }
+    sessao.fim = new Date().toISOString();
+    sessao.segundos = Math.round((Date.now() - Date.parse(sessao.inicio)) / 1000);
+    sessao.letras = t.letras;
+    sessao.modulos = t.modulos;
+    ultimaActividade = Date.now();
+    guardarSessao();
+}
+
+// pagehide dispara onde o unload já não é de fiar (Safari, iOS, bfcache).
+window.addEventListener('pagehide', function () {
+    if (!sessao || !sessao.desenhou || !ENDPOINT_RESPOSTAS) return;
+    try {
+        var corpo = new Blob([JSON.stringify(sessao)], { type: 'text/plain;charset=utf-8' });
+        if (navigator.sendBeacon(ENDPOINT_RESPOSTAS, corpo)) {
+            localStorage.removeItem(CHAVE_SESSAO);   // entregue, não repetir
+        }
+    } catch (e) {
+        // fica em CHAVE_SESSAO e segue no arranque seguinte
+    }
+});
+
+// ===========================================================================
+// AVALIAÇÃO NO FIM DA SESSÃO
+// ===========================================================================
+// Caracterizar quem usa a ferramenta é metade; a outra metade é saber se ela
+// funcionou. Isto pergunta-o uma vez, depois de a pessoa ter mesmo trabalhado.
+//
+// Nunca interrompe a meio: só aparece com a pessoa parada, ou quando ela
+// própria decide sair. Um questionário no meio de um traço estraga
+// precisamente a experiência que se quer medir.
+
+// --- O QUE VAIS QUERER EDITAR ---------------------------------------------
+
+var AVALIACAO_MIN_LETRAS = 2;            // trabalho mínimo para valer a pena perguntar
+var AVALIACAO_MIN_SEGUNDOS = 180;        // e tempo mínimo na sessão
+var AVALIACAO_PARADO_SEGUNDOS = 45;      // quanto tempo sem mexer conta como "parou"
+
+var PERGUNTAS_SAIDA = [
+    { id: 'facilidade', tipo: 'escala',
+      label: 'How easy was it to build letters from the modules?',
+      extremos: ['Very hard', 'Very easy'] },
+    { id: 'restricao', tipo: 'escala',
+      label: 'The fixed set of modules felt…',
+      extremos: ['Limiting', 'Generative'] },
+    { id: 'usaria', tipo: 'escala',
+      label: 'Would you use Pragmatipo in future projects or studies?',
+      extremos: ['Very unlikely', 'Very likely'] },
+    { id: 'comentario', tipo: 'longo', obrigatoria: false,
+      label: 'Anything you would change, or that surprised you?' }
+];
+
+// --- ESTADO ----------------------------------------------------------------
+
+var CHAVE_AVALIACAO = 'pragmatipo-avaliacao';
+var avaliacaoAberta = false;
+var avaliacaoVistaNestaSessao = false;
+var ultimaActividade = Date.now();
+var overlayAvaliacao = null;
+var sairDepoisDeAvaliar = false;
+
+// A ferramenta está trancada — pelo portão ou pela avaliação?
+function interfaceBloqueada() { return !portaoAberto || avaliacaoAberta; }
+
+function jaAvaliou() {
+    try { return !!localStorage.getItem(CHAVE_AVALIACAO); } catch (e) { return false; }
+}
+
+function podePerguntarAvaliacao() {
+    if (avaliacaoAberta || avaliacaoVistaNestaSessao) return false;
+    if (!portaoAberto || showShortcutsModal || showWordPreview) return false;
+    if (!sessao || !sessao.desenhou) return false;
+    return !jaAvaliou();
+}
+
+// Corre a cada segundo. Espera por trabalho suficiente e por uma pausa.
+function verificarAvaliacao() {
+    if (frameCount % 60 !== 0) return;
+    if (!podePerguntarAvaliacao()) return;
+    if (sessao.letras < AVALIACAO_MIN_LETRAS) return;
+    var decorridos = (Date.now() - Date.parse(sessao.inicio)) / 1000;
+    if (decorridos < AVALIACAO_MIN_SEGUNDOS) return;
+    if ((Date.now() - ultimaActividade) / 1000 < AVALIACAO_PARADO_SEGUNDOS) return;
+    mostrarAvaliacao(false);
+}
+
+// --- O ECRÃ ----------------------------------------------------------------
+
+function escalaDeCinco(caixa, pergunta, guardar) {
+    var lbl = document.createElement('div');
+    lbl.textContent = pergunta.label;
+    estilo(lbl, { 'font': '700 11px Helvetica, Arial, sans-serif', 'color': '#555',
+                  'margin': '0 0 8px' });
+    caixa.appendChild(lbl);
+
+    var fila = document.createElement('div');
+    estilo(fila, { 'display': 'flex', 'gap': '6px', 'margin': '0 0 6px' });
+    var botoes = [];
+    for (var i = 1; i <= 5; i++) {
+        (function (n) {
+            var b = document.createElement('button');
+            b.textContent = n;
+            estilo(b, { 'flex': '1 1 0', 'padding': '11px 0', 'cursor': 'pointer',
+                        'font': '700 13px Helvetica, Arial, sans-serif', 'color': '#555',
+                        'background': '#fff', 'border': '0.75px solid #ddd',
+                        'border-radius': '6px' });
+            b.addEventListener('click', function () {
+                guardar(n);
+                botoes.forEach(function (o, idx) {
+                    var sel = (idx + 1) === n;
+                    estilo(o, { 'background': sel ? '#f2fff2' : '#fff',
+                                'border-color': sel ? '#0a0' : '#ddd',
+                                'color': sel ? '#0a0' : '#555' });
+                });
+            });
+            fila.appendChild(b); botoes.push(b);
+        })(i);
+    }
+    caixa.appendChild(fila);
+
+    var extremos = document.createElement('div');
+    estilo(extremos, { 'display': 'flex', 'justify-content': 'space-between',
+                       'font': '400 11px Helvetica, Arial, sans-serif',
+                       'color': '#999', 'margin': '0 0 20px' });
+    var e1 = document.createElement('span'); e1.textContent = pergunta.extremos[0];
+    var e2 = document.createElement('span'); e2.textContent = pergunta.extremos[1];
+    extremos.appendChild(e1); extremos.appendChild(e2);
+    caixa.appendChild(extremos);
+}
+
+function mostrarAvaliacao(aoSair) {
+    avaliacaoAberta = true;
+    avaliacaoVistaNestaSessao = true;
+    sairDepoisDeAvaliar = !!aoSair;
+
+    var ov = document.createElement('div');
+    ov.id = 'pragmatipo-avaliacao';
+    estilo(ov, { 'position': 'fixed', 'left': '0', 'top': '0', 'width': '100%',
+                 'height': '100%', 'z-index': '2147483000',
+                 'background': 'rgba(0,0,0,0.55)', 'display': 'flex',
+                 'align-items': 'center', 'justify-content': 'center',
+                 'overflow': 'auto', 'padding': '24px' });
+
+    var caixa = document.createElement('div');
+    estilo(caixa, { 'width': '100%', 'max-width': '480px', 'background': '#fff',
+                    'border-radius': '16px', 'padding': '32px', 'box-sizing': 'border-box',
+                    'font': '400 13px Helvetica, Arial, sans-serif', 'color': '#111',
+                    'max-height': '100%', 'overflow-y': 'auto' });
+    ov.appendChild(caixa);
+    document.body.appendChild(ov);
+    overlayAvaliacao = ov;
+
+    // Contada a partir da lista: acrescentar perguntas não deixa a legenda a mentir.
+    var numeros = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six'];
+    var quantas = numeros[PERGUNTAS_SAIDA.length] || 'A few';
+    titulo(caixa, 'How did it go?',
+           quantas + ' quick questions — they help the research more than you think');
+
+    var respostas = {};
+    PERGUNTAS_SAIDA.forEach(function (p) {
+        if (p.tipo === 'escala') {
+            escalaDeCinco(caixa, p, function (v) { respostas[p.id] = v; });
+        } else {
+            var lbl = document.createElement('div');
+            lbl.textContent = p.label;
+            estilo(lbl, { 'font': '700 11px Helvetica, Arial, sans-serif',
+                          'color': '#555', 'margin': '0 0 8px' });
+            caixa.appendChild(lbl);
+            var ta = document.createElement('textarea');
+            ta.rows = 3;
+            estilo(ta, campoBase());
+            estilo(ta, { 'resize': 'vertical', 'margin': '0 0 4px',
+                         'font': '400 13px Helvetica, Arial, sans-serif' });
+            caixa.appendChild(ta);
+            respostas['_campo_' + p.id] = ta;
+        }
+    });
+
+    var b = botao('Send');
+    caixa.appendChild(b);
+
+    var depois = document.createElement('div');
+    depois.textContent = 'Not now';
+    estilo(depois, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#999',
+                     'text-align': 'center', 'margin': '14px 0 0', 'cursor': 'pointer' });
+    caixa.appendChild(depois);
+
+    b.addEventListener('click', function () {
+        var registo = {
+            tipo: 'avaliacao',
+            participante: participante ? participante.id : null,
+            coorte: participante ? participante.coorte : null,
+            sessao: sessao ? sessao.numero : null,
+            quando: new Date().toISOString(),
+            minutos: sessao ? Math.round((Date.now() - Date.parse(sessao.inicio)) / 60000) : null,
+            letras: sessao ? sessao.letras : null,
+            modulos: sessao ? sessao.modulos : null
+        };
+        PERGUNTAS_SAIDA.forEach(function (p) {
+            registo[p.id] = (p.tipo === 'escala')
+                ? (respostas[p.id] || '')
+                : (respostas['_campo_' + p.id].value || '').trim();
+        });
+        enfileirarResposta(registo);
+        escoarFila();
+        try { localStorage.setItem(CHAVE_AVALIACAO, '1'); } catch (e) {}
+        mostrarAgradecimento(caixa);
+    });
+
+    // Adiar não é recusar: volta a aparecer numa sessão seguinte.
+    depois.addEventListener('click', fecharAvaliacao);
+}
+
+function fecharAvaliacao() {
+    avaliacaoAberta = false;
+    if (overlayAvaliacao) { overlayAvaliacao.remove(); overlayAvaliacao = null; }
+    if (sairDepoisDeAvaliar) { sairDepoisDeAvaliar = false; sairMesmo(); }
+}
+
+// Depois de responder. É também o único momento em que o participante vê o
+// código dele — e é o código que lhe permite pedir a eliminação dos dados
+// mais tarde, por isso não se mostra em passagem nem se fecha sozinho.
+function mostrarAgradecimento(caixa) {
+    titulo(caixa, 'Thank you', 'That is more useful to the research than it looks');
+
+    var p = document.createElement('div');
+    p.textContent = 'Your answers go into a doctoral study on modular letterpress ' +
+                    'type systems. Nothing you drew has been sent anywhere — only ' +
+                    'the answers and a count of what you made.';
+    estilo(p, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#555',
+                'line-height': '1.55', 'margin': '0 0 22px' });
+    caixa.appendChild(p);
+
+    var rotulo = document.createElement('div');
+    rotulo.textContent = 'Your anonymous code';
+    estilo(rotulo, { 'font': '700 11px Helvetica, Arial, sans-serif',
+                     'color': '#555', 'margin': '0 0 6px' });
+    caixa.appendChild(rotulo);
+
+    var codigo = document.createElement('div');
+    codigo.textContent = participante ? participante.id : '—';
+    estilo(codigo, { 'font': '700 20px Helvetica, Arial, sans-serif', 'color': '#0a0',
+                     'letter-spacing': '1px', 'text-align': 'center',
+                     'background': '#f2fff2', 'border': '0.75px solid #0a0',
+                     'border-radius': '6px', 'padding': '14px', 'margin': '0 0 10px',
+                     'user-select': 'all' });
+    caixa.appendChild(codigo);
+
+    var nota = document.createElement('div');
+    estilo(nota, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#888',
+                   'line-height': '1.55', 'margin': '0 0 4px' });
+    nota.appendChild(document.createTextNode('Write it down if you may want your data removed later. Send it to '));
+    var lnk = document.createElement('a');
+    lnk.href = 'mailto:' + EMAIL_CONTACTO + '?subject=' +
+               encodeURIComponent('Pragmatipo — remove my data');
+    lnk.textContent = EMAIL_CONTACTO;
+    estilo(lnk, { 'color': '#0a0', 'text-decoration': 'underline' });
+    nota.appendChild(lnk);
+    nota.appendChild(document.createTextNode(' and it is deleted.'));
+    caixa.appendChild(nota);
+
+    var b = botao(sairDepoisDeAvaliar ? 'Back to the site' : 'Back to drawing');
+    caixa.appendChild(b);
+    b.addEventListener('click', fecharAvaliacao);
 }
