@@ -5929,6 +5929,7 @@ function updateSliderFromMouse() {
 // para saber de que grupo veio cada resposta, não para trancar a porta.
 var CODIGOS_COORTE = {
     'pragmatipo-teste': 'TESTE',
+    'pragmatipo-angelo': 'Angelo',    
     'pragmatipo-16et': '16ET',
     'pragmatipo-esmad': 'ESMAD',
     'pragmatipo-diadaesmad': 'ESMAD'
