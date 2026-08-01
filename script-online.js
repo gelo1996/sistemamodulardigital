@@ -6069,7 +6069,7 @@ function escoarFila() {
 // --- CONSTRUÇÃO DO FORMULÁRIO ---------------------------------------------
 
 function campoBase() {
-    return { 'width': '100%', 'box-sizing': 'border-box', 'font': '400 13px Helvetica, Arial, sans-serif',
+    return { 'width': '100%', 'box-sizing': 'border-box', 'font': '400 13px \'Marist Variable\', Helvetica, Arial, sans-serif',
              'color': '#111', 'background': '#fff', 'border': '0.75px solid #ddd',
              'border-radius': '6px', 'padding': '9px 10px', 'margin': '0', 'outline': 'none' };
 }
@@ -6089,7 +6089,7 @@ function construirPortao() {
     estilo(caixa, {
         'width': '100%', 'max-width': '520px', 'background': '#fff',
         'border-radius': '16px', 'padding': '32px', 'box-sizing': 'border-box',
-        'font': '400 13px Helvetica, Arial, sans-serif', 'color': '#111',
+        'font': '400 13px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#111',
         'max-height': '100%', 'overflow-y': 'auto'
     });
     ov.appendChild(caixa);
@@ -6103,11 +6103,11 @@ function titulo(caixa, t, sub) {
     caixa.innerHTML = '';
     var h = document.createElement('div');
     h.textContent = t;
-    estilo(h, { 'font': '700 26px Helvetica, Arial, sans-serif', 'margin': '0 0 4px' });
+    estilo(h, { 'font': '700 26px \'Marist Variable\', Helvetica, Arial, sans-serif', 'margin': '0 0 4px' });
     caixa.appendChild(h);
     var s = document.createElement('div');
     s.textContent = sub;
-    estilo(s, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#888', 'margin': '0 0 22px' });
+    estilo(s, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#888', 'margin': '0 0 22px' });
     caixa.appendChild(s);
 }
 
@@ -6116,7 +6116,7 @@ function botao(texto) {
     b.textContent = texto;
     estilo(b, {
         'width': '100%', 'padding': '12px', 'margin': '18px 0 0', 'cursor': 'pointer',
-        'font': '700 12px Helvetica, Arial, sans-serif', 'color': '#0a0',
+        'font': '700 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#0a0',
         'background': '#f2fff2', 'border': '0.75px solid #0a0', 'border-radius': '6px'
     });
     return b;
@@ -6125,7 +6125,7 @@ function botao(texto) {
 function erro(caixa, msg) {
     var e = document.createElement('div');
     e.textContent = msg;
-    estilo(e, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#c00', 'margin': '10px 0 0' });
+    estilo(e, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#c00', 'margin': '10px 0 0' });
     caixa.appendChild(e);
     return e;
 }
@@ -6147,7 +6147,7 @@ function passoCodigo(caixa) {
 
     // Quem chega sem código não pode ficar num beco: dá-se-lhe para onde escrever.
     var ajuda = document.createElement('div');
-    estilo(ajuda, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#888',
+    estilo(ajuda, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#888',
                     'margin': '16px 0 0', 'text-align': 'center', 'line-height': '1.5' });
     ajuda.appendChild(document.createTextNode('No code? Get in touch: '));
     var lnk = document.createElement('a');
@@ -6179,7 +6179,7 @@ function passoFormulario(caixa, coorte) {
 
     var intro = document.createElement('div');
     intro.textContent = TEXTO_RGPD;
-    estilo(intro, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#555',
+    estilo(intro, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
                     'line-height': '1.55', 'margin': '0 0 22px' });
     caixa.appendChild(intro);
 
@@ -6188,7 +6188,7 @@ function passoFormulario(caixa, coorte) {
     PERGUNTAS.forEach(function (p) {
         var lbl = document.createElement('label');
         lbl.textContent = p.label + (p.obrigatoria ? '' : ' (optional)');
-        estilo(lbl, { 'display': 'block', 'font': '700 11px Helvetica, Arial, sans-serif',
+        estilo(lbl, { 'display': 'block', 'font': '700 11px \'Marist Variable\', Helvetica, Arial, sans-serif',
                       'color': '#555', 'margin': '0 0 6px' });
         caixa.appendChild(lbl);
 
@@ -6222,7 +6222,7 @@ function passoFormulario(caixa, coorte) {
         var linha = document.createElement('label');
         estilo(linha, { 'display': 'flex', 'gap': '10px', 'align-items': 'flex-start',
                         'margin': '0 0 12px', 'cursor': 'pointer',
-                        'font': '400 12px Helvetica, Arial, sans-serif',
+                        'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif',
                         'color': '#333', 'line-height': '1.5' });
         var chk = document.createElement('input');
         chk.type = 'checkbox';
@@ -6742,7 +6742,7 @@ function verificarAvaliacao() {
 function escalaDeCinco(caixa, pergunta, guardar) {
     var lbl = document.createElement('div');
     lbl.textContent = pergunta.label;
-    estilo(lbl, { 'font': '700 11px Helvetica, Arial, sans-serif', 'color': '#555',
+    estilo(lbl, { 'font': '700 11px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
                   'margin': '0 0 8px' });
     caixa.appendChild(lbl);
 
@@ -6754,7 +6754,7 @@ function escalaDeCinco(caixa, pergunta, guardar) {
             var b = document.createElement('button');
             b.textContent = n;
             estilo(b, { 'flex': '1 1 0', 'padding': '11px 0', 'cursor': 'pointer',
-                        'font': '700 13px Helvetica, Arial, sans-serif', 'color': '#555',
+                        'font': '700 13px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
                         'background': '#fff', 'border': '0.75px solid #ddd',
                         'border-radius': '6px' });
             b.addEventListener('click', function () {
@@ -6773,7 +6773,7 @@ function escalaDeCinco(caixa, pergunta, guardar) {
 
     var extremos = document.createElement('div');
     estilo(extremos, { 'display': 'flex', 'justify-content': 'space-between',
-                       'font': '400 11px Helvetica, Arial, sans-serif',
+                       'font': '400 11px \'Marist Variable\', Helvetica, Arial, sans-serif',
                        'color': '#999', 'margin': '0 0 20px' });
     var e1 = document.createElement('span'); e1.textContent = pergunta.extremos[0];
     var e2 = document.createElement('span'); e2.textContent = pergunta.extremos[1];
@@ -6797,7 +6797,7 @@ function mostrarAvaliacao(aoSair) {
     var caixa = document.createElement('div');
     estilo(caixa, { 'width': '100%', 'max-width': '480px', 'background': '#fff',
                     'border-radius': '16px', 'padding': '32px', 'box-sizing': 'border-box',
-                    'font': '400 13px Helvetica, Arial, sans-serif', 'color': '#111',
+                    'font': '400 13px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#111',
                     'max-height': '100%', 'overflow-y': 'auto' });
     ov.appendChild(caixa);
     document.body.appendChild(ov);
@@ -6816,14 +6816,14 @@ function mostrarAvaliacao(aoSair) {
         } else {
             var lbl = document.createElement('div');
             lbl.textContent = p.label;
-            estilo(lbl, { 'font': '700 11px Helvetica, Arial, sans-serif',
+            estilo(lbl, { 'font': '700 11px \'Marist Variable\', Helvetica, Arial, sans-serif',
                           'color': '#555', 'margin': '0 0 8px' });
             caixa.appendChild(lbl);
             var ta = document.createElement('textarea');
             ta.rows = 3;
             estilo(ta, campoBase());
             estilo(ta, { 'resize': 'vertical', 'margin': '0 0 4px',
-                         'font': '400 13px Helvetica, Arial, sans-serif' });
+                         'font': '400 13px \'Marist Variable\', Helvetica, Arial, sans-serif' });
             caixa.appendChild(ta);
             respostas['_campo_' + p.id] = ta;
         }
@@ -6834,7 +6834,7 @@ function mostrarAvaliacao(aoSair) {
 
     var depois = document.createElement('div');
     depois.textContent = 'Not now';
-    estilo(depois, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#999',
+    estilo(depois, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#999',
                      'text-align': 'center', 'margin': '14px 0 0', 'cursor': 'pointer' });
     caixa.appendChild(depois);
 
@@ -6881,19 +6881,19 @@ function mostrarAgradecimento(caixa) {
     p.textContent = 'Your answers go into a doctoral study on modular letterpress ' +
                     'type systems. Nothing you drew has been sent anywhere — only ' +
                     'the answers and a count of what you made.';
-    estilo(p, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#555',
+    estilo(p, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
                 'line-height': '1.55', 'margin': '0 0 22px' });
     caixa.appendChild(p);
 
     var rotulo = document.createElement('div');
     rotulo.textContent = 'Your anonymous code';
-    estilo(rotulo, { 'font': '700 11px Helvetica, Arial, sans-serif',
+    estilo(rotulo, { 'font': '700 11px \'Marist Variable\', Helvetica, Arial, sans-serif',
                      'color': '#555', 'margin': '0 0 6px' });
     caixa.appendChild(rotulo);
 
     var codigo = document.createElement('div');
     codigo.textContent = participante ? participante.id : '—';
-    estilo(codigo, { 'font': '700 20px Helvetica, Arial, sans-serif', 'color': '#0a0',
+    estilo(codigo, { 'font': '700 20px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#0a0',
                      'letter-spacing': '1px', 'text-align': 'center',
                      'background': '#f2fff2', 'border': '0.75px solid #0a0',
                      'border-radius': '6px', 'padding': '14px', 'margin': '0 0 10px',
@@ -6901,7 +6901,7 @@ function mostrarAgradecimento(caixa) {
     caixa.appendChild(codigo);
 
     var nota = document.createElement('div');
-    estilo(nota, { 'font': '400 12px Helvetica, Arial, sans-serif', 'color': '#888',
+    estilo(nota, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#888',
                    'line-height': '1.55', 'margin': '0 0 4px' });
     nota.appendChild(document.createTextNode('Write it down if you may want your data removed later. Send it to '));
     var lnk = document.createElement('a');
