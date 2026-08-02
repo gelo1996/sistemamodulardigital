@@ -3808,6 +3808,7 @@ var MANUAL = [
     { t: 'li', s: 'Show or hide the typographic guide lines' },
     { t: 'li', s: 'Their position carries across every artboard' },
     { t: 'li', s: 'Their order cannot be changed \u2014 except for the ascender and cap height, which may sometimes be swapped' },
+    { t: 'li', s: 'They belong to the alphabet, so they are unavailable while the poster is open' },
 
     { t: 'h', s: 'Fit to screen', ic: 'enquadrar' },
     { t: 'li', s: 'Fit everything you have drawn into the visible area' },
@@ -3823,6 +3824,10 @@ var MANUAL = [
     { t: 'h', s: 'Reference ruler' },
     { t: 'li', s: 'The small box in the bottom-right corner shows the letter you are drawing at a reduced size' },
     { t: 'li', s: 'It is there to show how the drawing holds up small — something the magnified grid hides. It appears on its own once the artboard has modules' },
+
+    { t: 'h', s: 'Module count' },
+    { t: 'li', s: 'Above the reference ruler, it counts the modules on the artboard you are on' },
+    { t: 'li', s: 'Both of them step aside on short windows, so they never cover the toolbar' },
 
     { t: 'cat', s: 'Canvas & display' },
 
@@ -3843,6 +3848,13 @@ var MANUAL = [
     { t: 'li', s: 'Portrait: vertical artboard' },
     { t: 'li', s: 'Landscape: horizontal artboard' },
 
+    { t: 'h', s: 'Alphabet / Poster' },
+    { t: 'li', s: 'Sits above the thumbnail list and chooses what you are drawing on' },
+    { t: 'li', s: 'Alphabet: the 36 artboards of the side list, one per character' },
+    { t: 'li', s: 'Poster: a single artboard of its own, for composing with the modules without the result having to be a character. The thumbnails are hidden while it is open; every tool works the same' },
+    { t: 'li', s: 'The poster is kept apart from the alphabet — switching back and forth never mixes the two — and is saved and restored along with it' },
+    { t: 'li', s: 'The alphabet-wide exports and Clear alphabet are not listed while the poster is open, since they do not apply to it' },
+
     { t: 'h', s: '36 side thumbnails' },
     { t: 'li', s: '26 of them correspond to the letters of the Latin alphabet; the remaining 10 to the digits' },
 
@@ -3855,8 +3867,12 @@ var MANUAL = [
 
     { t: 'cat', s: 'Projects & export' },
 
+    { t: 'h', s: 'Export ▾' },
+    { t: 'li', s: 'Top right of the screen. Gathers everything that leaves the tool as a file' },
+    { t: 'li', s: 'Only the entries that apply to what is open are listed: with the poster open, the two alphabet-wide exports are not offered' },
+
     { t: 'h', s: 'Import project', ic: 'importar' },
-    { t: 'li', s: 'Import files previously exported from this tool' },
+    { t: 'li', s: 'Below the two menus. Import files previously exported from this tool' },
     { t: 'sc', k: 'Shift + O', s: 'Open project (JSON)' },
 
     { t: 'h', s: 'Save project', ic: 'guardar' },
@@ -3865,6 +3881,7 @@ var MANUAL = [
 
     { t: 'h', s: 'Export letter (SVG)', ic: 'exportarLetra' },
     { t: 'li', s: 'Export the selected artboard as an SVG file' },
+    { t: 'li', s: 'With the poster open it exports the poster instead' },
     { t: 'sc', k: 'Shift + E', s: 'Export current letter (SVG)' },
 
     { t: 'h', s: 'Export alphabet (SVG)', ic: 'exportarAlfabeto' },
@@ -3885,11 +3902,16 @@ var MANUAL = [
 
     { t: 'cat', s: 'Clearing' },
 
-    { t: 'h', s: 'Clear artboard', ic: 'limparLetra', perigo: true },
-    { t: 'li', s: 'Delete every module on the selected artboard' },
+    { t: 'h', s: 'Clear ▾' },
+    { t: 'li', s: 'Top right, above Export' },
 
-    { t: 'h', s: 'Clear alphabet', ic: 'limparAlfabeto', perigo: true },
-    { t: 'li', s: 'Delete every module on every artboard' }
+    { t: 'h', s: 'Clear this artboard', ic: 'limparLetra', perigo: true },
+    { t: 'li', s: 'Delete every module on the selected artboard. Can be undone' },
+    { t: 'li', s: 'With the poster open it clears the poster, and nothing else' },
+
+    { t: 'h', s: 'Clear entire alphabet', ic: 'limparAlfabeto', perigo: true },
+    { t: 'li', s: 'Delete every module on every artboard. It asks first, and afterwards each letter can only be recovered one at a time' },
+    { t: 'li', s: 'Not offered while the poster is open' }
 ];
 
 // Uma única fonte para as dimensões do modal, para o desenho e a deteção
