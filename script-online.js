@@ -3027,11 +3027,15 @@ function initAllCharacters() {
 
 // Cabeçalho da barra lateral, onde vive o controlo de modo. Fica fora da zona
 // com scroll, para não subir com o alfabeto.
-var ALTURA_CABECALHO_MODO = 46;
+var ALTURA_CABECALHO_MODO = 50;
 function getSeletorModo() {
     var g = (typeof globalScale !== 'undefined') ? globalScale : 1;
-    return { x: sidebarWidth / 2, y: topBarHeight + 23 * g,
-             w: sidebarWidth - 30 * g, h: 30 * g };
+    var gap = 45 * g, inicio = 30 * g, cSize = 34 * g;
+    // Mesma largura e altura do bloco dos thumbnails: três colunas de ponta a
+    // ponta. É a mesma expressão que os botões do rodapé usam, para os três
+    // blocos da barra ficarem alinhados entre si.
+    return { x: inicio + gap, y: topBarHeight + 25 * g,
+             w: (2 * gap) + cSize, h: cSize };
 }
 function getCharTop() { return topBarHeight + ALTURA_CABECALHO_MODO * globalScale; }
 
@@ -3492,7 +3496,10 @@ function drawUI() {
     btnRodarEsq.x = rotBoxCX - rotBoxW / 2 + setaMargem + setaTam / 2;
     btnRodarDir.x = rotBoxCX + rotBoxW / 2 - setaMargem - setaTam / 2;
     btnRodarEsq.y = btnRodarDir.y = ty;
-    btnRodarEsq.w = btnRodarDir.w = setaTam + 8 * globalScale;
+    // O destaque do hover fica quadrado: a altura desenhada é tBoxSize-6, ou
+    // seja 5 de folga acima e abaixo da seta. A largura acompanha, com os
+    // mesmos 5 de cada lado, em vez dos 4 que tinha.
+    btnRodarEsq.w = btnRodarDir.w = setaTam + 10 * globalScale;
     btnRodarEsq.h = btnRodarDir.h = tBoxSize;
 
     var podeRodar = (anguloRot !== null);
