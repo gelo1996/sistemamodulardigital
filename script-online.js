@@ -5325,19 +5325,83 @@ function rodarPelasSetas(direcao) {
 
 
 
+function lerTexto(chave) {
+    try { return localStorage.getItem(chave); } catch (e) { return null; }
+}
+
+function lerNumero(chave) {
+    var v = parseInt(lerTexto(chave) || '0', 10);
+    return isNaN(v) ? 0 : v;
+}
+
+// Um ficheiro importado pode trazer a identidade de quem o exportou. Adotá-la
+// em silêncio seria mau: quem abrisse o ficheiro de um colega passava a contar
+// como esse colega. Por isso pergunta-se — e a resposta "não" fica só com os
+// desenhos, que é o comportamento antigo.
+function adotarIdentidade(data) {
+    var e = data.estadoParticipante;
+    if (!e || !e.participante || !e.participante.id) {
+        // Ficheiro antigo, sem identidade. Quem está preso no portão precisa
+        // de saber porque é que não passou.
+        if (!portaoAberto) {
+            avisar("This file has no participant code — it was saved before that existed. " +
+                   "You will need the access code to continue.");
+        }
+        return;
+    }
+    if (participante && participante.id === e.participante.id) return;
+
+    var texto = participante
+        ? 'This file belongs to participant ' + e.participante.id +
+          '.\n\nContinue as that participant? Your current code (' + participante.id +
+          ') will be replaced on this computer.\n\nChoose Cancel to keep only the drawings.'
+        : 'This file belongs to participant ' + e.participante.id +
+          '.\n\nContinue as that participant on this computer?';
+    if (!perguntar(texto)) return;
+
+    participante = e.participante;
+    usosAcumulados = e.usos || {};
+    usosPorLetra = e.usosPorLetra || {};
+    primeiroCaractere = e.primeiroCaractere || null;
+    try {
+        localStorage.setItem(CHAVE_PARTICIPANTE, JSON.stringify(participante));
+        localStorage.setItem(CHAVE_N_SESSOES, String(e.sessoes || 0));
+        localStorage.setItem(CHAVE_USOS, JSON.stringify(usosAcumulados));
+        localStorage.setItem(CHAVE_USOS_LETRA, JSON.stringify(usosPorLetra));
+        if (primeiroCaractere) localStorage.setItem(CHAVE_PRIMEIRO, primeiroCaractere);
+        if (e.avaliou) localStorage.setItem(CHAVE_AVALIACAO, '1');
+        else localStorage.removeItem(CHAVE_AVALIACAO);
+    } catch (err) {}
+
+    // A sessão pertence a uma pessoa: mudando a pessoa, começa uma sessão
+    // nova. O abrirPortao trata disso — e é também o que faz a importação
+    // funcionar a partir do próprio portão, onde ainda não havia sessão
+    // nenhuma para arrancar.
+    abrirPortao();
+}
+
 function exportProjectJSON() {
     acoes.expProjeto++;
     // 1. GUARDA O ESTADO ATUAL (A linha mágica que faltava!)
     saveCharacter(currentChar);
 
     // 2. Prepara o "pacote" com a memória atual do alfabeto
+    // O ficheiro leva o trabalho E a identidade. É isto que permite continuar
+    // noutro computador sem passar a contar como outra pessoa — e sem os dados
+    // ficarem incoerentes, porque o alfabeto viaja junto com o participante.
     var projectData = {
-        version: "1.0",
+        version: "1.1",
         appName: "Plataforma Modular Tipográfica",
-        // Carimbo da coorte: um alfabeto que te chegue por e-mail traz consigo
-        // de que grupo veio, sem teres de perguntar.
         participante: participante ? participante.id : null,
         coorte: participante ? participante.coorte : null,
+        estadoParticipante: participante ? {
+            participante: participante,
+            sessoes: lerNumero(CHAVE_N_SESSOES),
+            usos: usosAcumulados,
+            usosPorLetra: usosPorLetra,
+            primeiroCaractere: primeiroCaractere,
+            avaliou: !!lerTexto(CHAVE_AVALIACAO)
+        } : null,
         characters: storedCharacters
     };
 
@@ -5401,6 +5465,7 @@ function importProjectJSON() {
                     loadCharacter(currentChar);         // Atualiza a grelha visual
                     calculateLayout();                  // Refaz as matemáticas
                     realinharContagens();               // importar não é colocar
+                    adotarIdentidade(data);             // continuar como a mesma pessoa
                 } else {
                     avisar("This file doesn't look like a valid project for this platform.");
                 }
@@ -6349,6 +6414,20 @@ function passoCodigo(caixa) {
     estilo(lnk, { 'color': '#0a0', 'text-decoration': 'underline' });
     ajuda.appendChild(lnk);
     caixa.appendChild(ajuda);
+
+    // Quem vem de outro computador não devia ter de responder ao questionário
+    // outra vez: o ficheiro do projeto traz a identidade consigo.
+    var vindo = document.createElement('div');
+    estilo(vindo, { 'font': '400 12px ' + PILHA_DE_FONTES, 'color': '#888',
+                    'margin': '10px 0 0', 'text-align': 'center', 'line-height': '1.5' });
+    vindo.appendChild(document.createTextNode('Continuing on another computer? '));
+    var lnkImp = document.createElement('a');
+    lnkImp.href = '#';
+    lnkImp.textContent = 'Import your project file';
+    estilo(lnkImp, { 'color': '#0a0', 'text-decoration': 'underline', 'cursor': 'pointer' });
+    lnkImp.addEventListener('click', function (ev) { ev.preventDefault(); importProjectJSON(); });
+    vindo.appendChild(lnkImp);
+    caixa.appendChild(vindo);
 
     function tentar() {
         var codigo = (inp.value || '').trim().toLowerCase();
