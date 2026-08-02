@@ -11,7 +11,6 @@
 
 (function () {
     // --- O QUE PODES AFINAR ------------------------------------------
-    var INTERVALO = 140;           // ms entre cada peça a aparecer
     var CELULA_MIN = 12;           // limites da célula, em pixels
     var CELULA_MAX = 150;
 
@@ -224,7 +223,7 @@
 
     // --- DESENHO -------------------------------------------------------
     var contentor, colocadas = [], celulaPx = 20, totalCelulas = 1;
-    var temporizadores = [], geracao = 0;
+    var geracao = 0;
 
     function medirGrelha() {
         colunas = Math.max(1, Math.floor(window.innerWidth / celulaPx));
@@ -338,10 +337,6 @@
         colocadas = [];
         ocupadas = {};
         coresUsadas = [];
-        if (temporizadores.length) {
-            temporizadores.forEach(clearTimeout);
-            temporizadores = [];
-        }
 
         // 22 módulos, cada um na versão cheia e na pontilhada.
         var todos = [];
@@ -372,23 +367,23 @@
         calcularCelula();
         medirGrelha();
 
-        pecas.forEach(function (p, indice) {
-            temporizadores.push(setTimeout(function () {
-                if (minhaGeracao !== geracao) return;
-                var l = p.rot % 2 ? p.celulasA : p.celulasL;
-                var a = p.rot % 2 ? p.celulasL : p.celulasA;
-                var lugar = procurarLugar(l, a);
-                if (!lugar) return;              // sem espaço: esta peça não entra
-                p.x = lugar.x; p.y = lugar.y;
-                // Distância ao canto inferior direito, em células. É este par
-                // que sobrevive ao redimensionamento, não o x/y absoluto.
-                p.dx = colunas - (lugar.x + l);
-                p.dy = linhas - (lugar.y + a);
-                marcar(lugar.x, lugar.y, l, a);
-                contentor.appendChild(p.svg);
-                colocadas.push(p);
-                desenhar(p, true);
-            }, indice * INTERVALO));
+        // Colocação de uma vez: primeiro resolve-se a grelha toda, depois
+        // entram todas juntas. A animação de entrada é a mesma, só deixou de
+        // ser escalonada.
+        pecas.forEach(function (p) {
+            var l = p.rot % 2 ? p.celulasA : p.celulasL;
+            var a = p.rot % 2 ? p.celulasL : p.celulasA;
+            var lugar = procurarLugar(l, a);
+            if (!lugar) return;                  // sem espaço: esta peça não entra
+            p.x = lugar.x; p.y = lugar.y;
+            // Distância ao canto inferior direito, em células. É este par que
+            // sobrevive ao redimensionamento, não o x/y absoluto.
+            p.dx = colunas - (lugar.x + l);
+            p.dy = linhas - (lugar.y + a);
+            marcar(lugar.x, lugar.y, l, a);
+            contentor.appendChild(p.svg);
+            colocadas.push(p);
+            desenhar(p, true);
         });
     }
 
