@@ -92,6 +92,15 @@ var collisionMap = [];
 
 var storedCharacters = {};
 var characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+
+// MODO CARTAZ
+// O cartaz tem tela própria, fora do alfabeto. Se partilhasse a tela com uma
+// letra, entrar no modo cartaz destruía o que lá estivesse. E ficando fora do
+// array `characters`, não entra nas contagens do alfabeto — um cartaz não é uma
+// letra e não deve inflacionar as estatísticas.
+var CHAVE_CARTAZ = '@CARTAZ';
+var modoCartaz = false;
+var charAntesDoCartaz = 'A';
 var currentChar = "A";
 
 // Opções e Modos
@@ -329,7 +338,15 @@ function createBlueVersion(img) {
 }
 
 function calculateLayout() {
-    var idealTotalWidth = 1145;
+    // A largura ideal é o que tem MESMO de caber lado a lado, à escala 1:
+    // a paleta de módulos, o intervalo mínimo, os menus e a margem direita.
+    // Era um 1145 fixo, e por isso a escala começava a encolher enquanto ainda
+    // sobravam 24 px de folga — o intervalo nunca chegava ao mínimo, ficava
+    // preso nos 35. Derivado, a folga é consumida primeiro e só depois é que
+    // a interface inteira encolhe.
+    var nModulos = (typeof modules !== 'undefined' && modules.length) ? modules.length : 22;
+    var fimDaPaleta = 30 + (nModulos - 1) * 45 + 34 / 2;
+    var idealTotalWidth = fimDaPaleta + 11 + 100 + 18;   // paleta · intervalo · menu · margem
     globalScale = min(1.0, width / idealTotalWidth);
 
     topBarHeight = 160 * globalScale;
@@ -444,9 +461,12 @@ function draw() {
         if (reg.visivel) contCy = reg.y - 6 * globalScale - meiaAltura - 8 * globalScale;
         else if (showWordPreview) contCy = getPreviewBounds().y - meiaAltura - 8 * globalScale;
         else contCy = height - meiaAltura - 14 * globalScale;
-        desenharPilula('modules: ' + placedObjects.length,
-                       reg.x + reg.tam / 2, contCy, [249, 235], [120],
-                       { largura: reg.tam + 12 * globalScale, contorno: 238 });
+        // Só se desenha se couber abaixo da barra de ferramentas.
+        if (contCy - meiaAltura > topBarHeight + 8 * globalScale) {
+            desenharPilula('modules: ' + placedObjects.length,
+                           reg.x + reg.tam / 2, contCy, [249, 235], [120],
+                           { largura: reg.tam + 12 * globalScale, contorno: 238 });
+        }
     }
 
     verificarAutosave();
@@ -458,6 +478,7 @@ function handleInteraction() {
     // Bloqueia o desenho se o manual estiver aberto, ou se o rato estiver
     // sobre a faixa da pré-visualização (fora dela continua tudo a funcionar)
     if (interfaceBloqueada()) return;
+    if (menuAberto) return;
     if (showShortcutsModal) return;
     if (sobreFaixaPreview()) return;
 
@@ -515,6 +536,13 @@ function getHoveredGuide() {
 
 function mousePressed(evento) {
     if (interfaceBloqueada()) return;
+    // Um menu aberto apanha o próximo clique: fecha-se, e o clique não passa
+    // para o canvas — senão fechar o menu deixava um módulo no artboard.
+    if (menuAberto && !dentroDe(btnClear) && !dentroDe(btnExport)) {
+        fecharMenu();
+        suppressDrawUntilRelease = true;   // este clique fecha, não desenha
+        return;
+    }
     shiftNoClique = evento ? !!evento.shiftKey : keyIsDown(SHIFT);
     if (mouseButton == LEFT) {
         // A faixa da pré-visualização só apanha os cliques que caem sobre ela;
@@ -593,6 +621,12 @@ function mousePressed(evento) {
                 goToSite();
                 return;
             }
+            var sm = getSeletorModo();
+            if (mouseX > sm.x - sm.w / 2 && mouseX < sm.x + sm.w / 2 &&
+                mouseY > sm.y - sm.h / 2 && mouseY < sm.y + sm.h / 2) {
+                definirModoCartaz(mouseX > sm.x);   // metade esquerda = alfabeto
+                return;
+            }
             if (btnPreview.visivel && dentroDe(btnPreview)) {
                 if (showWordPreview) fecharPreview(); else abrirPreview();
                 return;
@@ -616,7 +650,7 @@ function mousePressed(evento) {
                 }
             }
 
-            if (showGuides) {
+            if (showGuides && !modoCartaz) {
                 var hGuide = getHoveredGuide();
                 if (hGuide) { draggedGuide = hGuide; return; }
             }
@@ -2678,7 +2712,7 @@ function drawGrid() {
     }
 
     // 2. GUIAS TIPOGRÁFICAS E LATERAIS
-    if (showGuides) {
+    if (showGuides && !modoCartaz) {
         var guideColors = {
             ascender: [220, 100, 150], capHeight: [180, 120, 200], xHeight: [100, 150, 220],
             baseline: [0, 200, 150], descender: [220, 150, 80], left: [255, 150, 0], right: [255, 150, 0]
@@ -2986,6 +3020,37 @@ function initAllCharacters() {
             storedCharacters[char] = { objects: [], history: [], redoHistory: [] };
         }
     }
+    if (!storedCharacters[CHAVE_CARTAZ]) {
+        storedCharacters[CHAVE_CARTAZ] = { objects: [], history: [], redoHistory: [] };
+    }
+}
+
+// Cabeçalho da barra lateral, onde vive o controlo de modo. Fica fora da zona
+// com scroll, para não subir com o alfabeto.
+var ALTURA_CABECALHO_MODO = 46;
+function getSeletorModo() {
+    var g = (typeof globalScale !== 'undefined') ? globalScale : 1;
+    return { x: sidebarWidth / 2, y: topBarHeight + 23 * g,
+             w: sidebarWidth - 30 * g, h: 30 * g };
+}
+function getCharTop() { return topBarHeight + ALTURA_CABECALHO_MODO * globalScale; }
+
+// Alfabeto + cartaz. Usada onde interessa GRAVAR tudo; as contagens continuam a
+// percorrer só `characters`.
+function listaDeTelas() { return characters.concat([CHAVE_CARTAZ]); }
+
+function definirModoCartaz(ligado) {
+    if (modoCartaz === ligado) return;
+    saveCharacter(currentChar);
+    if (showWordPreview) fecharPreview();   // não faz sentido a compor palavras
+    modoCartaz = ligado;
+    if (ligado) {
+        charAntesDoCartaz = currentChar;
+        loadCharacter(CHAVE_CARTAZ);
+    } else {
+        loadCharacter(charAntesDoCartaz || 'A');
+    }
+    selectedObjects = [];
 }
 
 function saveHistory() {
@@ -3057,6 +3122,36 @@ function isGridEmpty(char) {
 var _cachedGlobalBounds = null;
 var _cachedFrameBounds = -1;
 
+// Caixa que contém uma lista de peças. O alfabeto partilha uma caixa comum,
+// para todas as letras aparecerem à mesma escala nas miniaturas; o cartaz tem
+// de usar a sua, senão é escalado pelas letras e transborda.
+function boundsDosObjectos(listaDeObjs) {
+    var minX = 0, maxX = 0, minY = 0, maxY = 0, hasContent = false;
+    for (var i = 0; i < listaDeObjs.length; i++) {
+        var objs = listaDeObjs[i];
+        if (!objs || objs.length == 0) continue;
+        for (var k = 0; k < objs.length; k++) {
+            var o = objs[k];
+            var dims = getModuleDims(o.type);
+            var v = getFillVectors(o.rot);
+            var p1x = o.x - GRID_CX;
+            var p1y = o.y - GRID_CY;
+            var p2x = p1x + (v.p.x * (dims.len - 1)) + (v.s.x * (dims.wid - 1));
+            var p2y = p1y + (v.p.y * (dims.len - 1)) + (v.s.y * (dims.wid - 1));
+            if (!hasContent) {
+                minX = min(p1x, p2x); maxX = max(p1x, p2x);
+                minY = min(p1y, p2y); maxY = max(p1y, p2y);
+                hasContent = true;
+            } else {
+                minX = min(minX, p1x, p2x); maxX = max(maxX, p1x, p2x);
+                minY = min(minY, p1y, p2y); maxY = max(maxY, p1y, p2y);
+            }
+        }
+    }
+    if (hasContent) { maxX += 1; maxY += 1; }
+    return { minX: minX, maxX: maxX, minY: minY, maxY: maxY, hasContent: hasContent };
+}
+
 function getGlobalBounds() {
     // Re-calcula apenas 1 vez por frame para manter a plataforma rápida
     if (frameCount === _cachedFrameBounds && _cachedGlobalBounds) return _cachedGlobalBounds;
@@ -3103,8 +3198,9 @@ function drawThumbnail(char, x, y, size) {
     var objs = (char == currentChar) ? placedObjects : (storedCharacters[char] ? storedCharacters[char].objects : []);
     if (!objs || objs.length == 0) return;
 
-    // 1. Vai buscar a caixa que contém o alfabeto inteiro
-    var bounds = getGlobalBounds();
+    // O cartaz mede-se por si; as letras partilham a caixa do alfabeto para
+    // aparecerem todas à mesma escala.
+    var bounds = (char === CHAVE_CARTAZ) ? boundsDosObjectos([objs]) : getGlobalBounds();
     if (!bounds.hasContent) return;
 
     var bW = bounds.maxX - bounds.minX;
@@ -3173,7 +3269,7 @@ function checkTopBarClick() {
             if (i == 5) { showSmallGrid = !showSmallGrid; return; }
             if (i == 6) { showCenterV = !showCenterV; return; }
             if (i == 7) { showCenterH = !showCenterH; return; }
-            if (i == 8) { showGuides = !showGuides; return; }
+            if (i == 8) { if (!modoCartaz) showGuides = !showGuides; return; }
             if (i == 9) { fitToScreen(); return; }
             if (i == 10) { undo(); return; }
             if (i == 11) { redo(); return; }
@@ -3233,26 +3329,16 @@ function checkTopBarClick() {
 
     // 4. Botões da Direita (Exportações)
     var rightMargin = width - (35 * globalScale);
-    var idsRow1 = ["importar", "guardar", "eliminar", "eliminarAlfa"];
-    for (var j = 0; j < idsRow1.length; j++) {
-        var rx = rightMargin - (idsRow1.length - 1 - j) * toolGapX;
-        if (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2) {
-            if (idsRow1[j] === "importar") importProjectJSON();
-            if (idsRow1[j] === "guardar") exportProjectJSON();
-            if (idsRow1[j] === "eliminar") { saveHistory(); placedObjects = []; selectedObjects = []; rebuildCollisionMap(); }
-            if (idsRow1[j] === "eliminarAlfa") clearEntireAlphabet();
-            return;
-        }
+    if (dentroDe(btnImport)) { fecharMenu(); importProjectJSON(); return; }
+    if (dentroDe(btnClear)) {
+        if (menuDeQuem === 'clear') { fecharMenu(); return; }
+        abrirMenu('clear', itensLimpar(), btnClear.x + btnClear.w / 2, btnClear.y + btnClear.h / 2 + 6 * globalScale);
+        return;
     }
-    var idsRow2 = ["letra", "alfa", "zip"];
-    for (var j = 0; j < idsRow2.length; j++) {
-        var rx = rightMargin - (idsRow2.length - 1 - j) * toolGapX;
-        if (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2) {
-            if (idsRow2[j] === "letra") exportCharacterSVG(currentChar);
-            if (idsRow2[j] === "alfa") exportAlphabetSVG();
-            if (idsRow2[j] === "zip") exportAlphabetZIP();
-            return;
-        }
+    if (dentroDe(btnExport)) {
+        if (menuDeQuem === 'export') { fecharMenu(); return; }
+        abrirMenu('export', itensExportar(), btnExport.x + btnExport.w / 2, btnExport.y + btnExport.h / 2 + 6 * globalScale);
+        return;
     }
 }
 
@@ -3268,7 +3354,11 @@ function checkSidebarClick() {
     var minSafeHeight = topBarHeight + bottomPanelH + (50 * globalScale);
     var effectiveBottom = max(height, minSafeHeight);
 
-    var charStartY = topBarHeight + 30 * globalScale - alphabetScrollY;
+    // O thumbnail desenha-se a partir do centro: +18 põe o topo dele 9 abaixo
+    // do controlo de modo, que é o mesmo intervalo usado entre os botões do
+    // rodapé. Com menos, subia por cima do controlo.
+    var charStartY = getCharTop() + 18 * globalScale - alphabetScrollY;
+    if (modoCartaz) return;      // não há letras para clicar
 
     for (var i = 0; i < characters.length; i++) {
         var col = i % charCols;
@@ -3277,7 +3367,7 @@ function checkSidebarClick() {
         var y = charStartY + (row * charGapY);
 
         // Verificamos o clique respeitando a base virtual (effectiveBottom)
-        if (mouseY > topBarHeight && mouseY < effectiveBottom - bottomPanelH) {
+        if (mouseY > getCharTop() && mouseY < effectiveBottom - bottomPanelH) {
             if (mouseX > x - cSize / 2 && mouseX < x + cSize / 2 && mouseY > y - cSize / 2 && mouseY < y + cSize / 2) {
                 // Shift fixa a letra como referência em vez de saltar para ela;
                 // repetir no mesmo thumbnail solta-a.
@@ -3317,7 +3407,7 @@ function drawUI() {
         { img: toolIcons.grelhaMenor, active: showSmallGrid, color: [150, 150, 150], tip: "Toggle Grid" },
         { img: toolIcons.centroV, active: showCenterV, color: [150, 50, 255], tip: "Vertical Center" },
         { img: toolIcons.centroH, active: showCenterH, color: [150, 50, 255], tip: "Horizontal Center" },
-        { img: toolIcons.guias, active: showGuides, color: [200, 100, 150], tip: "Typographic Guides" },
+        { img: toolIcons.guias, active: showGuides && !modoCartaz, color: [200, 100, 150], tip: "Typographic Guides", desativado: modoCartaz },
         { img: toolIcons.enquadrar, active: false, color: [100, 100, 100], tip: "Fit to Screen" },
         { img: toolIcons.voltar, active: false, color: [100, 100, 100], tip: "Undo" },
         { img: toolIcons.avancar, active: false, color: [100, 100, 100], tip: "Redo" }
@@ -3327,12 +3417,17 @@ function drawUI() {
     for (var i = 0; i < toolsList.length; i++) {
         var tx = toolStartX + (i * toolGapX);
         var t = toolsList[i];
-        var isH = (mouseX > tx - tBoxSize / 2 && mouseX < tx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2);
+        var isH = !t.desativado && (mouseX > tx - tBoxSize / 2 && mouseX < tx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2);
         if (isH) { activeTooltip = t.tip; tooltipX = tx; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
-        fill(t.active ? color(t.color[0], t.color[1], t.color[2], 30) : (isH ? 235 : 249));
-        stroke(t.active ? color(t.color[0], t.color[1], t.color[2]) : 238);
+        fill(t.desativado ? 252 : (t.active ? color(t.color[0], t.color[1], t.color[2], 30) : (isH ? 235 : 249)));
+        stroke(t.desativado ? 246 : (t.active ? color(t.color[0], t.color[1], t.color[2]) : 238));
         strokeWeight(0.75); rect(tx, ty, tBoxSize, tBoxSize, 6 * globalScale);
-        if (t.img) { tint(t.active ? color(t.color[0], t.color[1], t.color[2]) : (isH ? 40 : 80)); image(t.img, tx, ty, 20 * globalScale, 20 * globalScale); noTint(); }
+        // Desativado: o ícone esmorece, para se ver que não está disponível.
+        if (t.img) {
+            if (t.desativado) tint(255, 55);   // opacidade, não cinzento
+            else tint(t.active ? color(t.color[0], t.color[1], t.color[2]) : (isH ? 40 : 80));
+            image(t.img, tx, ty, 20 * globalScale, 20 * globalScale); noTint();
+        }
     }
 
     // --- SLIDER E ROTAÇÃO (LINHA 1) ---
@@ -3472,23 +3567,31 @@ function drawUI() {
 
     // --- 4. BOTÕES DA DIREITA (DESENHO) ---
     var rightMargin = width - (35 * globalScale);
-    var row1R = [{ id: "importar", img: toolIcons.importar, tip: "Import Project" }, { id: "guardar", img: toolIcons.guardar, tip: "Save Project" }, { id: "eliminar", img: toolIcons.limparLetra, isDestructive: true, tip: "Clear Artboard" }, { id: "eliminarAlfa", img: toolIcons.limparAlfabeto, isDestructive: true, tip: "Clear Alphabet" }];
-    for (var j = 0; j < row1R.length; j++) {
-        var rx = rightMargin - (row1R.length - 1 - j) * toolGapX;
-        var isH = (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2);
-        if (isH) { activeTooltip = row1R[j].tip; tooltipX = rx; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
-        fill(row1R[j].isDestructive ? (isH ? [255, 200, 200] : [255, 230, 230]) : (isH ? [220, 255, 220] : 249));
-        stroke(row1R[j].isDestructive ? [255, 50, 50] : (isH ? [0, 150, 0] : 238)); strokeWeight(0.75); rect(rx, ty, tBoxSize, tBoxSize, 6 * globalScale);
-        if (row1R[j].img) { tint(row1R[j].isDestructive ? [255, 50, 50] : (isH ? 40 : 80)); image(row1R[j].img, rx, ty, 20 * globalScale, 20 * globalScale); noTint(); }
-    }
-    var row2R = [{ id: "letra", img: toolIcons.exportarLetra, tip: "Export letter SVG" }, { id: "alfa", img: toolIcons.exportarAlfabeto, tip: "Export alphabet SVG" }, { id: "zip", img: toolIcons.exportarZip, tip: "Export alphabet ZIP" }];
-    for (var j = 0; j < row2R.length; j++) {
-        var rx = rightMargin - (row2R.length - 1 - j) * toolGapX;
-        var isH = (mouseX > rx - tBoxSize / 2 && mouseX < rx + tBoxSize / 2 && mouseY > my - tBoxSize / 2 && mouseY < my + tBoxSize / 2);
-        if (isH) { activeTooltip = row2R[j].tip; tooltipX = rx; tooltipY = my + tBoxSize / 2 + 15 * globalScale; }
-        fill(isH ? [220, 255, 220] : 249); stroke(isH ? [0, 150, 0] : 238); strokeWeight(0.75); rect(rx, my, tBoxSize, tBoxSize, 6 * globalScale);
-        if (row2R[j].img) { tint(isH ? 40 : 80); image(row2R[j].img, rx, my, 20 * globalScale, 20 * globalScale); noTint(); }
-    }
+    // --- CANTO DIREITO: limpar, exportar e importar ---
+    // Alinhados à direita do ecrã. Mas nunca mais perto do que 11 do conteúdo
+    // à esquerda — o mesmo intervalo que separa dois módulos entre si. Quando
+    // deixa de haver espaço, param de encolher a distância e encostam a esse
+    // mínimo em vez de colarem aos módulos.
+    var larguraMenu = 100 * globalScale;
+    var fimDaPaleta = toolStartX + (modules.length - 1) * toolGapX + tBoxSize / 2;
+    var fimDaLinha1 = toolStartX + (18 * toolGapX) + ((2 * toolGapX) + tBoxSize) / 2;
+    var limiteEsquerdo = max(fimDaPaleta, fimDaLinha1) + 11 * globalScale;
+
+    var esquerdaBotoes = max(width - 35 * globalScale + tBoxSize / 2 - larguraMenu, limiteEsquerdo);
+    var bordaDir = esquerdaBotoes + larguraMenu;
+
+    // Empilhados nas três linhas da barra, todos com a mesma forma. O Import
+    // não leva seta: não abre menu, executa.
+    btnClear.w = larguraMenu; btnClear.h = tBoxSize;
+    btnClear.x = bordaDir - larguraMenu / 2; btnClear.y = ty;
+    btnExport.w = larguraMenu; btnExport.h = tBoxSize;
+    btnExport.x = bordaDir - larguraMenu / 2; btnExport.y = my;
+    btnImport.w = larguraMenu; btnImport.h = tBoxSize;
+    btnImport.x = bordaDir - larguraMenu / 2; btnImport.y = 125 * globalScale;
+
+    desenharBotaoMenu(btnClear, 'Clear', menuDeQuem === 'clear', true, true);
+    desenharBotaoMenu(btnExport, 'Export', menuDeQuem === 'export', false, true);
+    desenharBotaoMenu(btnImport, 'Import', false, false, false);
 
     // --- BARRA LATERAL (ALFABETO EM SCROLL) ---
     fill(249); noStroke(); rectMode(CORNER); rect(0, topBarHeight, sidebarWidth, height - topBarHeight);
@@ -3496,17 +3599,29 @@ function drawUI() {
     var minSafeHeight = topBarHeight + bottomPanelH + (50 * globalScale);
     var effectiveBottom = max(height, minSafeHeight);
 
-    var charTop = topBarHeight;
+    // CONTROLO DE MODO — cartaz ou alfabeto.
+    // O push/pop não é decorativo: aqui o rectMode vem em CORNER do fundo da
+    // barra, e o controlo desenha a contar com CENTER.
+    var sm = getSeletorModo();
+    push();
+    rectMode(CENTER); textAlign(CENTER, CENTER);
+    drawSegmentedControl(sm.x, sm.y, sm.w, sm.h, ['Alphabet', 'Poster'], modoCartaz ? 1 : 0);
+    pop();
+
+    var charTop = getCharTop();
     var availableHForChars = effectiveBottom - charTop - bottomPanelH;
     var charRows = Math.ceil(characters.length / 3);
     // A lista rola até revelar o botão da palavra, que fecha o alfabeto.
     var maxScroll = max(0, (charRows * charGapY + charGapY + 20 * globalScale) - availableHForChars);
     alphabetScrollY = constrain(alphabetScrollY, 0, maxScroll);
-    var charStartY = charTop + 30 * globalScale - alphabetScrollY;
+    var charStartY = charTop + 18 * globalScale - alphabetScrollY;
+
+    // Em modo cartaz não há letras para escolher: a lista inteira desaparece.
+    if (modoCartaz) { btnPreview.visivel = false; }
 
     push(); drawingContext.save(); drawingContext.beginPath(); drawingContext.rect(0, charTop, sidebarWidth, availableHForChars); drawingContext.clip();
     textSize(12 * globalScale); textStyle(NORMAL); rectMode(CENTER);
-    for (var i = 0; i < characters.length; i++) {
+    for (var i = 0; !modoCartaz && i < characters.length; i++) {
         var col = i % 3; var row = floor(i / 3); var x = toolStartX + (col * toolGapX); var y = charStartY + (row * charGapY);
         if (y > charTop - cSize && y < effectiveBottom - bottomPanelH + cSize) {
             var isH = (mouseX > x - cSize / 2 && mouseX < x + cSize / 2 && mouseY > y - cSize / 2 && mouseY < y + cSize / 2 && mouseY > topBarHeight && mouseY < effectiveBottom - bottomPanelH);
@@ -3526,17 +3641,20 @@ function drawUI() {
     btnPreview.w = (2 * toolGapX) + cSize; btnPreview.h = 30 * globalScale;
     btnPreview.x = toolStartX + toolGapX;
     btnPreview.y = charStartY + charRows * charGapY;
-    btnPreview.visivel = (btnPreview.y - btnPreview.h / 2 > topBarHeight &&
+    btnPreview.visivel = !modoCartaz &&
+                         (btnPreview.y - btnPreview.h / 2 > charTop &&
                           btnPreview.y + btnPreview.h / 2 < effectiveBottom - bottomPanelH);
 
     var sobrePreview = !showShortcutsModal && btnPreview.visivel && dentroDe(btnPreview);
     push(); rectMode(CENTER);
+    if (!modoCartaz) {
     fill(showWordPreview ? [220, 255, 220] : (sobrePreview ? 235 : 249));
     stroke(showWordPreview ? [0, 150, 0] : 238); strokeWeight(0.75);
     rect(btnPreview.x, btnPreview.y, btnPreview.w, btnPreview.h, 6 * globalScale);
     noStroke(); fill(showWordPreview ? [0, 150, 0] : (sobrePreview ? 80 : 150));
     textAlign(CENTER, CENTER); textSize(9.5 * globalScale); textStyle(BOLD);
     text('Preview word', btnPreview.x, btnPreview.y);
+    }
     textStyle(NORMAL); pop();
     if (sobrePreview) {
         activeTooltip = "See your letters composed together";
@@ -4004,6 +4122,9 @@ function drawShortcutsModal() {
 // em 'unloaded' e o pedido seria ignorado em silêncio. Daí o fonts.load().
 // Em localhost a fonte não existe: mantém-se o sans-serif por omissão.
 var FONTE_DO_SITE = 'Marist Variable';
+// A mesma família do manual, para os overlays em HTML. No localhost a Marist
+// não existe e cai para a Helvetica, tal como o canvas já cai.
+var PILHA_DE_FONTES = "'" + FONTE_DO_SITE + "', Helvetica, Arial, sans-serif";
 
 function aplicarTipoDeLetraDoSite() {
     if (!document.fonts || !document.fonts.load) return;
@@ -4087,10 +4208,15 @@ function moverSelecao(dx, dy) {
 function getReguaBounds() {
     var tam = 76 * globalScale;
     var margem = 14 * globalScale;
+    var y = height - tam - margem - 18 * globalScale;
+    // Numa janela baixa a régua sobe até entrar na barra de ferramentas.
+    // Meia miniatura tapada é pior do que nenhuma, por isso desaparece.
+    var cabe = (y - 6 * globalScale) > topBarHeight + 8 * globalScale;
     return { tam: tam,
              x: width - tam - margem,
-             y: height - tam - margem - 18 * globalScale,
-             visivel: !showShortcutsModal && !showWordPreview && placedObjects.length > 0 };
+             y: y,
+             cabe: cabe,
+             visivel: cabe && !showShortcutsModal && !showWordPreview && placedObjects.length > 0 };
 }
 
 function desenharReguaReferencia() {
@@ -4395,8 +4521,11 @@ var autosaveOK = true;     // falso se o browser não deixar guardar (janela pri
 // movidas ou rodadas sem ter de serializar tudo a cada segundo.
 function assinaturaDoTrabalho() {
     var s = currentArtboardIdx + (isLandscape ? 'L' : 'P');
-    for (var i = 0; i < characters.length; i++) {
-        var c = characters[i];
+    // O cartaz entra na assinatura, senão desenhar nele nunca disparava o
+    // autosave. Fica fora das contagens, mas não fora da gravação.
+    var telas = listaDeTelas();
+    for (var i = 0; i < telas.length; i++) {
+        var c = telas[i];
         var objs = (c === currentChar) ? placedObjects
                  : (storedCharacters[c] ? storedCharacters[c].objects : []);
         if (!objs || objs.length === 0) continue;
@@ -4412,8 +4541,9 @@ function assinaturaDoTrabalho() {
 function guardarTrabalho() {
     try {
         var chars = {};
-        for (var i = 0; i < characters.length; i++) {
-            var c = characters[i];
+        var telas = listaDeTelas();
+        for (var i = 0; i < telas.length; i++) {
+            var c = telas[i];
             var objs = (c === currentChar) ? placedObjects
                      : (storedCharacters[c] ? storedCharacters[c].objects : []);
             if (objs && objs.length > 0) chars[c] = objs;
@@ -4430,6 +4560,7 @@ function guardarTrabalho() {
             artboard: currentArtboardIdx,
             landscape: isLandscape,
             letra: currentChar,
+            letraAntesDoCartaz: charAntesDoCartaz,
             ref: letraReferencia,
             participante: participante ? participante.id : null,
             coorte: participante ? participante.coorte : null,
@@ -4459,6 +4590,16 @@ function recuperarTrabalho() {
         updateArtboardBounds();
 
         var letra = (d.letra && storedCharacters[d.letra]) ? d.letra : 'A';
+
+        // O modo é DERIVADO da tela que foi gravada, nunca guardado à parte.
+        // Guardado à parte podiam divergir — e divergiam: ao gravar em modo
+        // cartaz, a tela voltava com o cartaz mas a barra dizia "Alphabet".
+        // Assim é impossível estarem em desacordo.
+        modoCartaz = (letra === CHAVE_CARTAZ);
+        charAntesDoCartaz = (d.letraAntesDoCartaz && storedCharacters[d.letraAntesDoCartaz]
+                             && d.letraAntesDoCartaz !== CHAVE_CARTAZ)
+                          ? d.letraAntesDoCartaz : 'A';
+
         loadCharacter(letra);
         return true;
     } catch (e) {
@@ -4489,7 +4630,9 @@ function desenharAvisoRecuperado() {
     var meiaAltura = 14 * globalScale;
     // Ao centro, em baixo: é uma nota sobre o desenho todo, não sobre um canto.
     var base = showWordPreview ? getPreviewBounds().y : height;
-    desenharPilula(texto, width / 2, base - meiaAltura - 22 * globalScale,
+    var cy = base - meiaAltura - 22 * globalScale;
+    if (cy - meiaAltura < topBarHeight + 8 * globalScale) return;   // não cabe
+    desenharPilula(texto, width / 2, cy,
                    [0, 200, 0, opacidade * 0.12], [0, 150, 0, opacidade]);
 }
 
@@ -4573,8 +4716,8 @@ function keyPressed(event) {
     if (key == 'S' && keyIsDown(SHIFT)) exportProjectJSON();
     if (key == 'O' && keyIsDown(SHIFT)) importProjectJSON();
     if (key == 'E' && keyIsDown(SHIFT)) exportCharacterSVG(currentChar);
-    if (key == 'A' && keyIsDown(SHIFT)) exportAlphabetSVG();
-    if (key == 'Z' && keyIsDown(SHIFT)) exportAlphabetZIP();
+    if (key == 'A' && keyIsDown(SHIFT) && !modoCartaz) exportAlphabetSVG();
+    if (key == 'Z' && keyIsDown(SHIFT) && !modoCartaz) exportAlphabetZIP();
 
     if (keyCode == DELETE || keyCode == BACKSPACE) {
         if (selectedModule === -2 || selectedModule === -1) apagarSelecao();
@@ -5277,7 +5420,9 @@ function exportCharacterSVG(charToExport) {
     var objs = storedCharacters[charToExport] ? storedCharacters[charToExport].objects : [];
 
     if (!objs || objs.length === 0) {
-        avisar("The letter '" + charToExport + "' is empty! There is nothing to export.");
+        avisar(charToExport === CHAVE_CARTAZ
+            ? "The poster is empty! There is nothing to export."
+            : "The letter '" + charToExport + "' is empty! There is nothing to export.");
         return;
     }
 
@@ -5394,7 +5539,9 @@ function exportCharacterSVG(charToExport) {
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
-    a.download = "Letra_" + charToExport + "_Vetores.svg";
+    a.download = (charToExport === CHAVE_CARTAZ)
+        ? "Pragmatipo_Cartaz.svg"
+        : "Letra_" + charToExport + "_Vetores.svg";
 
     a.setAttribute("data-no-ajax", "true");
     a.target = "_blank";
@@ -5780,8 +5927,9 @@ function perguntar(mensagem) {
 // --- VOLTAR AO SITE (com aviso de trabalho por guardar) ---
 function hasUnsavedWork() {
     saveCharacter(currentChar); // a letra atual pode ainda não estar na memória
-    for (var i = 0; i < characters.length; i++) {
-        var store = storedCharacters[characters[i]];
+    var telas = listaDeTelas();
+    for (var i = 0; i < telas.length; i++) {
+        var store = storedCharacters[telas[i]];
         if (store && store.objects.length > 0) return true;
     }
     return false;
@@ -6396,7 +6544,7 @@ var CHAVE_N_SESSOES = 'pragmatipo-n-sessoes';
 var sessao = null;
 
 function contarTrabalho() {
-    var letras = 0, numeros = 0, modulos = 0;
+    var letras = 0, numeros = 0, modulos = 0, cartaz = 0;
 
     // Contagem por módulo, com o NOME DO FICHEIRO (00.svg -> "00"), não com a
     // etiqueta da interface. O ficheiro é identificador estável; a etiqueta é
@@ -6414,12 +6562,18 @@ function contarTrabalho() {
     // rende quatro vezes mais ao sistema do que um preso a uma só.
     var porRotacao = {};
 
-    for (var i = 0; i < characters.length; i++) {
-        var c = characters[i];
+    // O cartaz entra nas contagens de módulos — um módulo usado num cartaz foi
+    // usado na mesma — mas não conta como letra nem como número. Fica separado
+    // em `cartaz` e etiquetado nas linhas, para se poder filtrar na análise.
+    var telas = listaDeTelas();
+    for (var i = 0; i < telas.length; i++) {
+        var c = telas[i];
         var objs = (c === currentChar) ? placedObjects
                  : (storedCharacters[c] ? storedCharacters[c].objects : []);
         if (!objs || !objs.length) continue;
-        if (c >= '0' && c <= '9') numeros++; else letras++;
+        if (c === CHAVE_CARTAZ) cartaz += objs.length;
+        else if (c >= '0' && c <= '9') numeros++;
+        else letras++;
         modulos += objs.length;
         for (var k = 0; k < objs.length; k++) {
             var ficheiro = nf(objs[k].type, 2);
@@ -6431,8 +6585,8 @@ function contarTrabalho() {
         }
     }
     return { letras: letras, numeros: numeros, desenhados: letras + numeros,
-             modulos: modulos, porModulo: porModulo, porLetra: porLetra,
-             porRotacao: porRotacao };
+             cartaz: cartaz, modulos: modulos,
+             porModulo: porModulo, porLetra: porLetra, porRotacao: porRotacao };
 }
 
 // Copia uma contagem, para as fotografias não ficarem ligadas à mesma memória.
@@ -6522,7 +6676,7 @@ function iniciarSessao() {
         numero: null,                        // atribuído ao primeiro módulo
         inicio: new Date().toISOString(),
         fim: null, segundos: 0,
-        desenhou: false, letras: 0, numeros: 0, modulos: 0
+        desenhou: false, letras: 0, numeros: 0, cartaz: 0, modulos: 0
     };
     escoarFila();
 }
@@ -6542,9 +6696,10 @@ function registarActividade() {
     }
     sessao.fim = new Date().toISOString();
     sessao.segundos = Math.round((Date.now() - Date.parse(sessao.inicio)) / 1000);
-    sessao.letras = t.letras;     // A–Z
+    sessao.letras = t.letras;     // A–Z (quantos artboards têm desenho)
     sessao.numeros = t.numeros;   // 0–9
-    sessao.modulos = t.modulos;
+    sessao.cartaz = t.cartaz;     // peças no cartaz; 0 = nunca usou o modo
+    sessao.modulos = t.modulos;   // total, cartaz incluído
 
     // B — colocações acumuladas: só as subidas contam. Apagar não desconta,
     // por isso o número mede quantas vezes se pegou no módulo, não o que ficou.
@@ -6610,17 +6765,16 @@ function registarActividade() {
 // linha só, e a folha deixava de servir para alguma coisa.
 function linhasPorCaractere(t) {
     var linhas = [];
-    for (var i = 0; i < characters.length; i++) {
-        var c = characters[i];
+    var telas = listaDeTelas();
+    for (var i = 0; i < telas.length; i++) {
+        var c = telas[i];
         var objs = (c === currentChar) ? placedObjects
                  : (storedCharacters[c] ? storedCharacters[c].objects : []);
         var total = (objs && objs.length) ? objs.length : 0;
 
-        var linha = {
-            caractere: c,
-            tipoCaractere: (c >= '0' && c <= '9') ? 'numero' : 'letra',
-            total: total
-        };
+        var tipoC = (c === CHAVE_CARTAZ) ? 'cartaz'
+                  : (c >= '0' && c <= '9') ? 'numero' : 'letra';
+        var linha = { caractere: c, tipoCaractere: tipoC, total: total };
         var mudou = false;
         for (var m = 0; m < modules.length; m++) {
             var f = nf(m, 2), k = c + '|' + f;
@@ -6889,6 +7043,7 @@ function mostrarAvaliacao(aoSair) {
             minutos: sessao ? Math.round((Date.now() - Date.parse(sessao.inicio)) / 60000) : null,
             letras: sessao ? sessao.letras : null,
             numeros: sessao ? sessao.numeros : null,
+            cartaz: sessao ? sessao.cartaz : null,
             modulos: sessao ? sessao.modulos : null
         };
         PERGUNTAS_SAIDA.forEach(function (p) {
@@ -6957,4 +7112,161 @@ function mostrarAgradecimento(caixa) {
     var b = botao(sairDepoisDeAvaliar ? 'Back to the site' : 'Back to drawing');
     caixa.appendChild(b);
     b.addEventListener('click', fecharAvaliacao);
+}
+
+// ===========================================================================
+// MENUS DE EXPORTAR E LIMPAR
+// ===========================================================================
+// Sete botões só de ícone no canto — três deles documentos quase iguais — não
+// conseguiam dizer se exportavam uma letra, o alfabeto ou um ZIP. Só palavras
+// dizem isso. E o que não se aplica ao modo actual desaparece do menu, em vez
+// de ficar um ícone pálido que ninguém sabe se está desligado ou mal desenhado.
+//
+// O gatilho continua desenhado no canvas, como os restantes botões; só a lista
+// é HTML, para ter texto a sério e comportamento de menu.
+
+var btnExport = { x: 0, y: 0, w: 0, h: 0 };
+var btnClear = { x: 0, y: 0, w: 0, h: 0 };
+var btnImport = { x: 0, y: 0, w: 0, h: 0 };
+var menuAberto = null;
+var menuDeQuem = null;
+
+// Gatilho de menu: texto e uma seta, no mesmo estilo dos outros botões.
+// O vermelho fica reservado ao Clear, que é o destrutivo.
+function desenharBotaoMenu(b, texto, aberto, perigo, temSeta) {
+    var sobre = !showShortcutsModal && dentroDe(b);
+    var activo = aberto || sobre;
+    push();
+    rectMode(CENTER); textAlign(CENTER, CENTER);
+    if (perigo) {
+        fill(activo ? [255, 200, 200] : [255, 235, 235]);
+        stroke(activo ? [255, 50, 50] : [255, 205, 205]);
+    } else {
+        fill(activo ? [220, 255, 220] : 249);
+        stroke(activo ? [0, 150, 0] : 238);
+    }
+    strokeWeight(0.75);
+    rect(b.x, b.y, b.w, b.h, 6 * globalScale);
+
+    noStroke();
+    fill(perigo ? [200, 40, 40] : (activo ? [0, 130, 0] : 110));
+    textSize(11 * globalScale); textStyle(BOLD);
+    text(texto, b.x - (temSeta ? 7 * globalScale : 0), b.y);
+    textStyle(NORMAL);
+
+    if (!temSeta) { pop(); return; }
+
+    // seta
+    var sx = b.x + b.w / 2 - 14 * globalScale, sy = b.y;
+    var d = 3.2 * globalScale;
+    stroke(perigo ? [200, 40, 40] : (activo ? [0, 130, 0] : 110));
+    strokeWeight(1.2 * globalScale); noFill();
+    line(sx - d, sy - d / 2, sx, sy + d / 2);
+    line(sx, sy + d / 2, sx + d, sy - d / 2);
+    pop();
+}
+
+function fecharMenu() {
+    if (menuAberto) { menuAberto.remove(); menuAberto = null; }
+    menuDeQuem = null;
+}
+
+function abrirMenu(quem, itens, direita, topo) {
+    fecharMenu();
+    var m = document.createElement('div');
+    m.id = 'pragmatipo-menu';
+    // Sem largura mínima: em position:fixed o bloco encolhe ao conteúdo, e o
+    // nowrap das linhas garante que nada parte. Assim não sobra espaço à direita.
+    estilo(m, {
+        'position': 'fixed', 'top': Math.round(topo) + 'px', 'left': '0px',
+        'background': '#fff', 'border': '0.75px solid #ddd',
+        'border-radius': '8px', 'padding': '5px', 'box-sizing': 'border-box',
+        'box-shadow': '0 8px 28px rgba(0,0,0,0.13)', 'z-index': '2147482000',
+        'font': '400 12.5px ' + PILHA_DE_FONTES, 'color': '#111'
+    });
+
+    itens.forEach(function (it) {
+        if (it.separador) {
+            var hr = document.createElement('div');
+            estilo(hr, { 'height': '1px', 'background': '#eee', 'margin': '5px 4px' });
+            m.appendChild(hr);
+            return;
+        }
+        var linha = document.createElement('div');
+        estilo(linha, {
+            'display': 'flex', 'align-items': 'center', 'gap': '10px',
+            'padding': '8px 10px', 'border-radius': '5px', 'cursor': 'pointer',
+            'color': it.perigo ? '#c00' : '#111', 'white-space': 'nowrap'
+        });
+        // Os SVG vêm da pasta data, os mesmos que a barra usa. Nos destrutivos
+        // ficam avermelhados por filtro, para acompanharem o texto.
+        if (it.icone) {
+            var img = document.createElement('img');
+            img.src = BASE_PATH + it.icone;
+            img.alt = '';
+            estilo(img, { 'width': '17px', 'height': '17px', 'flex': '0 0 auto',
+                          'opacity': it.perigo ? '1' : '0.72',
+                          'filter': it.perigo ? 'invert(24%) sepia(88%) saturate(4000%) hue-rotate(354deg)' : 'none' });
+            linha.appendChild(img);
+        }
+        var rotulo = document.createElement('span');
+        rotulo.textContent = it.texto;
+        linha.appendChild(rotulo);
+        linha.addEventListener('mouseenter', function () {
+            estilo(linha, { 'background': it.perigo ? '#ffeaea' : '#f2fff2' });
+        });
+        linha.addEventListener('mouseleave', function () {
+            estilo(linha, { 'background': 'transparent' });
+        });
+        linha.addEventListener('click', function () { fecharMenu(); it.accao(); });
+        m.appendChild(linha);
+    });
+
+    // O p5 escuta o mousedown na janela: sem isto, o rato-a-descer fechava o
+    // menu e marcava mouseIsPressed antes de o clique chegar ao item — o menu
+    // não reagia e a peça ia parar ao artboard por baixo.
+    m.addEventListener('mousedown', function (e) { e.stopPropagation(); e.preventDefault(); });
+
+    document.body.appendChild(m);
+    menuAberto = m;
+    menuDeQuem = quem;
+
+    // Alinhado pela DIREITA com o botão. O gatilho está encostado à margem
+    // direita: alinhar pela esquerda mandava o menu para fora do ecrã e o
+    // travão de segurança desencostava-o do botão. Só se pode medir depois de
+    // estar no documento, porque a largura vem do conteúdo.
+    var largura = m.getBoundingClientRect().width;
+    var esquerda = direita - largura;
+    esquerda = max(6, min(esquerda, window.innerWidth - largura - 6));
+    estilo(m, { 'left': Math.round(esquerda) + 'px' });
+}
+
+function itensExportar() {
+    var itens = [];
+    itens.push({ texto: modoCartaz ? 'Export poster (SVG)' : 'Export letter (SVG)',
+                 icone: 'exportar-letra.svg',
+                 accao: function () { exportCharacterSVG(currentChar); } });
+    // Sem alfabeto no modo cartaz: em vez de esmorecer, não aparece.
+    if (!modoCartaz) {
+        itens.push({ texto: 'Export alphabet (SVG)', icone: 'exportar-alfabeto.svg', accao: exportAlphabetSVG });
+        itens.push({ texto: 'Export alphabet (ZIP)', icone: 'exportar-zip.svg', accao: exportAlphabetZIP });
+    }
+    itens.push({ separador: true });
+    itens.push({ texto: 'Save project (JSON)', icone: 'guardar.svg', accao: exportProjectJSON });
+    return itens;
+}
+
+function itensLimpar() {
+    var itens = [{
+        texto: modoCartaz ? 'Clear poster' : 'Clear this artboard',
+        perigo: true, icone: 'limpar-letra.svg',
+        accao: function () {
+            saveHistory(); placedObjects = []; selectedObjects = []; rebuildCollisionMap();
+        }
+    }];
+    if (!modoCartaz) {
+        itens.push({ texto: 'Clear entire alphabet', perigo: true,
+                     icone: 'limpar-alfabeto.svg', accao: clearEntireAlphabet });
+    }
+    return itens;
 }
