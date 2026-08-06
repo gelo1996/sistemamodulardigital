@@ -3263,6 +3263,11 @@ function switchCharacter(newChar) {
 // dados, tenham lá chegado como tiverem.
 var visitadosNaSessao = {};
 
+// O percurso da sessão, caractere a caractere. Tem tecto: 300 passos chegam
+// para qualquer sessão humana, e sem ele uma sessão esquecida aberta podia
+// crescer sem fim dentro de uma célula da folha.
+var sequenciaDesenho = [];
+
 function registarTrocaDeCaractere(novo) {
     if (!sessao) return;
     acoes.trocasDeCaractere++;
@@ -7045,6 +7050,7 @@ function iniciarSessao() {
               trocasDeCaractere: 0, revisitas: 0,
               trocasDeFormato: 0, trocasDeOrientacao: 0 };
     visitadosNaSessao = {};
+    sequenciaDesenho = [];
     tempoModo = { letterpress: 0, livre: 0 };
     modoDesde = Date.now();
     try { primeiroCaractere = localStorage.getItem(CHAVE_PRIMEIRO) || null; } catch (e) {}
@@ -7128,6 +7134,21 @@ function registarActividade() {
         primeiroCaractere = ganhou;
         try { localStorage.setItem(CHAVE_PRIMEIRO, primeiroCaractere); } catch (e) {}
     }
+
+    // A ordem por que os caracteres foram sendo construídos: A>B>A>C>B. As
+    // colunas `revisitas` e `caracteresTocados` resumem isto a números; aqui
+    // fica o percurso em bruto, que é o que permite ler um caso a caso e ver
+    // COMO a pessoa andou, e não só quanto.
+    //
+    // Só entra quem ganhou módulos — passar por uma letra a olhar não conta,
+    // que é o que o `trocasDeCaractere` mede. Repetições seguidas colapsam:
+    // continuar a trabalhar no A durante um minuto é um A, não sessenta.
+    if (ganhou && sequenciaDesenho.length < 300) {
+        var simbolo = (ganhou === CHAVE_CARTAZ) ? '@' : ganhou;
+        if (simbolo !== sequenciaDesenho[sequenciaDesenho.length - 1]) {
+            sequenciaDesenho.push(simbolo);
+        }
+    }
     sessao.primeiroCaractere = primeiroCaractere;
 
     fecharJanelaDeModo();
@@ -7146,6 +7167,8 @@ function registarActividade() {
     // Como se percorre o alfabeto, e em que folha se trabalha.
     sessao.trocasDeCaractere = acoes.trocasDeCaractere;
     sessao.revisitas = acoes.revisitas;
+    sessao.ordemDesenho = sequenciaDesenho.join('>') +
+                          (sequenciaDesenho.length >= 300 ? '>…' : '');
     sessao.caracteresTocados = caracteresMexidosNaSessao(t);
     sessao.trocasDeFormato = acoes.trocasDeFormato;
     sessao.trocasDeOrientacao = acoes.trocasDeOrientacao;
@@ -7682,4 +7705,3 @@ function itensLimpar() {
     }
     return itens;
 }
- 
