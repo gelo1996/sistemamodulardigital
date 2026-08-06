@@ -112,7 +112,24 @@ var showCenterV = false;
 var showCenterH = false;
 var isOverlapMode = false; // Por defeito, a colisão está ligada
 
+// A ferramenta arranca sem tela escolhida. Abrir logo no A fazia com que o
+// `primeiroCaractere` misturasse duas coisas incompatíveis: quem escolheu o A e
+// quem simplesmente não saiu de onde caiu. Obrigando a escolher, toda a primeira
+// letra registada passa a ser uma decisão.
+var telaPorEscolher = true;
+
+function escolherTela(char) {
+    telaPorEscolher = false;
+    if (char === currentChar) loadCharacter(char);   // o switchCharacter ignorava
+    else switchCharacter(char);
+}
+
 // --- SISTEMA DE GUIAS TIPOGRÁFICAS ---
+// Valor de selectedModule para a ferramenta das guias. Fica fora da gama das
+// outras (-1 borracha, -2 mover, -3 câmara, >=0 módulo da paleta) e todos os
+// ramos que testam selectedModule são comparações exactas, por isso passa por
+// eles sem desenhar, sem apagar e sem seleccionar — que é o que se quer.
+var FERRAMENTA_GUIAS = -4;
 var showGuides = false;
 var draggedGuide = null;
 var guidesY = {
@@ -142,6 +159,7 @@ var rotateHandleAngle = -90;       // onde o punho está, em graus (-90 = topo)
 // Nome da tecla modificadora, para o manual mostrar o atalho certo em cada
 // sistema. O código aceita sempre as duas (metaKey || ctrlKey).
 var TECLA_CMD = /Mac|iPod|iPhone|iPad/.test(navigator.platform || '') ? 'Cmd' : 'Ctrl';
+var TECLA_ALT = /Mac|iPod|iPhone|iPad/.test(navigator.platform || '') ? 'Option' : 'Alt';
 var hoveringRotateHandle = false;  // para o cursor reagir
 
 // --- VARIÁVEIS DE SELEÇÃO E DRAG & DROP ---
@@ -198,9 +216,13 @@ function preload() {
 }
 
 function updateArtboardBounds() {
-    if (currentArtboardIdx === 0) { artW = 46; artH = 66; }
-    else if (currentArtboardIdx === 1) { artW = 66; artH = 94; }
-    else if (currentArtboardIdx === 2) { artW = 94; artH = 132; }
+    // Quadrículas por folha. O papel é o mesmo de sempre (≈25×35, 35×50 e
+    // 50×70 cm); o que mudou foi o tamanho do módulo, que passou a valer o
+    // dobro — daí as folhas terem agora metade das quadrículas. A progressão
+    // 23 → 33 → 46 → 66 é a da série A: cada passo multiplica por ≈1,41.
+    if (currentArtboardIdx === 0) { artW = 23; artH = 33; }
+    else if (currentArtboardIdx === 1) { artW = 33; artH = 46; }
+    else if (currentArtboardIdx === 2) { artW = 46; artH = 66; }
 
     // Inverte a orientação se estiver em Landscape
     if (isLandscape) {
@@ -231,6 +253,57 @@ function isObjInsideArtboard(obj) {
 }
 
 // Ao mudar de formato/orientação, apaga (com undo por letra) os módulos que ficam fora da folha
+// Uma vez por visita, e não guardado: o aviso é para não apanhar ninguém
+// desprevenido, não para ser lido sempre. Recomeça a cada visita porque é aí
+// que se volta a mexer em trabalho que se tinha esquecido.
+var jaAvisouDaFolha = false;
+
+// Quanto se perderia se a folha mudasse agora. Percorre exactamente o que o
+// cleanup percorre — os caracteres, não o cartaz — senão avisava por causa de
+// peças que depois não chegavam a ser apagadas.
+function contarForaDoArtboard() {
+    saveCharacter(currentChar);
+    var modulos = 0, chars = [];
+    for (var i = 0; i < characters.length; i++) {
+        var store = storedCharacters[characters[i]];
+        if (!store || store.objects.length === 0) continue;
+        var fora = store.objects.length - store.objects.filter(isObjInsideArtboard).length;
+        if (fora > 0) { modulos += fora; chars.push(characters[i]); }
+    }
+    return { modulos: modulos, chars: chars };
+}
+
+// Mudar de formato ou de orientação apaga o que ficar de fora. Com folhas
+// grandes isso quase nunca acontecia; com as folhas pequenas, um clique
+// distraído leva trabalho de várias letras à frente. Por isso avisa-se — e
+// dizer que não desfaz a própria mudança, em vez de a deixar meia aplicada.
+function aplicarMudancaDeFolha(mudar, repor) {
+    mudar();
+    updateArtboardBounds();
+
+    var fora = contarForaDoArtboard();
+    if (fora.modulos > 0 && !jaAvisouDaFolha) {
+        var quais = fora.chars.join(', ');
+        var msg = 'This sheet is smaller. ' + fora.modulos +
+                  (fora.modulos === 1 ? ' module falls' : ' modules fall') +
+                  ' outside it and will be deleted, in: ' + quais +
+                  '.\n\nEach letter can be recovered one at a time with undo.\n\n' +
+                  'This is only asked once — after this, changing sheet trims straight away.\n\nContinue?';
+        if (!perguntar(msg)) {
+            repor();
+            updateArtboardBounds();
+            return false;
+        }
+        // Só depois de aceitar. Quem recusou não aprendeu a regra à custa de
+        // perder nada, por isso continua a ser avisado.
+        jaAvisouDaFolha = true;
+    }
+
+    cleanupOutOfBoundsModules();
+    panX = 0; panY = 0; calculateLayout();
+    return true;
+}
+
 function cleanupOutOfBoundsModules() {
     saveCharacter(currentChar); // garante que a letra atual está na memória antes do varrimento
 
@@ -305,6 +378,8 @@ function setup() {
 
     initAllCharacters();
     loadCharacter("A");
+
+    recuperarGuias();   // antes do trabalho: as guias não dependem dele
 
     // Devolve o trabalho da sessão anterior, se existir
     if (recuperarTrabalho()) {
@@ -396,14 +471,18 @@ function draw() {
     }
 
     try {
-        drawGrid();
-        desenharLetraReferencia();   // por baixo da letra atual, nunca por cima
-        drawModules();
+        if (telaPorEscolher) {
+            desenharConviteAEscolher();
+        } else {
+            drawGrid();
+            desenharLetraReferencia();   // por baixo da letra atual, nunca por cima
+            drawModules();
+        }
     } catch (e) {
         console.error(e);
     }
 
-    if (selectionBox.active) {
+    if (!telaPorEscolher && selectionBox.active) {
         selectionBox.currentX = max(sidebarWidth, min(width, mouseX));
         selectionBox.currentY = max(topBarHeight, min(height, mouseY));
 
@@ -439,10 +518,13 @@ function draw() {
         pop();
     }
 
-    drawSelectionBoundingBox();
-
-    handleInteraction();
-    drawCustomCursor(); // desenhado ANTES da UI para os fantasmas ficarem por baixo dos painéis
+    if (telaPorEscolher) {
+        cursor(ARROW);               // sem tela não há fantasma nem cruz
+    } else {
+        drawSelectionBoundingBox();
+        handleInteraction();
+        drawCustomCursor(); // desenhado ANTES da UI para os fantasmas ficarem por baixo dos painéis
+    }
     drawUI();
 
     drawShortcutsModal();
@@ -454,7 +536,7 @@ function draw() {
     // Pousa por cima da miniatura da letra; sem miniatura, encosta ao fundo (ou
     // ao topo da faixa da palavra, para não cair sobre a composição).
     // É uma nota do canvas: com o manual aberto não deve flutuar por cima dele.
-    if (!showShortcutsModal) {
+    if (!showShortcutsModal && !telaPorEscolher) {
         var reg = getReguaBounds();
         var meiaAltura = 14 * globalScale;
         var contCy;
@@ -502,7 +584,7 @@ function handleInteraction() {
 function getHoveredGuide() {
     // A MAGIA ESTÁ AQUI: 
     // Só permite interagir com as guias se a ferramenta "Mover" (-2) estiver ativa.
-    if (!showGuides || selectedModule !== -2) return null;
+    if (!showGuides || selectedModule !== FERRAMENTA_GUIAS) return null;
 
     var closest = null;
     var minDist = 10;
@@ -544,6 +626,9 @@ function mousePressed(evento) {
         return;
     }
     shiftNoClique = evento ? !!evento.shiftKey : keyIsDown(SHIFT);
+    // Lido do evento, como o Shift: o keyIsDown(ALT) não é de fiar, porque o
+    // Option no macOS não gera keydown repetido enquanto se arrasta.
+    altNoClique = evento ? !!evento.altKey : false;
     if (mouseButton == LEFT) {
         // A faixa da pré-visualização só apanha os cliques que caem sobre ela;
         // o resto da ferramenta continua a funcionar normalmente.
@@ -634,6 +719,7 @@ function mousePressed(evento) {
             checkSidebarClick();
         }
         else {
+            if (telaPorEscolher) return;   // ainda não há tela onde pousar nada
             if (keyIsDown(32) || selectedModule === -3) return;
 
             // Punho de rotação: tem de ser testado antes de tudo, porque fica
@@ -660,11 +746,25 @@ function mousePressed(evento) {
                 var clickedIdx = findObjectAt(gX, gY);
                 if (clickedIdx !== -1) {
                     var clickedObj = placedObjects[clickedIdx];
+                    // Shift numa peça que já está escolhida tira-a da seleção —
+                    // o mesmo gesto que a acrescenta, ao contrário. E não começa
+                    // arrasto nenhum: quem está a corrigir a seleção não quer
+                    // mexer no desenho.
+                    if (shiftNoClique && selectedObjects.includes(clickedObj)) {
+                        selectedObjects.splice(selectedObjects.indexOf(clickedObj), 1);
+                        resetRotationBase();
+                        return false;
+                    }
                     if (!selectedObjects.includes(clickedObj)) {
-                        if (!keyIsDown(SHIFT)) selectedObjects = [clickedObj]; else selectedObjects.push(clickedObj);
+                        if (!shiftNoClique) selectedObjects = [clickedObj]; else selectedObjects.push(clickedObj);
                         resetRotationBase(); // seleção nova: base e punho a zero
                     }
                     if (selectedModule == -2) {
+                        // A fotografia para o undo é tirada AGORA, antes de as
+                        // peças saírem do tabuleiro para acompanharem o rato. Se
+                        // fosse tirada ao largar, guardava o tabuleiro sem elas
+                        // e o undo fazia-as desaparecer em vez de as repor.
+                        snapshotAntesDoArrasto = JSON.parse(JSON.stringify(placedObjects));
                         isDraggingSelection = true; dragStartGrid = { x: gX, y: gY }; currentRotation = 0;
                         dragOriginals = JSON.parse(JSON.stringify(selectedObjects));
                         for (var i = 0; i < selectedObjects.length; i++) {
@@ -676,7 +776,7 @@ function mousePressed(evento) {
                 } else {
                     selectionBox.active = true; selectionBox.startX = mouseX; selectionBox.startY = mouseY;
                     selectionBox.currentX = mouseX; selectionBox.currentY = mouseY;
-                    if (!keyIsDown(SHIFT)) selectedObjects = [];
+                    if (!shiftNoClique) selectedObjects = [];
                     resetRotationBase(); // seleção nova: base e punho a zero
                 }
             }
@@ -698,6 +798,7 @@ function mouseReleased() {
     if (keyIsDown(32)) return; // BLOQUEIO DE CÂMARA
     if (draggedGuide) {
         draggedGuide = null;
+        guardarGuias();          // ficam onde a pessoa as deixou
         return;
     }
 
@@ -749,13 +850,29 @@ function mouseReleased() {
             }
         }
 
+        // Um clique que não chegou a mover nada não é um passo do histórico —
+        // senão cada toque numa peça gastava um undo sem ter mudado o desenho.
+        var mexeu = (dx !== 0 || dy !== 0);
+
         if (checkPlacementValidGroup(groupWithMirrors)) {
-            saveHistory();
+            if (mexeu) empurrarHistorico(snapshotAntesDoArrasto);
             for (var i = 0; i < groupWithMirrors.length; i++) {
                 placedObjects.push(groupWithMirrors[i]);
                 addObjToCollisionMap(groupWithMirrors[i]);
             }
             selectedObjects = groupWithMirrors.slice(0, dragOriginals.length);
+
+            // Option a arrastar: as peças de origem voltam ao lugar, e o que se
+            // arrastou passa a ser uma cópia. Testa-se DEPOIS de a cópia estar
+            // posta, para o teste ver o sítio como ele vai mesmo ficar — sem
+            // arrasto nenhum, a origem cai por cima da cópia e não passa, que é
+            // exactamente o que se quer: um Option sem mover não duplica nada.
+            if (altNoClique && checkPlacementValidGroup(dragOriginals)) {
+                for (var i = 0; i < dragOriginals.length; i++) {
+                    placedObjects.push(dragOriginals[i]);
+                    addObjToCollisionMap(dragOriginals[i]);
+                }
+            }
         } else {
             for (var i = 0; i < dragOriginals.length; i++) {
                 var orig = dragOriginals[i];
@@ -767,6 +884,7 @@ function mouseReleased() {
 
         isDraggingSelection = false;
         dragOriginals = [];
+        snapshotAntesDoArrasto = null;
     }
 }
 
@@ -2759,6 +2877,19 @@ function drawGrid() {
 // esbatida por baixo da atual, para se comparar hastes e larguras sem saltar
 // de artboard. Fica em cinzento e não a preto: é referência, não desenho.
 var shiftNoClique = false;   // Shift no momento do clique, lido do evento
+var altNoClique = false;     // Option/Alt no momento do clique: arrastar duplica
+var snapshotAntesDoArrasto = null;   // tabuleiro antes de as peças saírem, para o undo
+
+// Empurra para o histórico uma fotografia já tirada, em vez da do momento.
+// O saveHistory() normal fotografa o estado atual, e há gestos — arrastar — em
+// que o estado atual já não é aquele a que se quer voltar.
+function empurrarHistorico(snapshot) {
+    if (!snapshot) return;
+    var hist = storedCharacters[currentChar].history;
+    if (hist.length >= 15) hist.shift();
+    hist.push(snapshot);
+    storedCharacters[currentChar].redoHistory = [];
+}
 var letraReferencia = null;
 var ALPHA_REFERENCIA = 45;
 var bufferReferencia = null;   // recriado quando a janela muda de tamanho
@@ -3048,6 +3179,12 @@ function definirModoCartaz(ligado) {
     saveCharacter(currentChar);
     if (showWordPreview) fecharPreview();   // não faz sentido a compor palavras
     modoCartaz = ligado;
+    // Ir para o cartaz é escolher uma tela, tanto como carregar num thumbnail.
+    // Voltar ao alfabeto também: a letra que reabre foi escolhida antes.
+    telaPorEscolher = false;
+    // No cartaz não há guias, por isso ficar na ferramenta delas era ficar numa
+    // ferramenta que não faz nada — sai-se dela em vez de a deixar acesa.
+    if (ligado && selectedModule === FERRAMENTA_GUIAS) selectedModule = -2;
     if (ligado) {
         charAntesDoCartaz = currentChar;
         loadCharacter(CHAVE_CARTAZ);
@@ -3113,8 +3250,44 @@ function loadCharacter(char) {
 
 function switchCharacter(newChar) {
     if (newChar == currentChar) return;
+    registarTrocaDeCaractere(newChar);
     saveCharacter(currentChar);
     loadCharacter(newChar);
+}
+
+// Navegação pelo alfabeto. Interessa menos quanto se circula do que se se
+// VOLTA: quem regressa a uma letra já construída está a tratar o alfabeto como
+// sistema — o que resolveu no R mudou o que o A devia ser — e não como uma fila
+// de desenhos independentes. É o comportamento que um sistema modular devia
+// induzir, e sem isto duas pessoas com o mesmo alfabeto final são iguais nos
+// dados, tenham lá chegado como tiverem.
+var visitadosNaSessao = {};
+
+function registarTrocaDeCaractere(novo) {
+    if (!sessao) return;
+    acoes.trocasDeCaractere++;
+    // Voltar exige as duas coisas: já lá ter estado nesta sessão, e a letra não
+    // estar vazia. Sem a segunda, percorrer thumbnails em branco à procura de
+    // onde continuar contava como regressar a trabalho feito.
+    if (visitadosNaSessao[novo] && !isGridEmpty(novo)) acoes.revisitas++;
+    visitadosNaSessao[currentChar] = true;
+    visitadosNaSessao[novo] = true;
+}
+
+// Caracteres cuja composição mudou nesta sessão. Serve para normalizar as
+// revisitas: 8 trocas em 3 letras não é o mesmo que 8 trocas em 20. O cartaz
+// fica de fora, como nas outras duas — estas colunas são sobre o alfabeto.
+function caracteresMexidosNaSessao(t) {
+    var chaves = {}, mexidos = {};
+    for (var k in baseLetra) chaves[k] = true;
+    for (var k in t.porLetra) chaves[k] = true;
+    for (var k in chaves) {
+        if ((t.porLetra[k] || 0) !== (baseLetra[k] || 0)) {
+            var c = k.split('|')[0];
+            if (c !== CHAVE_CARTAZ) mexidos[c] = true;
+        }
+    }
+    return Object.keys(mexidos).length;
 }
 
 function isGridEmpty(char) {
@@ -3273,7 +3446,21 @@ function checkTopBarClick() {
             if (i == 5) { showSmallGrid = !showSmallGrid; return; }
             if (i == 6) { showCenterV = !showCenterV; return; }
             if (i == 7) { showCenterH = !showCenterH; return; }
-            if (i == 8) { if (!modoCartaz) showGuides = !showGuides; return; }
+            // As guias passaram a ser uma ferramenta, e não só um interruptor:
+            //   escondidas          -> mostra-as e entra na ferramenta
+            //   visíveis, noutra    -> entra na ferramenta, sem as esconder
+            //   visíveis, já nela   -> esconde-as e devolve a Mover
+            // Assim arrastá-las é sempre um acto deliberado. Antes bastava ter
+            // a Mover activa, que é a ferramenta com que se trabalha o dia todo.
+            if (i == 8) {
+                if (!modoCartaz) {
+                    if (!showGuides) { showGuides = true; selectedModule = FERRAMENTA_GUIAS; selectedObjects = []; }
+                    else if (selectedModule !== FERRAMENTA_GUIAS) { selectedModule = FERRAMENTA_GUIAS; selectedObjects = []; }
+                    else { showGuides = false; selectedModule = -2; }
+                    guardarGuias();
+                }
+                return;
+            }
             if (i == 9) { fitToScreen(); return; }
             if (i == 10) { undo(); return; }
             if (i == 11) { redo(); return; }
@@ -3319,15 +3506,28 @@ function checkTopBarClick() {
         if (mouseX > cxs[2] - styleBtnW / 2 && mouseX < cxs[2] + styleBtnW / 2) {
             var startX = cxs[2] - styleBtnW / 2;
             var segW = styleBtnW / 3;
-            if (mouseX < startX + segW) currentArtboardIdx = 0;
-            else if (mouseX < startX + 2 * segW) currentArtboardIdx = 1;
-            else currentArtboardIdx = 2;
-            updateArtboardBounds(); cleanupOutOfBoundsModules(); panX = 0; panY = 0; calculateLayout(); return;
+            var novoIdx = (mouseX < startX + segW) ? 0
+                        : (mouseX < startX + 2 * segW) ? 1 : 2;
+            var idxAnterior = currentArtboardIdx;
+            // Só conta quando a folha mudou mesmo: carregar no formato que já
+            // estava escolhido, ou recusar o aviso, não é uma troca.
+            if (aplicarMudancaDeFolha(function () { currentArtboardIdx = novoIdx; },
+                                      function () { currentArtboardIdx = idxAnterior; })
+                && novoIdx !== idxAnterior && sessao) {
+                acoes.trocasDeFormato++;
+            }
+            return;
         }
         // Orientação [PORTRAIT | LANDSCAPE]
         if (mouseX > cxs[3] - styleBtnW / 2 && mouseX < cxs[3] + styleBtnW / 2) {
-            isLandscape = mouseX >= cxs[3];
-            updateArtboardBounds(); cleanupOutOfBoundsModules(); panX = 0; panY = 0; calculateLayout(); return;
+            var novaOrient = mouseX >= cxs[3];
+            var orientAnterior = isLandscape;
+            if (aplicarMudancaDeFolha(function () { isLandscape = novaOrient; },
+                                      function () { isLandscape = orientAnterior; })
+                && novaOrient !== orientAnterior && sessao) {
+                acoes.trocasDeOrientacao++;
+            }
+            return;
         }
     }
 
@@ -3378,12 +3578,32 @@ function checkSidebarClick() {
                 if (shiftNoClique) {
                     letraReferencia = (letraReferencia === characters[i]) ? null : characters[i];
                 } else {
-                    switchCharacter(characters[i]);
+                    escolherTela(characters[i]);
                 }
                 return;
             }
         }
     }
+}
+
+// O que ocupa o lugar do artboard antes de haver tela. Escrito como um convite
+// e não como um erro: não falta nada, só ainda não foi escolhido por onde
+// começar — e é essa escolha que dá sentido ao `primeiroCaractere`.
+function desenharConviteAEscolher() {
+    push();
+    var cx = sidebarWidth + (width - sidebarWidth) / 2;
+    var cy = topBarHeight + (height - topBarHeight) / 2;
+    textAlign(CENTER, CENTER);
+    noStroke();
+    fill(150);
+    textStyle(BOLD);
+    textSize(16 * globalScale);
+    text('Choose a character to begin', cx, cy - 12 * globalScale);
+    textStyle(NORMAL);
+    textSize(11.5 * globalScale);
+    fill(175);
+    text('Pick one from the list on the left, or switch to Poster', cx, cy + 12 * globalScale);
+    pop();
 }
 
 function drawUI() {
@@ -3411,7 +3631,9 @@ function drawUI() {
         { img: toolIcons.grelhaMenor, active: showSmallGrid, color: [150, 150, 150], tip: "Toggle Grid" },
         { img: toolIcons.centroV, active: showCenterV, color: [150, 50, 255], tip: "Vertical Center" },
         { img: toolIcons.centroH, active: showCenterH, color: [150, 50, 255], tip: "Horizontal Center" },
-        { img: toolIcons.guias, active: showGuides && !modoCartaz, color: [200, 100, 150], tip: "Typographic Guides", desativado: modoCartaz },
+        // Aceso quando a ferramenta está escolhida, como as outras três — que as
+        // guias estejam à vista vê-se nas próprias linhas, não faz falta aqui.
+        { img: toolIcons.guias, active: selectedModule === FERRAMENTA_GUIAS && !modoCartaz, color: [200, 100, 150], tip: "Typographic Guides", desativado: modoCartaz },
         { img: toolIcons.enquadrar, active: false, color: [100, 100, 100], tip: "Fit to Screen" },
         { img: toolIcons.voltar, active: false, color: [100, 100, 100], tip: "Undo" },
         { img: toolIcons.avancar, active: false, color: [100, 100, 100], tip: "Redo" }
@@ -3632,15 +3854,22 @@ function drawUI() {
         var col = i % 3; var row = floor(i / 3); var x = toolStartX + (col * toolGapX); var y = charStartY + (row * charGapY);
         if (y > charTop - cSize && y < effectiveBottom - bottomPanelH + cSize) {
             var isH = (mouseX > x - cSize / 2 && mouseX < x + cSize / 2 && mouseY > y - cSize / 2 && mouseY < y + cSize / 2 && mouseY > topBarHeight && mouseY < effectiveBottom - bottomPanelH);
-            if (characters[i] == currentChar) { fill(220); stroke([0, 200, 0]); strokeWeight(0.75); } else if (characters[i] === letraReferencia) { fill(isH ? 235 : 249); stroke(120); strokeWeight(0.75); } else if (isH) { fill(235); stroke(238); strokeWeight(0.75); } else { fill(249); stroke(238); strokeWeight(0.75); }
-            // Só aparece com Shift em baixo: o gesto explica-se no momento em
-            // que se tenta, sem estar sempre a saltar durante o uso normal.
-            if (isH && keyIsDown(SHIFT)) {   // a paira ainda não há evento de clique
-                activeTooltip = (characters[i] === letraReferencia) ? 'Unpin reference letter' : 'Pin as reference letter';
+            if (characters[i] == currentChar && !telaPorEscolher) { fill(220); stroke([0, 200, 0]); strokeWeight(0.75); } else if (characters[i] === letraReferencia) { fill(isH ? 235 : 249); stroke(120); strokeWeight(0.75); } else if (isH) { fill(235); stroke(238); strokeWeight(0.75); } else { fill(249); stroke(238); strokeWeight(0.75); }
+            // A paira, anuncia o gesto; com o Shift já em baixo, anuncia o que
+            // vai acontecer. Estando escondida até se carregar no Shift, a letra
+            // de referência não se descobria sem ler o manual.
+            if (isH) {   // a paira ainda não há evento de clique
+                if (keyIsDown(SHIFT)) {
+                    activeTooltip = (characters[i] === letraReferencia)
+                        ? 'Unpin reference letter' : 'Pin as reference letter';
+                } else {
+                    activeTooltip = (characters[i] === letraReferencia)
+                        ? 'Shift-click to unpin reference' : 'Shift-click to use as reference';
+                }
                 tooltipX = sidebarWidth + 90 * globalScale; tooltipY = y;
             }
             rect(x, y, cSize, cSize, 4 * globalScale);
-            if (isGridEmpty(characters[i])) { noStroke(); fill(characters[i] == currentChar ? 0 : (isH ? 80 : 150)); text(characters[i], x, y); } else { drawThumbnail(characters[i], x - cSize / 2 + 2 * globalScale, y - cSize / 2 + 2 * globalScale, cSize - 4 * globalScale); }
+            if (isGridEmpty(characters[i])) { noStroke(); fill((characters[i] == currentChar && !telaPorEscolher) ? 0 : (isH ? 80 : 150)); text(characters[i], x, y); } else { drawThumbnail(characters[i], x - cSize / 2 + 2 * globalScale, y - cSize / 2 + 2 * globalScale, cSize - 4 * globalScale); }
         }
     }
     // BOTÃO DA PALAVRA: última coisa da lista, logo abaixo do 789. Como vive
@@ -3755,10 +3984,18 @@ var MANUAL = [
 
     { t: 'cat', s: 'Tools' },
 
+    { t: 'h', s: 'The module palette' },
+    { t: 'li', s: 'The row of shapes across the top. Pick one, then click on the artboard to place it' },
+    { t: 'li', s: 'There are 22 of them. Hovering one shows its number' },
+    { t: 'li', s: 'A module can be rotated before it is placed, and again afterwards' },
+
     { t: 'h', s: 'Move / select', ic: 'mover' },
     { t: 'li', s: 'Move or select modules on the artboard' },
     { t: 'li', s: 'Select them one at a time, or several at once by dragging' },
+    { t: 'li', s: 'Shift-click adds a module to the selection, and removes it again if it is already in' },
     { t: 'li', s: 'Drag the handle above the selection to rotate it' },
+    { t: 'sc', k: 'V', s: 'Move / select tool' },
+    { t: 'sc', k: TECLA_ALT + ' + Drag', s: 'Drag away a copy, leaving the original in place' },
     { t: 'sc', k: TECLA_CMD + ' + A', s: 'Select every module' },
     { t: 'sc', k: TECLA_CMD + ' + C', s: 'Copy the selection' },
     { t: 'sc', k: TECLA_CMD + ' + X', s: 'Cut the selection' },
@@ -3805,8 +4042,10 @@ var MANUAL = [
     { t: 'li', s: 'Show or hide a horizontal guide line' },
 
     { t: 'h', s: 'Typographic guides', ic: 'guias' },
-    { t: 'li', s: 'Show or hide the typographic guide lines' },
-    { t: 'li', s: 'Their position carries across every artboard' },
+    { t: 'li', s: 'Shows the guide lines and selects the tool that arranges them' },
+    { t: 'li', s: 'The lines can only be dragged while this tool is selected. Pick any other tool and they stay on screen but out of reach, so none of them can be nudged by accident while you draw' },
+    { t: 'li', s: 'Click it again while the tool is already selected to hide them' },
+    { t: 'li', s: 'Their position carries across every artboard, and is remembered between visits' },
     { t: 'li', s: 'Their order cannot be changed \u2014 except for the ascender and cap height, which may sometimes be swapped' },
     { t: 'li', s: 'They belong to the alphabet, so they are unavailable while the poster is open' },
 
@@ -3818,7 +4057,7 @@ var MANUAL = [
     { t: 'li', s: 'Zoom in and out' },
 
     { t: 'h', s: 'Reference letter' },
-    { t: 'li', s: 'Shift-click any letter in the side list to pin it. It is then drawn faded underneath whichever letter you are working on, so you can match stems and widths without jumping between artboards' },
+    { t: 'li', s: 'Shift-click any letter in the side list to pin it — hovering a letter reminds you of the gesture. It is then drawn faded underneath whichever letter you are working on, so you can match stems and widths without jumping between artboards' },
     { t: 'li', s: 'Shift-click it again to unpin. The pinned letter is outlined in grey in the list, and stays pinned while you go through the alphabet' },
 
     { t: 'h', s: 'Reference ruler' },
@@ -3840,9 +4079,10 @@ var MANUAL = [
     { t: 'li', s: 'Dot grid: a grid closer to the letterpress version of the system' },
 
     { t: 'h', s: 'F1 / F2 / F3' },
-    { t: 'li', s: 'F1: close to 25 \u00d7 35 cm' },
-    { t: 'li', s: 'F2: close to 35 \u00d7 50 cm' },
-    { t: 'li', s: 'F3: close to 50 \u00d7 70 cm' },
+    { t: 'li', s: 'F1: close to 25 \u00d7 35 cm \u2014 23 \u00d7 33 cells' },
+    { t: 'li', s: 'F2: close to 35 \u00d7 50 cm \u2014 33 \u00d7 46 cells' },
+    { t: 'li', s: 'F3: close to 50 \u00d7 70 cm \u2014 46 \u00d7 66 cells' },
+    { t: 'li', s: 'The sheet is a frame, not a wall: you can draw past it. But changing format or orientation deletes whatever sits outside the new sheet, so it asks first and tells you which letters would lose modules' },
 
     { t: 'h', s: 'Portrait / Landscape' },
     { t: 'li', s: 'Portrait: vertical artboard' },
@@ -3857,6 +4097,7 @@ var MANUAL = [
 
     { t: 'h', s: '36 side thumbnails' },
     { t: 'li', s: '26 of them correspond to the letters of the Latin alphabet; the remaining 10 to the digits' },
+    { t: 'li', s: 'The tool opens with no canvas at all: choosing where to start is the first thing you do, every visit' },
 
     { t: 'h', s: 'Preview word' },
     { t: 'li', s: 'Sits at the end of the thumbnail list. Opens a strip at the bottom of the screen where the letters you have drawn are set side by side' },
@@ -4245,7 +4486,7 @@ function getReguaBounds() {
              x: width - tam - margem,
              y: y,
              cabe: cabe,
-             visivel: cabe && !showShortcutsModal && !showWordPreview && placedObjects.length > 0 };
+             visivel: cabe && !showShortcutsModal && !showWordPreview && !telaPorEscolher && placedObjects.length > 0 };
 }
 
 function desenharReguaReferencia() {
@@ -4541,6 +4782,33 @@ function fecharPreview() {
 //
 // Guarda apenas os desenhos, não o histórico de undo — são 15 cópias por letra
 // e estoirariam o limite de espaço do browser sem grande proveito.
+// --- GUIAS TIPOGRÁFICAS ENTRE VISITAS ---
+// Numa chave própria, e não dentro do autosave do trabalho: o autosave é
+// apagado quando o alfabeto fica vazio, e as guias não têm de morrer com ele.
+// Quem as arrastou para o sítio certo espera encontrá-las lá na visita
+// seguinte, mesmo tendo entretanto limpado tudo o que desenhou.
+var CHAVE_GUIAS = 'pragmatipo-guias';
+
+function guardarGuias() {
+    try {
+        localStorage.setItem(CHAVE_GUIAS, JSON.stringify({
+            ligadas: showGuides, y: guidesY, x: guidesX
+        }));
+    } catch (e) {}
+}
+
+function recuperarGuias() {
+    try {
+        var d = JSON.parse(localStorage.getItem(CHAVE_GUIAS) || 'null');
+        if (!d) return;
+        if (typeof d.ligadas === 'boolean') showGuides = d.ligadas;
+        // Chave a chave, e só números: um registo estragado não pode pôr uma
+        // guia a undefined e levar o desenho todo atrás.
+        for (var k in guidesY) if (d.y && typeof d.y[k] === 'number') guidesY[k] = d.y[k];
+        for (var k in guidesX) if (d.x && typeof d.x[k] === 'number') guidesX[k] = d.x[k];
+    } catch (e) {}
+}
+
 var CHAVE_AUTOSAVE = 'pragmatipo-trabalho';
 var ultimaAssinatura = '';
 var avisoRecuperado = 0;   // frames que falta mostrar a nota de recuperação
@@ -4728,6 +4996,12 @@ function keyPressed(event) {
     if (showShortcutsModal) {
         if (keyCode === ESCAPE) showShortcutsModal = false;
         return;
+    }
+
+    // Ferramenta Mover. Já estando nela não faz nada: senão, um V distraído
+    // deitava fora a seleção que se tinha acabado de fazer.
+    if (key == 'v' || key == 'V') {
+        if (selectedModule !== -2) { selectedModule = -2; selectedObjects = []; }
     }
 
     if (key == 'c' || key == 'C') { panX = 0; panY = 0; calculateLayout(); }
@@ -6221,11 +6495,14 @@ var ENDPOINT_RESPOSTAS = 'https://script.google.com/macros/s/AKfycbwl4nbi9HfWLvn
 
 // Endereço de contacto. Aparece no texto do RGPD e no ecrã do código, para
 // quem chegue sem ele. Num sítio só, para não divergirem.
-var EMAIL_CONTACTO = 'adg@esmad.pt';
+var EMAIL_CONTACTO = 'adg@esmad.ipp.pt';
 
 // Muda isto sempre que alterares o texto dos consentimentos: fica gravado em
 // cada resposta, para saberes quem aceitou que versão.
-var VERSAO_CONSENTIMENTO = '2026-08-02';
+// Muda sempre que o texto do RGPD mudar — é o que permite dizer, na tese, ao
+// que cada participante consentiu. O endereço de contacto faz parte do texto:
+// estando errado, o direito à eliminação não era exercível.
+var VERSAO_CONSENTIMENTO = '2026-08-06';
 
 var CONSENTIMENTOS = [
     { id: 'rgpd', obrigatorio: true,
@@ -6764,7 +7041,10 @@ function iniciarSessao() {
     // A base da sessão é o alfabeto tal como chegou — já com o que veio do
     // autosave. Assim o "dif" mede esta sessão e não o histórico todo.
     acoes = { recusas: 0, undos: 0, preview: 0,
-              expLetra: 0, expAlfabeto: 0, expZip: 0, expProjeto: 0, trocasDeModo: 0 };
+              expLetra: 0, expAlfabeto: 0, expZip: 0, expProjeto: 0, trocasDeModo: 0,
+              trocasDeCaractere: 0, revisitas: 0,
+              trocasDeFormato: 0, trocasDeOrientacao: 0 };
+    visitadosNaSessao = {};
     tempoModo = { letterpress: 0, livre: 0 };
     modoDesde = Date.now();
     try { primeiroCaractere = localStorage.getItem(CHAVE_PRIMEIRO) || null; } catch (e) {}
@@ -6819,18 +7099,33 @@ function registarActividade() {
     ultimaContagem = copiaContagem(t.porModulo);
     try { localStorage.setItem(CHAVE_USOS, JSON.stringify(usosAcumulados)); } catch (e) {}
 
-    // O mesmo raciocínio, desdobrado por caractere.
+    // O mesmo raciocínio, desdobrado por caractere. De caminho fica-se a saber
+    // QUAL o caractere que ganhou módulos — ver o uso logo abaixo.
+    var ganhou = null;
     for (var chave in t.porLetra) {
         var sobe = t.porLetra[chave] - (ultimaLetra[chave] || 0);
-        if (sobe > 0) usosPorLetra[chave] = (usosPorLetra[chave] || 0) + sobe;
+        if (sobe > 0) {
+            usosPorLetra[chave] = (usosPorLetra[chave] || 0) + sobe;
+            if (!ganhou) ganhou = chave.split('|')[0];
+        }
     }
     ultimaLetra = copiaContagem(t.porLetra);
     try { localStorage.setItem(CHAVE_USOS_LETRA, JSON.stringify(usosPorLetra)); } catch (e) {}
 
     // A primeira letra que a pessoa desenhou, alguma vez. Começar pelo A ou
     // pelo H/O diz coisas diferentes sobre como se aproxima do problema.
-    if (!primeiroCaractere) {
-        primeiroCaractere = currentChar;
+    //
+    // Atribui-se ao caractere que GANHOU módulos, não ao que está aberto. São
+    // coisas diferentes por duas razões: este apuramento corre uma vez por
+    // segundo, e nesse intervalo dá tempo de colocar um módulo no A e saltar
+    // para o B — que ficaria com o crédito. E abrir um ficheiro importado
+    // enchia o alfabeto sem ninguém ter desenhado nada; como o realinhamento
+    // põe o ultimaLetra em dia, deixa de haver subida para atribuir.
+    //
+    // O cartaz não é um caractere: quem começa por lá continua sem primeira
+    // letra até desenhar uma.
+    if (!primeiroCaractere && ganhou && ganhou !== CHAVE_CARTAZ) {
+        primeiroCaractere = ganhou;
         try { localStorage.setItem(CHAVE_PRIMEIRO, primeiroCaractere); } catch (e) {}
     }
     sessao.primeiroCaractere = primeiroCaractere;
@@ -6847,6 +7142,15 @@ function registarActividade() {
     sessao.expAlfabeto = acoes.expAlfabeto;
     sessao.expZip = acoes.expZip;
     sessao.expProjeto = acoes.expProjeto;
+
+    // Como se percorre o alfabeto, e em que folha se trabalha.
+    sessao.trocasDeCaractere = acoes.trocasDeCaractere;
+    sessao.revisitas = acoes.revisitas;
+    sessao.caracteresTocados = caracteresMexidosNaSessao(t);
+    sessao.trocasDeFormato = acoes.trocasDeFormato;
+    sessao.trocasDeOrientacao = acoes.trocasDeOrientacao;
+    sessao.formatoFinal = 'F' + (currentArtboardIdx + 1);
+    sessao.orientacaoFinal = isLandscape ? 'landscape' : 'portrait';
 
     sessao.linhas = linhasPorCaractere(t);
     sessao.modulosDetalhe = linhasPorModulo(t);
