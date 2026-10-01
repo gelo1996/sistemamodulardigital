@@ -1102,6 +1102,64 @@ function isArchGroup(id) { return id >= 12 && id <= 14; }
 function isDiagonalGroup(id) { return id >= 16 && id <= 20; } // <-- Atualizado para 20
 function hasGeneticMap(id) { return (id >= 0 && id <= 21); }  // <-- Atualizado para 21
 
+// --- ESPELHO DE CADA MÓDULO ---
+// Para virar uma composição não basta inverter as coordenadas: cada peça tem de
+// ser substituída pela sua imagem invertida. Aqui está, por módulo, o tipo e a
+// rotação que produzem essa imagem quando o original está a rot 0. Para as
+// outras rotações a conta é (rotBase - rot), porque virar e rodar trocam de
+// ordem.
+//
+// A tabela saiu dos próprios SVGs, que são a verdade do sistema. As diagonais
+// são paralelogramos e formam DOIS pares espelhados: 17 com 18, e 19 com 20.
+// Virar uma dá a outra — não é a mesma peça rodada, que era o que o código
+// fazia antes: levavam 90 graus e passavam de 3x2 a 2x3, mudando de forma.
+//
+// Nota para quem mexer nisto: o mapa de cores (MODULE_COLORS) NÃO serve para
+// deduzir esta tabela. As meias-células B e G não se comportam como espelho uma
+// da outra, e por isso a 19 e a 20 parecem não ter par quando na verdade têm.
+// Confirma sempre pelo polígono do SVG.
+var ESPELHO_MODULO = {
+    0:  { tipo: 0,  rotBase: 0 },
+    1:  { tipo: 1,  rotBase: 0 },
+    2:  { tipo: 2,  rotBase: 0 },
+    3:  { tipo: 3,  rotBase: 0 },
+    4:  { tipo: 4,  rotBase: 0 },
+    5:  { tipo: 5,  rotBase: 0 },
+    6:  { tipo: 6,  rotBase: 1 },
+    7:  { tipo: 7,  rotBase: 1 },
+    8:  { tipo: 8,  rotBase: 1 },
+    9:  { tipo: 9,  rotBase: 1 },
+    10: { tipo: 10, rotBase: 1 },
+    11: { tipo: 11, rotBase: 1 },
+    12: { tipo: 12, rotBase: 0 },
+    13: { tipo: 13, rotBase: 0 },
+    14: { tipo: 14, rotBase: 0 },
+    15: { tipo: 15, rotBase: 0 },
+    16: { tipo: 16, rotBase: 1 },
+    17: { tipo: 18, rotBase: 0 },   // par espelhado com o 18
+    18: { tipo: 17, rotBase: 0 },
+    19: { tipo: 20, rotBase: 0 },   // par espelhado com o 20
+    20: { tipo: 19, rotBase: 0 },
+    21: { tipo: 21, rotBase: 0 }
+};
+
+// Limites que uma peça ocupa na grelha, contando a caixa inteira.
+function caixaDaPeca(type, rot, x, y) {
+    var d = getModuleDims(type), v = getFillVectors(rot);
+    var minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+    for (var i = 0; i < d.len; i++) {
+        for (var j = 0; j < d.wid; j++) {
+            var px = x + v.p.x * i + v.s.x * j;
+            var py = y + v.p.y * i + v.s.y * j;
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
+        }
+    }
+    return { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
+}
+
 function getCurveCenter(gx, gy, type, rot) {
     var dims = getModuleDims(type);
     var L = dims.len;
@@ -1112,7 +1170,10 @@ function getCurveCenter(gx, gy, type, rot) {
 function isCollisionException(id, i, j) {
     if (id == 7) { if (i == 0 && j == 0) return true; if (i == 3 && j == 3) return true; }
     if (id == 8) { if (i == 0 && j == 0) return true; if (i == 1 && j == 0) return true; if (i == 0 && j == 1) return true; if (i >= 4 && j == 3) return true; if (i >= 3 && j == 4) return true; if (i >= 3 && j == 5) return true; }
-    if (id == 9) { if (j == 0 && i <= 3) return true; if (j == 1 && i <= 1) return true; if (j == 2 && i == 0) return true; if (j == 3 && i == 0) return true; if (j == 3 && i >= 5) return true; if (j == 4 && i >= 4) return true; if (j == 5 && i >= 4) return true; if (j == 6 && i >= 4) return true; if (j == 7 && i >= 3) return true; }
+    // j5 e j6 diziam i>=4, mas o ADN da peça tem T a partir de i=3 — duas
+    // células a bloquear vizinhas sem lá estar peça nenhuma. Era também o que
+    // tornava a 09 a única curva assimétrica, e por isso impossível de espelhar.
+    if (id == 9) { if (j == 0 && i <= 3) return true; if (j == 1 && i <= 1) return true; if (j == 2 && i == 0) return true; if (j == 3 && i == 0) return true; if (j == 3 && i >= 5) return true; if (j == 4 && i >= 4) return true; if (j == 5 && i >= 3) return true; if (j == 6 && i >= 3) return true; if (j == 7 && i >= 3) return true; }
     if (id == 10) { if (j == 0 && i <= 4) return true; if (j == 1 && i <= 3) return true; if (j == 2 && i <= 1) return true; if (j == 3 && i <= 1) return true; if (j == 4 && i == 0) return true; if (j == 3 && i >= 7) return true; if (j == 4 && i >= 6) return true; if (j == 5 && i >= 5) return true; if (j == 6 && i >= 4) return true; if (j >= 7 && i >= 3) return true; }
     if (id == 11) { if (j == 0 && i <= 6) return true; if (j == 1 && i <= 4) return true; if (j == 2 && i <= 3) return true; if (j == 3 && i <= 2) return true; if (j == 4 && i <= 1) return true; if (j == 5 && i == 0) return true; if (j == 6 && i == 0) return true; if (j == 3 && i >= 8) return true; if (j == 4 && i >= 6) return true; if (j == 5 && i >= 5) return true; if (j == 6 && i >= 4) return true; if (j == 7 && i >= 4) return true; if (j >= 8 && i >= 3) return true; }
 
@@ -3985,6 +4046,7 @@ var MANUAL = [
 
     { t: 'h', s: 'Flip' },
     { t: 'li', s: 'Available in letterpress mode only. Mirrors the letters, preparing them for printing with movable type' },
+    { t: 'li', s: 'Each module is swapped for its mirrored counterpart — the slanted ones come in pairs, so flipping turns one into the other' },
     { t: 'sc', k: 'H', s: 'Flip the entire composition' },
 
     { t: 'cat', s: 'Tools' },
@@ -6365,26 +6427,30 @@ function flipCompositionHorizontal() {
     // 2. Calcular a inversão para cada peça
     for (var k = 0; k < placedObjects.length; k++) {
         var o = placedObjects[k];
-        var type = o.type; var x = o.x; var y = o.y; var rot = o.rot;
-        var dims = getModuleDims(type);
-        var rotM, xM, yM = y;
+        var esp = ESPELHO_MODULO[o.type];
 
-        if (isCurveGroup(type) || isDiagonalGroup(type)) {
-            rotM = { 0: 1, 1: 0, 2: 3, 3: 2 }[rot];
-            xM = localW - x;
-        } else if (isArchGroup(type)) {
-            if (rot == 0) { rotM = 0; xM = localW - x - dims.len + 1; }
-            else if (rot == 1) { rotM = 3; xM = localW - x; yM = y + dims.len - 1; }
-            else if (rot == 2) { rotM = 2; xM = localW - x + dims.len - 1; }
-            else if (rot == 3) { rotM = 1; xM = localW - x; yM = y - dims.len + 1; }
-        } else {
-            rotM = rot;
-            if (rot == 0) xM = localW - x - dims.len + 1;
-            if (rot == 1) xM = localW - x + dims.wid - 1;
-            if (rot == 2) xM = localW - x + dims.len - 1;
-            if (rot == 3) xM = localW - x - dims.wid + 1;
+        // Peça sem espelho no sistema: não há nada que a substitua, e virar a
+        // composição à mesma dava uma forma errada. Diz-se qual é e pára.
+        if (!esp) {
+            avisar('Module ' + etiquetaDoModulo(o.type) + ' has no mirrored counterpart ' +
+                   'in the system, so this composition cannot be flipped.');
+            return;
         }
-        newObjects.push({ type: type, x: xM, y: yM, rot: rotM });
+
+        var rotM = ((esp.rotBase - o.rot) % 4 + 4) % 4;
+        var caixaOrig = caixaDaPeca(o.type, o.rot, o.x, o.y);
+        var caixaNova = caixaDaPeca(esp.tipo, rotM, 0, 0);
+
+        // A caixa espelhada ocupa as mesmas linhas e as colunas invertidas.
+        // Posicionar por ela, em vez de por fórmulas por família, faz a conta
+        // funcionar para qualquer peça — foi assim que as diagonais deixaram
+        // de mudar de tamanho ao virar.
+        newObjects.push({
+            type: esp.tipo,
+            x: (localW - caixaOrig.maxX) - caixaNova.minX,
+            y: caixaOrig.minY - caixaNova.minY,
+            rot: rotM
+        });
     }
 
     // 3. Testar a Colocação (Garante que não sai do Artboard)
@@ -6394,22 +6460,29 @@ function flipCompositionHorizontal() {
     rebuildCollisionMap();
 
     var allValid = true;
+    var motivo = '';
     for (var i = 0; i < newObjects.length; i++) {
         if (canPlaceTile(newObjects[i].x, newObjects[i].y, newObjects[i].type, newObjects[i].rot)) {
             placedObjects.push(newObjects[i]);
             addObjToCollisionMap(newObjects[i]);
         } else {
             allValid = false;
+            // Dizer qual dos dois foi. A mensagem antiga culpava sempre as
+            // margens, e mandava procurar espaço na folha quando o problema
+            // podia ser duas peças a quererem a mesma célula.
+            motivo = isObjInsideArtboard(newObjects[i])
+                ? 'two modules would end up on top of each other'
+                : 'part of it would fall outside the sheet';
             break;
         }
     }
 
-    // 4. Reverte tudo se a composição espelhada bater nas margens da folha
+    // 4. Reverte tudo se a composição espelhada não couber
     if (!allValid) {
         storedCharacters[currentChar].history.pop(); // Remove o Undo que criámos
         placedObjects = backup;
         rebuildCollisionMap();
-        avisar("The flipped composition hits the edges of the current artboard!");
+        avisar('This composition cannot be flipped: ' + motivo + '.');
     }
 }
 
@@ -6597,14 +6670,42 @@ function enfileirarResposta(resposta) {
     try { localStorage.setItem(CHAVE_POR_ENVIAR, JSON.stringify(fila)); } catch (e) {}
 }
 
+// Tira UM registo da fila, comparando-o por inteiro. Relê antes de escrever
+// porque outro separador pode ter mexido na fila entretanto.
+function removerDaFila(registo) {
+    try {
+        var fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]');
+        var alvo = JSON.stringify(registo);
+        for (var i = 0; i < fila.length; i++) {
+            if (JSON.stringify(fila[i]) === alvo) { fila.splice(i, 1); break; }
+        }
+        localStorage.setItem(CHAVE_POR_ENVIAR, JSON.stringify(fila));
+    } catch (e) {}
+}
+
+var envioEmCurso = false;   // sem isto, duas chamadas seguidas enviavam o mesmo
+
 function escoarFila() {
-    if (!ENDPOINT_RESPOSTAS) return;
+    if (!ENDPOINT_RESPOSTAS || envioEmCurso) return;
     var fila = [];
     try { fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]'); } catch (e) { return; }
     if (fila.length === 0) return;
 
-    // Esvazia já: se falhar, volta a entrar. Evita enviar duas vezes o mesmo.
-    try { localStorage.setItem(CHAVE_POR_ENVIAR, '[]'); } catch (e) {}
+    // A fila NÃO se esvazia aqui. Cada registo só sai depois de a entrega estar
+    // confirmada — ver removerDaFila, mais acima.
+    //
+    // Esvaziar à cabeça parecia mais seguro (evitava enviar duas vezes), mas
+    // abria um buraco: entre o esvaziar e a resposta chegar, fechar o separador
+    // levava o registo com ele. O fetch morre com a página, o registo já não
+    // está na fila, e o sendBeacon do pagehide não encontra nada para salvar.
+    // Acontecia precisamente no pior sítio — o questionário de saída, que é
+    // marcado como respondido logo a seguir e nunca mais volta a ser feito.
+    //
+    // Assim o risco passa a ser o inverso: uma página que morra a meio pode
+    // reenviar o mesmo registo na visita seguinte. Um duplicado vê-se e
+    // remove-se pelo sessaoId; uma resposta perdida não se recupera.
+    envioEmCurso = true;
+    var porResolver = fila.length;
     fila.forEach(function (r) {
         // text/plain não desencadeia preflight, por isso dá para pedir em modo
         // cors e LER a resposta. Vale a pena: em no-cors, um erro do Apps Script
@@ -6623,8 +6724,10 @@ function escoarFila() {
             var d = null;
             try { d = JSON.parse(texto); } catch (e) {}
             if (!d || !d.ok) throw new Error('resposta inesperada');
+            removerDaFila(r);            // chegou: agora sim, sai da fila
         })
-        .catch(function () { enfileirarResposta(r); });   // volta à fila
+        .catch(function () { })          // falhou: fica onde está, tenta-se depois
+        .then(function () { if (--porResolver === 0) envioEmCurso = false; });
     });
 }
 
