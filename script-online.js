@@ -448,7 +448,52 @@ function setup() {
     }
 
     aplicarTipoDeLetraDoSite();
+    // Num telemóvel não se entra: só o aviso, e nada é recolhido (sem portão
+    // não há participante nem sessão, e sem sessão nada é enviado).
+    if (eTelemovel()) { mostrarAvisoTelemovel(); noLoop(); return; }
     iniciarPortao();   // o manual só abre depois do portão
+}
+
+// --- TELEMÓVEIS ---
+// O Pragmatipo é para computador ou tablet (decisão do Ângelo, 3/Out/2026).
+// Num telemóvel a interface fica pequena demais para desenhar e ler, e o que
+// se fizesse ali não se compararia com o resto dos dados. Reconhece-se pelo
+// ecrã do aparelho, não pela janela: com toque e o lado menor abaixo de
+// 600 px. O iPad mini tem 744; um portátil com a janela estreita não conta.
+function eTelemovel() {
+    var lado = Math.min(screen.width || 0, screen.height || 0);
+    var tactil = ((navigator.maxTouchPoints || 0) > 0) ||
+                 !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    return tactil && lado > 0 && lado < 600;
+}
+
+function mostrarAvisoTelemovel() {
+    var ov = document.createElement('div');
+    ov.id = 'pragmatipo-telemovel';
+    estilo(ov, {
+        'position': 'fixed', 'inset': '0', 'left': '0', 'top': '0',
+        'width': '100%', 'height': '100%', 'z-index': '2147483000',
+        'background': '#f9f9f9', 'display': 'flex',
+        'align-items': 'center', 'justify-content': 'center',
+        'padding': '24px', 'box-sizing': 'border-box'
+    });
+    var caixa = document.createElement('div');
+    estilo(caixa, {
+        'width': '100%', 'max-width': '420px', 'background': '#fff',
+        'border': '0.75px solid #eee', 'border-radius': '16px', 'padding': '32px',
+        'box-sizing': 'border-box', 'color': '#111',
+        'font': '400 15px \'Marist Variable\', Helvetica, Arial, sans-serif', 'line-height': '1.45'
+    });
+    titulo(caixa, 'Pragmatipo', 'Made for a computer or a tablet');
+    var p = document.createElement('div');
+    p.textContent = 'On a phone the screen is too small to draw with the modules. ' +
+                    'Please open pragmatipo.pt/play on a computer or a tablet.';
+    caixa.appendChild(p);
+    var b = botao('Back to pragmatipo.pt');
+    b.addEventListener('click', function () { window.location.href = 'https://pragmatipo.pt'; });
+    caixa.appendChild(b);
+    ov.appendChild(caixa);
+    document.body.appendChild(ov);
 }
 
 function createRedVersion(img) {
@@ -5864,6 +5909,10 @@ function desenharAvisoRecuperado() {
     // Ao centro, em baixo: é uma nota sobre o desenho todo, não sobre um canto.
     var base = showWordPreview ? getPreviewBounds().y : height;
     var cy = base - meiaAltura - 22 * globalScale;
+    // Em tablet, a barra de baixo está nesse sítio: a nota sobe para cima dela
+    // (e acima da nota da própria barra, se houver uma).
+    var barra = barraDeToque();
+    if (barra) cy = barra.y - barra.h / 2 - 10 * globalScale - meiaAltura - (avisoDaBarra ? 34 * globalScale : 0);
     if (cy - meiaAltura < topBarHeight + 8 * globalScale) return;   // não cabe
     desenharPilula(texto, width / 2, cy,
                    [0, 200, 0, opacidade * 0.12], [0, 150, 0, opacidade]);
@@ -7709,6 +7758,24 @@ function sobreBarraDeToqueEm(x, y) {
 }
 function sobreBarraDeToque() { return sobreBarraDeToqueEm(mouseX, mouseY); }
 
+// A resposta da barra a um toque. As acções correm logo ao pousar o dedo, e um
+// toque rápido acabava antes de se ver alguma coisa: o botão escurece enquanto
+// o dedo está em cima (e pelo menos um instante), e o que não se vê — copiar,
+// ligar o Shift, ou não ter feito nada e porquê — diz-se numa nota curta.
+var barraPremida = null, barraPremidaAte = 0, barraPremidaDisponivel = false;
+var avisoDaBarra = null;   // { texto, ate, erro }
+var DURACAO_AVISO_BARRA = 1800;
+
+function avisarNaBarra(texto, erro) { avisoDaBarra = { texto: texto, ate: millis() + DURACAO_AVISO_BARRA, erro: !!erro }; }
+function modulosEmTexto(n) { return n + (n === 1 ? ' module' : ' modules'); }
+
+// Porque é que um botão esmorecido não faz nada.
+function razaoDoBotaoDeToque(id) {
+    if (id === 'tudo') return 'Nothing to select yet';
+    if (id === 'colar' || id === 'colarSitio') return 'Copy or cut something first';
+    return 'Select modules first, with Move / select';
+}
+
 function botaoDeToqueDisponivel(id) {
     if (id === 'juntar') return true;
     if (id === 'tudo') return placedObjects.length > 0;
@@ -7719,6 +7786,9 @@ function botaoDeToqueDisponivel(id) {
 function desenharBarraDeToque() {
     var b = barraDeToque();
     if (!b) return;
+    // Acabado o toque (e o instante mínimo), o realce larga o botão: senão
+    // voltava a acender a cada toque noutro sítio qualquer.
+    if (barraPremida && !mouseIsPressed && millis() >= barraPremidaAte) barraPremida = null;
     var g = globalScale;
     push();
     rectMode(CENTER); textAlign(CENTER, CENTER);
@@ -7733,12 +7803,27 @@ function desenharBarraDeToque() {
             rect(bt.x, bt.y, bt.w - 6 * g, bt.h - 8 * g, 5 * g);
         }
         if (i > 0) { stroke(238); strokeWeight(0.75); line(bt.x - bt.w / 2, bt.y - b.h / 2 + 8 * g, bt.x - bt.w / 2, bt.y + b.h / 2 - 8 * g); }
+        if (bt.id === barraPremida && (millis() < barraPremidaAte || (mouseIsPressed && dentroDe(bt)))) {
+            // A força do realce é a do momento do toque: um Delete que acabou
+            // de apagar não parece um botão desligado.
+            noStroke(); fill(0, 0, 0, barraPremidaDisponivel || activo ? 22 : 8);
+            rect(bt.x, bt.y, bt.w - 6 * g, bt.h - 8 * g, 5 * g);
+        }
         noStroke();
         fill(activo ? color(0, 150, 0) : (botaoDeToqueDisponivel(bt.id) ? color(80) : color(200)));
         text(bt.texto, bt.x, bt.y);
     }
     textStyle(NORMAL);
     pop();
+
+    // A nota, por cima da barra; desvanece no fim.
+    if (avisoDaBarra && millis() < avisoDaBarra.ate) {
+        var resta = avisoDaBarra.ate - millis();
+        var op = min(1, resta / 300);
+        var cyAviso = b.y - b.h / 2 - 10 * g - 14 * g;
+        if (avisoDaBarra.erro) desenharPilula(avisoDaBarra.texto, b.x, cyAviso, [255, 235, 235, 240 * op], [200, 40, 40, 255 * op], { contorno: [255, 205, 205, 255 * op] });
+        else desenharPilula(avisoDaBarra.texto, b.x, cyAviso, [235, 250, 235, 240 * op], [0, 130, 0, 255 * op], { contorno: [200, 235, 200, 255 * op] });
+    } else avisoDaBarra = null;
 }
 
 // Devolve true se o clique foi na barra (e trata-o).
@@ -7748,14 +7833,29 @@ function cliqueNaBarraDeToque() {
     for (var i = 0; i < b.botoes.length; i++) {
         var bt = b.botoes[i];
         if (!dentroDe(bt)) continue;
-        if (!botaoDeToqueDisponivel(bt.id)) return true;
+        barraPremida = bt.id;
+        barraPremidaAte = millis() + 250;
+        barraPremidaDisponivel = botaoDeToqueDisponivel(bt.id);
+        if (!barraPremidaDisponivel) { avisarNaBarra(razaoDoBotaoDeToque(bt.id), true); return true; }
+        var n = selectedObjects.length;
         if (bt.id === 'tudo') selecionarTudo();
-        else if (bt.id === 'juntar') modoJuntar = !modoJuntar;
-        else if (bt.id === 'copiar') copiarSelecao();
-        else if (bt.id === 'cortar') cortarSelecao();
-        else if (bt.id === 'colar') colarAreaTransferencia(false, true);
-        else if (bt.id === 'colarSitio') colarAreaTransferencia(true);
-        else if (bt.id === 'duplicar') duplicarSelecao();
+        else if (bt.id === 'juntar') {
+            modoJuntar = !modoJuntar;
+            avisarNaBarra(modoJuntar ? 'Shift on: taps add to the selection' : 'Shift off');
+        }
+        else if (bt.id === 'copiar') { if (copiarSelecao()) avisarNaBarra('Copied ' + modulosEmTexto(n)); }
+        else if (bt.id === 'cortar') {
+            // Com a simetria ligada saem também as cópias espelhadas; o
+            // primeiro número é o que o Paste devolve.
+            var antes = placedObjects.length;
+            if (cortarSelecao()) {
+                var tirados = antes - placedObjects.length;
+                avisarNaBarra('Cut ' + modulosEmTexto(n) + (tirados > n ? ' (+' + (tirados - n) + ' mirrored)' : ''));
+            }
+        }
+        else if (bt.id === 'colar') { if (!colarAreaTransferencia(false, true)) avisarNaBarra('No room to paste here', true); }
+        else if (bt.id === 'colarSitio') { if (!colarAreaTransferencia(true)) avisarNaBarra('It does not fit in the same place here', true); }
+        else if (bt.id === 'duplicar') { if (!duplicarSelecao()) avisarNaBarra('No room to duplicate here', true); }
         else if (bt.id === 'apagar') apagarSelecao();
         return true;
     }
