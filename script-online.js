@@ -625,13 +625,17 @@ function handleInteraction() {
     // Só um toque que começou na prancheta pousa ou apaga: arrastar a lista,
     // ou partir de uma barra, e escorregar para o artboard não é desenhar.
     if (toque.ativo && toque.zona !== 'tela') return;
-    // Um dedo espera um instante antes de pousar peças: se o segundo chegar
-    // logo a seguir é um zoom, e assim não fica uma peça pousada por engano.
-    // A caneta não espera — com ela não há zoom de dois dedos.
-    if (toque.ativo && !toque.caneta && Date.now() - toque.t0 < ESPERA_DO_DEDO) return;
+    // Com um módulo escolhido, o dedo ou a caneta em baixo só arrasta o
+    // fantasma (drawCustomCursor): o módulo pousa uma vez, ao levantar, pelo
+    // acabarDono — e por aqui, como um clique de rato.
+    if (pousarAoLevantar() && !toque.aLevantar) return;
+    // Um dedo espera um instante antes de apagar: se o segundo chegar logo a
+    // seguir é um zoom, e assim não fica nada apagado por engano. A caneta não
+    // espera — com ela não há zoom de dois dedos. Ao levantar já não há espera.
+    if (toque.ativo && !toque.caneta && !toque.aLevantar && Date.now() - toque.t0 < ESPERA_DO_DEDO) return;
     // A primeira vez que a espera passa, num traço rápido o dedo já saiu da
     // célula onde pousou: essa célula também conta (ver mais abaixo).
-    var primeiroDoToque = toque.ativo && !toque.esperou;
+    var primeiroDoToque = toque.ativo && !toque.esperou && !toque.aLevantar;
     if (toque.ativo) toque.esperou = true;
 
     // O clique que fechou o modal não pode desenhar: espera que o rato seja largado
@@ -655,7 +659,23 @@ function handleInteraction() {
         }
 
         if (mouseX > sidebarWidth && mouseY > topBarHeight) {
-            if (selectedModule >= 0 && !selectionBox.active && !isDraggingSelection) attemptSetTile(selectedModule);
+            if (selectedModule >= 0 && !selectionBox.active && !isDraggingSelection) {
+                // Ao levantar, a peça vai para onde o fantasma foi visto no
+                // último frame, não para o ponto exacto da saída do dedo — que
+                // pode ter mudado de célula depois desse frame. Se o último
+                // frame não o desenhou (sobre uma guia, por exemplo), vale o
+                // ponto onde o dedo saiu.
+                var cf = toque.aLevantar ? toque.celulaFantasma : null;
+                if (cf && cf.frame === frameCount) {
+                    var mxSaida = mouseX, mySaida = mouseY;
+                    mouseX = centerX + (cf.x - GRID_CX + 0.5) * tileSize;
+                    mouseY = centerY + (cf.y - GRID_CY + 0.5) * tileSize;
+                    attemptSetTile(selectedModule);
+                    mouseX = mxSaida; mouseY = mySaida;
+                } else {
+                    attemptSetTile(selectedModule);
+                }
+            }
             else if (selectedModule == -1 && !selectionBox.active && !isDraggingSelection) attemptDeleteTile();
         }
     }
@@ -719,7 +739,7 @@ function mousePressed(evento) {
         return;
     }
     shiftNoClique = evento ? !!evento.shiftKey : keyIsDown(SHIFT);
-    // No toque não há Shift: o botão Add da barra de baixo faz as vezes dele,
+    // No toque não há tecla Shift: o botão Shift da barra de baixo faz as vezes dela,
     // só no canvas — na lista, a letra de referência fixa-se com toque longo.
     if (modoJuntar && mouseX > sidebarWidth && mouseY > topBarHeight) shiftNoClique = true;
     cliqueRepetido = evento ? evento.detail > 1 : false;
@@ -3084,6 +3104,7 @@ function desenharLetraReferencia() {
     // somavam-se e a referência ganhava manchas escuras que se liam como
     // densidade do desenho, que é precisamente o juízo que isto vem apoiar.
     if (!bufferReferencia || bufferReferencia.width !== width || bufferReferencia.height !== height) {
+        if (bufferReferencia) libertarGraphics(bufferReferencia);   // o antigo ficava para sempre
         bufferReferencia = createGraphics(width, height);
     }
     var g = bufferReferencia;
@@ -3174,6 +3195,13 @@ function drawCustomCursor() {
     if (sobreFaixaPreview()) { cursor(ARROW); return; }
 
     if (mouseX > sidebarWidth && mouseY > topBarHeight) {
+
+        // Depois de um toque não há ponteiro por cima da prancheta: nada de
+        // fantasma nem de realce parados onde o dedo saiu.
+        if (toqueLevantado && !toque.ativo) { cursor(ARROW); return; }
+        // Um toque que começou numa barra, na paleta ou na lista não desenha
+        // nem apaga (handleInteraction): nada de fantasma a prometer o contrário.
+        if (toque.ativo && toque.zona !== 'tela') { cursor(ARROW); return; }
 
         // Cursor de Câmara atualizado para o Módulo -3
         if (keyIsDown(32) || mouseButton === CENTER || selectedModule === -3) {
@@ -3266,6 +3294,19 @@ function drawCustomCursor() {
             }
         } else if (selectedModule >= 0) {
             noCursor();
+            // No toque, o fantasma é o módulo a ser arrastado antes de pousar:
+            // mais claro do que o do rato. Não aparece num zoom de dois dedos,
+            // nem durante a espera do dedo (podia ser o início de um zoom).
+            var deToque = toque.ativo;
+            if (toque.gesto || toque.aguardarLevantar) return;
+            if (deToque && !toque.caneta && Date.now() - toque.t0 < ESPERA_DO_DEDO) return;
+            // Nem quando o levantar não vai pousar: o toque fechou um menu ou o
+            // manual, ou o dedo está sobre a barra de baixo.
+            if (deToque && (toque.ignorarFim || suppressDrawUntilRelease || sobreBarraDeToque())) {
+                toque.celulaFantasma = null;
+                return;
+            }
+            if (deToque) toque.celulaFantasma = { x: gX, y: gY, frame: frameCount };
             var baseObj = { type: selectedModule, x: gX, y: gY, rot: currentRotation };
             var groupToTest = getMirroredGroup(baseObj);
             var overallValid = checkPlacementValidGroup(groupToTest);
@@ -3282,9 +3323,10 @@ function drawCustomCursor() {
                 translate(mSnapX, mSnapY);
                 rotate(ghost.rot * 90);
                 if (overallValid) {
-                    tint(255, 127);
+                    tint(255, deToque ? ALPHA_FANTASMA_TOQUE : 127);
                     if (modules[ghost.type]) image(modules[ghost.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
                 } else {
+                    if (deToque) tint(255, ALPHA_RECUSA_TOQUE);   // ainda não pousou: vermelho esbatido
                     if (redModules[ghost.type]) image(redModules[ghost.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
                     else { fill(255, 0, 0); rect(offX, offY, tileSize * dims.len, tileSize * dims.wid); }
                 }
@@ -3833,9 +3875,23 @@ function dimensoesDaFolha(idx, deitada) {
 // pesava na ferramenta inteira.
 var miniaturasCartaz = {};
 
-function esquecerMiniatura(k) {
-    if (miniaturasCartaz[k]) { miniaturasCartaz[k].g.remove(); delete miniaturasCartaz[k]; }
+// Tira uma p5.Graphics de cena e devolve já a memória dela. No Safari a de uma
+// tela só volta quando o lixo é recolhido, e até lá conta para o limite de
+// memória das telas — passado esse limite, as telas novas ficam em branco.
+function libertarGraphics(pg) {
+    if (pg.tintCanvas) { pg.tintCanvas.width = 0; pg.tintCanvas.height = 0; }
+    pg.elt.width = 0; pg.elt.height = 0;
+    pg.remove();
 }
+
+function esquecerMiniatura(k) {
+    if (miniaturasCartaz[k]) { libertarGraphics(miniaturasCartaz[k].g); delete miniaturasCartaz[k]; }
+}
+
+// Ao voltar a esta aba, todas se refazem (ver desenharMiniaturaCartaz).
+document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) for (var k in miniaturasCartaz) miniaturasCartaz[k].desenhadaEm = -10;
+});
 
 function desenharMiniaturaCartaz(k, x, y, tam) {
     var objs = (k === currentChar) ? placedObjects
@@ -3852,12 +3908,17 @@ function desenharMiniaturaCartaz(k, x, y, tam) {
     var assinatura = [f.idx, f.landscape, lado, currentVisualTheme].join(',') + '|' + partes.join(';');
 
     var m = miniaturasCartaz[k];
-    if (!m || m.assinatura !== assinatura) {
+    // Uma miniatura que não foi desenhada no frame anterior (estava fora da
+    // lista com scroll, ou a lista não estava à vista) faz-se de novo, numa
+    // tela nova. No iPad, o Safari pode largar a imagem de uma tela escondida
+    // que ninguém usa, e a miniatura voltava em branco ao rolar a lista.
+    var voltou = m && m.desenhadaEm !== frameCount - 1 && m.desenhadaEm !== frameCount;
+    if (!m || m.assinatura !== assinatura || voltou) {
         // Do mesmo tamanho, aproveita-se a imagem: a pintar, a miniatura do
         // cartaz aberto muda a cada peça, e criar uma tela nova de cada vez
         // era trabalho deitado fora.
         var g;
-        if (m && m.lado === lado) g = m.g;
+        if (m && m.lado === lado && !voltou) g = m.g;
         else {
             esquecerMiniatura(k);
             g = createGraphics(lado, lado);
@@ -3897,6 +3958,7 @@ function desenharMiniaturaCartaz(k, x, y, tam) {
         }
         m = miniaturasCartaz[k] = { assinatura: assinatura, g: g, lado: lado };
     }
+    m.desenhadaEm = frameCount;
     push();
     imageMode(CORNER);
     image(m.g, x, y, lado, lado);
@@ -3935,10 +3997,14 @@ function geometriaDosCartazes() {
     return { topo: topo, fundo: fundo, linhas: linhas, novo: novo, accoes: accoes, total: lista.length };
 }
 
-// Um elemento da lista só responde se estiver inteiro dentro da zona com scroll
-// — meio escondido debaixo do cabeçalho ou do rodapé, não.
-function visivelNaLista(b, geo) {
-    return b.y - b.h / 2 >= geo.topo && b.y + b.h / 2 <= geo.fundo;
+// Um elemento da lista desenha-se assim que toca na zona com scroll, cortado
+// pelo clip da barra lateral, e responde na parte que se vê — como as linhas
+// dos cartazes. Desenhado só quando inteiro, o "+ New artboard" e os botões de
+// baixo sumiam e voltavam de repente a meio do scroll. A parte escondida não
+// responde: os cliques fora da zona já não chegam aqui (ver o `livre` e o
+// início do cliqueNaListaDeCartazes).
+function tocaNaLista(b, geo) {
+    return b.y + b.h / 2 > geo.topo && b.y - b.h / 2 < geo.fundo;
 }
 
 // Sem cartaz aberto (a tela ainda por escolher) não há a que aplicar as acções.
@@ -4010,7 +4076,9 @@ function desenharListaDeCartazes() {
     var geo = geometriaDosCartazes();
     var g = globalScale;
     var dica = null;
-    var livre = !showShortcutsModal && mouseY > geo.topo && mouseY < geo.fundo;
+    // Sem realce nem dica enquanto o dedo rola a lista, nem depois de ele
+    // levantar (ficavam parados onde o dedo saiu).
+    var livre = !showShortcutsModal && mouseY > geo.topo && mouseY < geo.fundo && pairaLivre();
 
     for (var i = 0; i < geo.linhas.length; i++) {
         var r = geo.linhas[i];
@@ -4039,7 +4107,7 @@ function desenharListaDeCartazes() {
 
     // + New artboard: o mesmo desenho do Preview word, que fecha o alfabeto.
     var b = geo.novo;
-    if (visivelNaLista(b, geo)) {
+    if (tocaNaLista(b, geo)) {
         var sobreNovo = livre && dentroDe(b);
         push();
         rectMode(CENTER);
@@ -4056,7 +4124,7 @@ function desenharListaDeCartazes() {
     // Duplicar, mudar o nome, apagar — sempre sobre o cartaz aberto.
     for (var a = 0; a < geo.accoes.length; a++) {
         var ac = geo.accoes[a];
-        if (!visivelNaLista(ac, geo)) continue;
+        if (!tocaNaLista(ac, geo)) continue;
         var pode = accaoDisponivel(ac.id, geo);
         var sobreAc = livre && dentroDe(ac);
         var perigo = (ac.id === 'apagar');
@@ -4104,10 +4172,10 @@ function cliqueNaListaDeCartazes() {
     // para debaixo do ponteiro — um duplo clique em Duplicate dava uma cópia
     // e mais um cartaz vazio.
     if (cliqueRepetido) return;
-    if (visivelNaLista(geo.novo, geo) && dentroDe(geo.novo)) { novoCartaz(false); return; }
+    if (tocaNaLista(geo.novo, geo) && dentroDe(geo.novo)) { novoCartaz(false); return; }
     for (var a = 0; a < geo.accoes.length; a++) {
         var ac = geo.accoes[a];
-        if (!visivelNaLista(ac, geo) || !dentroDe(ac)) continue;
+        if (!tocaNaLista(ac, geo) || !dentroDe(ac)) continue;
         if (!accaoDisponivel(ac.id, geo)) return;
         if (ac.id === 'duplicar') novoCartaz(true);
         else if (ac.id === 'renomear') renomearCartaz(currentChar);
@@ -4478,7 +4546,9 @@ function drawUI() {
         stroke(selectedModule == i ? [0, 200, 0] : 238);
         strokeWeight(0.75); rect(mx, my, tBoxSize, tBoxSize, 6 * globalScale);
         var dims = getModuleDims(i); var maxD = max(dims.len, dims.wid);
-        if (modules[i]) image(modules[i], mx, my, (dims.len / maxD) * (tBoxSize - 10), (dims.wid / maxD) * (tBoxSize - 10));
+        // A folga à volta do ícone escala com a caixa: fixa em 10 px, num
+        // telemóvel deixava os módulos da paleta com 2 px.
+        if (modules[i]) image(modules[i], mx, my, (dims.len / maxD) * (tBoxSize - 10 * globalScale), (dims.wid / maxD) * (tBoxSize - 10 * globalScale));
     }
 
     // --- LINHA 3: SEGMENTED CONTROLS ---
@@ -4584,7 +4654,7 @@ function drawUI() {
     for (var i = 0; !modoCartaz && i < characters.length; i++) {
         var col = i % 3; var row = floor(i / 3); var x = toolStartX + (col * toolGapX); var y = charStartY + (row * charGapY);
         if (y > charTop - cSize && y < effectiveBottom - bottomPanelH + cSize) {
-            var isH = (mouseX > x - cSize / 2 && mouseX < x + cSize / 2 && mouseY > y - cSize / 2 && mouseY < y + cSize / 2 && mouseY > topBarHeight && mouseY < effectiveBottom - bottomPanelH);
+            var isH = pairaLivre() && (mouseX > x - cSize / 2 && mouseX < x + cSize / 2 && mouseY > y - cSize / 2 && mouseY < y + cSize / 2 && mouseY > topBarHeight && mouseY < effectiveBottom - bottomPanelH);
             if (characters[i] == currentChar && !telaPorEscolher) { fill(220); stroke([0, 200, 0]); strokeWeight(0.75); } else if (characters[i] === letraReferencia) { fill(isH ? 235 : 249); stroke(120); strokeWeight(0.75); } else if (isH) { fill(235); stroke(238); strokeWeight(0.75); } else { fill(249); stroke(238); strokeWeight(0.75); }
             // A paira, anuncia o gesto; com o Shift já em baixo, anuncia o que
             // vai acontecer. Estando escondida até se carregar no Shift, a letra
@@ -4615,7 +4685,7 @@ function drawUI() {
                          (btnPreview.y - btnPreview.h / 2 > charTop &&
                           btnPreview.y + btnPreview.h / 2 < effectiveBottom - bottomPanelH);
 
-    var sobrePreview = !showShortcutsModal && btnPreview.visivel && dentroDe(btnPreview);
+    var sobrePreview = !showShortcutsModal && btnPreview.visivel && dentroDe(btnPreview) && pairaLivre();
     push(); rectMode(CENTER);
     if (!modoCartaz) {
     fill(showWordPreview ? [220, 255, 220] : (sobrePreview ? 235 : 249));
@@ -4707,12 +4777,14 @@ var MANUAL = [
     { t: 'cat', s: 'Touch & pen', tactil: true },
 
     { t: 'h', s: 'Drawing', tactil: true },
-    { t: 'li', s: 'A finger or a pen does what the mouse does: pick a module at the top, then tap or drag on the artboard', tactil: true },
+    { t: 'li', s: 'Pick a module at the top, then touch the artboard: the module follows your finger or pen in light grey, and is placed when you lift. One placement per touch (with its mirrored copies, if symmetry is on)', tactil: true },
+    { t: 'li', s: 'Red means it does not fit there. To place nothing, slide off onto the side list or one of the bars before lifting', tactil: true },
+    { t: 'li', s: 'The eraser, Move / select and the Hand work as with the mouse: the eraser erases as you drag', tactil: true },
 
     { t: 'h', s: 'Two fingers', tactil: true },
     { t: 'li', s: 'Pinch to zoom in and out, and drag with two fingers to move the artboard', tactil: true },
-    { t: 'li', s: 'If the second finger lands right after the first, whatever the first one did is taken back: it was the start of the gesture, not drawing', tactil: true },
-    { t: 'li', s: 'With a pen, a hand resting on the screen is ignored: it does not zoom, and the stroke carries on', tactil: true },
+    { t: 'li', s: 'A second finger turns the touch into a zoom: the module being dragged is not placed', tactil: true },
+    { t: 'li', s: 'With a pen, a hand resting on the screen is ignored: it does not zoom, and the pen carries on', tactil: true },
 
     { t: 'h', s: 'Lists', tactil: true },
     { t: 'li', s: 'Drag the side list, or this guide, with one finger to scroll it. A tap opens; a drag only scrolls', tactil: true },
@@ -4720,8 +4792,8 @@ var MANUAL = [
     { t: 'li', s: 'In Poster mode, rename a poster with the middle button below the list — double-clicking is for the mouse', tactil: true },
 
     { t: 'h', s: 'The bar at the bottom', tactil: true },
-    { t: 'li', s: 'Stands in for the keyboard shortcuts: Select all, Copy, Cut, Paste, Paste in place, Duplicate and Delete. The ones that do not apply yet are greyed out', tactil: true },
-    { t: 'li', s: 'Add: while it is on, tapping a module adds it to the selection, or takes it out — on a computer this is Shift-click', tactil: true },
+    { t: 'li', s: 'Stands in for the keyboard: Select all, Shift, Copy, Cut, Paste, Paste in place, Duplicate and Delete. The ones that do not apply yet are greyed out', tactil: true },
+    { t: 'li', s: 'Shift stands in for holding the Shift key on the artboard, and stays on (green) until you tap it again. While it is on, with Move / select, tapping a module adds it to the selection or takes it out, and a box adds to the selection instead of replacing it. It does not act on the side list: to pin a reference letter, hold it there', tactil: true },
     { t: 'li', s: 'Paste puts the copy next to the original; Paste in place puts it exactly where it was copied from, even on another artboard', tactil: true },
 
     { t: 'cat', s: 'Working modes' },
@@ -7159,15 +7231,21 @@ function clearEntireAlphabet() {
 // Apple Pencil antes disto. O que falta é o que o rato não tem: deslocar e
 // fazer zoom com dois dedos, rolar listas com o dedo, um Shift e atalhos sem
 // teclado. Tudo aqui só entra em jogo com toque — com rato, nada muda.
+//
+// Sem hover, o toque também não tinha o fantasma que mostra onde a peça vai
+// cair. Por isso, com um módulo escolhido, o dedo ou a caneta arrasta-o em
+// cinzento claro e a peça só pousa quando se levanta (uma por toque).
 
 // Aparelho táctil: decide se a barra de atalhos aparece. Confirma-se também
 // ao primeiro toque, para os aparelhos que não o anunciam.
 var ecraTatil = ((navigator.maxTouchPoints || 0) > 0) ||
                 !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
 
-var ESPERA_DO_DEDO = 90;        // ms antes de um dedo pousar peças (ver handleInteraction)
+var ESPERA_DO_DEDO = 90;        // ms antes de um dedo apagar, ou de mostrar o fantasma (ver handleInteraction)
 var LIMIAR_DO_ARRASTO = 10;     // px: abaixo disto um toque é um toque, não um arrasto
 var DURACAO_TOQUE_LONGO = 500;  // ms: fixar a letra de referência
+var ALPHA_FANTASMA_TOQUE = 70;  // o módulo a ser arrastado: mais claro do que o fantasma do rato (127)
+var ALPHA_RECUSA_TOQUE = 170;   // o mesmo, quando ali não cabe
 
 var toque = {
     ativo: false,          // há um dedo ou caneta em baixo
@@ -7186,8 +7264,27 @@ var toque = {
     importar: false,       // abrir o Import no fim deste toque
     esperou: false,        // a espera do dedo já passou neste toque (ver aoAcabarToque)
     id: null,              // o identificador do toque que manda (a caneta, se pousou)
-    restoDaMao: false      // o dono levantou e ficaram outros dedos: ignoram-se até saírem
+    restoDaMao: false,     // o dono levantou e ficaram outros dedos: ignoram-se até saírem
+    aLevantar: false,      // só dentro do acabarDono: é agora que o módulo pousa
+    celulaFantasma: null   // onde o fantasma foi desenhado pela última vez: é aí que pousa
 };
+
+// Com um módulo escolhido, um toque na prancheta não pinta: arrasta o
+// fantasma, e o módulo pousa ao levantar. A borracha, a seleção, a Mão e as
+// guias continuam como estavam.
+function pousarAoLevantar() {
+    return toque.ativo && toque.zona === 'tela' && selectedModule >= 0;
+}
+
+// Depois de levantar o dedo, não há ponteiro em cima da prancheta: o fantasma
+// e os realces de "passar por cima" não ficam parados onde o dedo saiu (sobre
+// a peça acabada de pousar ficava vermelho, ou uma célula ao lado). Volta com
+// o rato, ou com a caneta a pairar.
+var toqueLevantado = false;
+
+// Passar por cima de um elemento da barra lateral só conta com um ponteiro a
+// pairar: não com um dedo a rolar a lista, nem depois de ele levantar.
+function pairaLivre() { return !(toque.ativo && toque.moveu) && !(toqueLevantado && !toque.ativo); }
 
 function eToque(ev) { return !!(ev && ev.type && String(ev.type).indexOf('touch') === 0); }
 function naTela(ev) { return !!(ev && ev.target && ev.target.tagName === 'CANVAS'); }
@@ -7278,6 +7375,9 @@ function iniciarToque(t) {
     toque.ignorarFim = false;
     toque.aguardarLevantar = false;
     toque.importar = false;
+    toque.aLevantar = false;
+    toque.celulaFantasma = null;
+    toqueLevantado = false;
     toque.zona = zonaDoToque(p.x, p.y);
     toque.adiar = (toque.zona === 'lista' || toque.zona === 'manual');
     toque.antes = null;
@@ -7363,6 +7463,10 @@ function comecarDono(e, t) {
     var p = pontoDoToque(t);
     porPonteiro(p.x, p.y, true);
     porPressao(true);
+    // O toque que fechou um menu, o manual ou o campo da palavra já foi
+    // largado: sem isto, o primeiro módulo a seguir não pousava ao levantar.
+    // Se for este toque a fechar alguma coisa, o mousePressed volta a ligá-lo.
+    suppressDrawUntilRelease = false;
     mousePressed(e);
 }
 
@@ -7490,6 +7594,7 @@ function aoAcabarToque(e) {
         } else {
             toque.gesto = null;
             toque.ativo = false;
+            toqueLevantado = true;
             toque.aguardarLevantar = e.touches.length > 0;   // o dedo que fica não desenha
         }
     } else {
@@ -7502,6 +7607,7 @@ function aoAcabarToque(e) {
         toque.aguardarLevantar = false;
         toque.restoDaMao = false;
         toque.fim = Date.now();
+        toqueLevantado = true;
         porPressao(false);
     }
 }
@@ -7512,10 +7618,18 @@ function acabarDono(e, t) {
     porPonteiro(p.x, p.y);
     clearTimeout(toque.temporizador);
     if (e.type === 'touchend') {
-        // Um toque rápido no artboard acaba antes da espera do dedo: pousa (ou
-        // apaga) uma vez onde o dedo esteve. A espera serve para dar tempo ao
-        // segundo dedo, não para engolir o toque. O "rato" ainda está em baixo.
-        if (toque.zona === 'tela' && !toque.ignorarFim && !toque.esperou) {
+        // Com um módulo: pousa agora, uma vez, onde estava o fantasma — pelo
+        // mesmo caminho de um clique de rato (recusas, histórico, simetria).
+        // Levantar sobre uma barra ou a lista não pousa nada; o touchcancel
+        // (gesto do sistema, palma) também não, porque não passa por aqui.
+        if (toque.zona === 'tela' && !toque.ignorarFim && selectedModule >= 0) {
+            toque.aLevantar = true;
+            try { handleInteraction(); } finally { toque.aLevantar = false; toque.celulaFantasma = null; }
+        }
+        // A borracha: um toque rápido acaba antes da espera do dedo e apaga uma
+        // vez onde o dedo esteve. A espera serve para dar tempo ao segundo
+        // dedo, não para engolir o toque. O "rato" ainda está em baixo.
+        else if (toque.zona === 'tela' && !toque.ignorarFim && !toque.esperou) {
             toque.t0 = -Infinity;
             handleInteraction();
         }
@@ -7534,6 +7648,7 @@ function acabarDono(e, t) {
     // mesma, para o "rato" não ficar em baixo a pintar sozinho.
     if (!toque.ignorarFim) mouseReleased(e.type === 'touchcancel' ? null : e);
     toque.ativo = false;
+    toqueLevantado = true;   // mesmo com a palma ou outro dedo ainda pousados
     toque.antes = null;
     // Ficaram outros dedos (a mão apoiada): ignoram-se até saírem. Uma caneta
     // que volte a pousar entretanto manda outra vez.
@@ -7554,10 +7669,10 @@ document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, 
 // --- BARRA DE ATALHOS (só em aparelhos tácteis) ---
 // O que no computador são atalhos de teclado, aqui são botões, sempre no
 // mesmo sítio, ao fundo da prancheta. Chamam exactamente as mesmas funções.
-var modoJuntar = false;   // Add: cada toque numa peça junta-a à seleção (ou tira-a), como o Shift
+var modoJuntar = false;   // Shift: cada toque numa peça junta-a à seleção (ou tira-a), como a tecla Shift — fica ligado até se tocar outra vez
 var BOTOES_DE_TOQUE = [
     { id: 'tudo', texto: 'Select all' },
-    { id: 'juntar', texto: 'Add' },
+    { id: 'juntar', texto: 'Shift' },
     { id: 'copiar', texto: 'Copy' },
     { id: 'cortar', texto: 'Cut' },
     { id: 'colar', texto: 'Paste' },
@@ -8589,8 +8704,8 @@ function iniciarSessao() {
 }
 
 // Os ponteiros passam para a sessão também fora das mudanças de trabalho: um
-// dedo só conta quando levanta, já depois de as peças estarem pousadas, e a
-// sessão é enviada sem esperar por outra mudança.
+// dedo só conta quando levanta (o pointerup chega antes do touchend, em que o
+// módulo pousa), e a sessão é enviada sem esperar por outra mudança.
 function copiarEntradaParaSessao() {
     if (!sessao) return;
     sessao.ptrRato = acoes.ptrRato;
@@ -8646,7 +8761,20 @@ window.addEventListener('pointerup', fimDoPonteiro, true);
 window.addEventListener('pointercancel', fimDoPonteiro, true);
 // As dicas seguem o ponteiro que se está a usar, não o aparelho: num portátil
 // com ecrã táctil usado com rato, "Hold…" não servia de nada.
-window.addEventListener('pointermove', function (e) { ponteiroDaDica = e.pointerType; }, true);
+window.addEventListener('pointermove', function (e) {
+    ponteiroDaDica = e.pointerType;
+    // O rato, ou uma caneta a pairar sem tocar (a Apple Pencil nos iPad que o
+    // permitem, ou uma Wacom), voltam a ter fantasma depois de um toque. A
+    // Pencil a pairar sobre a prancheta passa também a movê-lo, sem desenhar.
+    if (e.pointerType === 'mouse' || (e.pointerType === 'pen' && !e.buttons)) {
+        toqueLevantado = false;
+        if (e.pointerType === 'pen' && ecraTatil && !toque.ativo && naTela(e)) porPonteiro(e.clientX, e.clientY);
+    }
+}, true);
+// A caneta que deixa de pairar leva o fantasma com ela.
+window.addEventListener('pointerout', function (e) {
+    if (e.pointerType === 'pen' && ecraTatil && !toque.ativo && naTela(e)) toqueLevantado = true;
+}, true);
 // Uma caneta só segura como um dedo se der toques (a Apple Pencil); uma caneta
 // de mesa (Wacom) dá cliques de rato, e com ela vale o Shift-clique.
 var canetaTactil = false;
@@ -8754,9 +8882,9 @@ function registarActividade() {
     sessao.trocasDeModo = acoes.trocasDeModo;
     sessao.recusas = acoes.recusas;              // todas, cartazes incluídos
     sessao.recusasCartaz = acoes.recusasCartaz;  // a parte feita em cartazes
-    // Com que se desenhou. Dedo e rato não se comparam: sem hover não há o
-    // aviso vermelho antes de pousar, e o dedo é menos preciso — recusas e
-    // undos de uma sessão de toque não são as de uma sessão de rato.
+    // Com que se desenhou. Dedo e rato não se comparam: no toque o módulo é
+    // arrastado e pousa ao levantar, um por toque, e o dedo é menos preciso —
+    // recusas e undos de uma sessão de toque não são as de uma sessão de rato.
     copiarEntradaParaSessao();
     sessao.undos = acoes.undos;
     sessao.preview = acoes.preview;
