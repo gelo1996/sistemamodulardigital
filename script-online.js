@@ -98,9 +98,21 @@ var characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
 // letra, entrar no modo cartaz destruía o que lá estivesse. E ficando fora do
 // array `characters`, não entra nas contagens do alfabeto — um cartaz não é uma
 // letra e não deve inflacionar as estatísticas.
+//
+// Pode haver vários cartazes, cada um com a sua prancheta. O primeiro guarda a
+// chave de sempre, '@CARTAZ', para que autosaves, ficheiros e linhas da folha
+// Letras antigos continuem a apontar para ele; os seguintes são '@CARTAZ2',
+// '@CARTAZ3'… A entrada de cada um no storedCharacters leva também o nome que
+// a pessoa lhe deu (`nome`) e o formato da folha (`formato`, `landscape`): cada
+// cartaz tem o seu, e o alfabeto o dele, à parte.
 var CHAVE_CARTAZ = '@CARTAZ';
 var modoCartaz = false;
 var charAntesDoCartaz = 'A';
+var cartazAtual = CHAVE_CARTAZ;   // o cartaz que reabre ao voltar ao modo
+// No cartaz, currentArtboardIdx e isLandscape são os do cartaz aberto; o
+// formato do alfabeto espera aqui até se voltar a ele.
+var formatoAlfabeto = { idx: 0, landscape: false };
+var cartazScrollY = 0;            // a lista de cartazes rola à parte do alfabeto
 var currentChar = "A";
 
 // Opções e Modos
@@ -199,6 +211,11 @@ function preload() {
     toolIcons.avancar = loadImage(BASE_PATH + 'avancar.svg');
     toolIcons.limparLetra = loadImage(BASE_PATH + 'limpar-letra.svg');
     toolIcons.limparAlfabeto = loadImage(BASE_PATH + 'limpar-alfabeto.svg'); // <-- ADICIONE AQUI
+    // Com aviso de falha: sem ele, o p5 fica à espera de um SVG que não chegue
+    // (por exemplo, se ainda não tiver sido posto no GitHub) e a ferramenta
+    // nunca arranca. Assim, falta o ícone e fica o desenho à mão.
+    toolIcons.copiar = loadImage(BASE_PATH + 'copy.svg', null, function () {});
+    toolIcons.lapis = loadImage(BASE_PATH + 'pencil.svg', null, function () {});
     toolIcons.moverTela = loadImage(BASE_PATH + 'mover-tela.svg');
 
     toolIcons.importar = loadImage(BASE_PATH + 'importar.svg');
@@ -256,19 +273,28 @@ function isObjInsideArtboard(obj) {
 // Uma vez por visita, e não guardado: o aviso é para não apanhar ninguém
 // desprevenido, não para ser lido sempre. Recomeça a cada visita porque é aí
 // que se volta a mexer em trabalho que se tinha esquecido.
-var jaAvisouDaFolha = false;
+// Um aviso para o alfabeto e outro para os cartazes: aceitar aparar um cartaz
+// não é aceitar que as 36 letras passem a ser aparadas sem pergunta.
+var jaAvisouDaFolha = { alfabeto: false, cartaz: false };
+
+// As telas a que a folha actual se aplica: no alfabeto, as 36 letras, que
+// partilham o formato; no cartaz, só o cartaz aberto, que tem o seu.
+function telasDaFolha() {
+    return modoCartaz ? [currentChar] : characters;
+}
 
 // Quanto se perderia se a folha mudasse agora. Percorre exactamente o que o
-// cleanup percorre — os caracteres, não o cartaz — senão avisava por causa de
-// peças que depois não chegavam a ser apagadas.
+// cleanup percorre, senão avisava por causa de peças que depois não chegavam a
+// ser apagadas.
 function contarForaDoArtboard() {
     saveCharacter(currentChar);
     var modulos = 0, chars = [];
-    for (var i = 0; i < characters.length; i++) {
-        var store = storedCharacters[characters[i]];
+    var telas = telasDaFolha();
+    for (var i = 0; i < telas.length; i++) {
+        var store = storedCharacters[telas[i]];
         if (!store || store.objects.length === 0) continue;
         var fora = store.objects.length - store.objects.filter(isObjInsideArtboard).length;
-        if (fora > 0) { modulos += fora; chars.push(characters[i]); }
+        if (fora > 0) { modulos += fora; chars.push(telas[i]); }
     }
     return { modulos: modulos, chars: chars };
 }
@@ -278,16 +304,32 @@ function contarForaDoArtboard() {
 // distraído leva trabalho de várias letras à frente. Por isso avisa-se — e
 // dizer que não desfaz a própria mudança, em vez de a deixar meia aplicada.
 function aplicarMudancaDeFolha(mudar, repor) {
+    // Cartazes antigos, ainda sem formato próprio, seguiam o do alfabeto por o
+    // partilharem. Mudando a folha do alfabeto, ficam com a que tinham — como
+    // diz o manual, o alfabeto e os cartazes guardam cada um a sua. Só os que
+    // têm desenho e cabem nesta folha: um vazio, ou um vindo de um ficheiro
+    // desenhado noutra folha, continua a seguir o alfabeto até ser aberto.
+    if (!modoCartaz) {
+        listaDeCartazes().forEach(function (k) {
+            var e = storedCharacters[k];
+            if (!temFormatoProprio(e) && e.objects.length > 0 && e.objects.every(isObjInsideArtboard)) {
+                e.formato = currentArtboardIdx;
+                e.landscape = isLandscape;
+            }
+        });
+    }
+    var contexto = modoCartaz ? 'cartaz' : 'alfabeto';
     mudar();
     updateArtboardBounds();
 
     var fora = contarForaDoArtboard();
-    if (fora.modulos > 0 && !jaAvisouDaFolha) {
-        var quais = fora.chars.join(', ');
+    if (fora.modulos > 0 && !jaAvisouDaFolha[contexto]) {
+        var quais = modoCartaz ? '"' + nomeDoCartaz(currentChar) + '"' : fora.chars.join(', ');
         var msg = 'This sheet is smaller. ' + fora.modulos +
                   (fora.modulos === 1 ? ' module falls' : ' modules fall') +
                   ' outside it and will be deleted, in: ' + quais +
-                  '.\n\nEach letter can be recovered one at a time with undo.\n\n' +
+                  (modoCartaz ? '.\n\nThey can be recovered with undo.\n\n'
+                              : '.\n\nEach letter can be recovered one at a time with undo.\n\n') +
                   'This is only asked once — after this, changing sheet trims straight away.\n\nContinue?';
         if (!perguntar(msg)) {
             repor();
@@ -296,10 +338,17 @@ function aplicarMudancaDeFolha(mudar, repor) {
         }
         // Só depois de aceitar. Quem recusou não aprendeu a regra à custa de
         // perder nada, por isso continua a ser avisado.
-        jaAvisouDaFolha = true;
+        jaAvisouDaFolha[contexto] = true;
     }
 
     cleanupOutOfBoundsModules();
+    // No cartaz, o formato pertence ao cartaz aberto: fica gravado na entrada
+    // dele, e o alfabeto continua com o seu.
+    if (modoCartaz && storedCharacters[currentChar]) {
+        storedCharacters[currentChar].formato = currentArtboardIdx;
+        storedCharacters[currentChar].landscape = isLandscape;
+        guardarTrabalho();   // um cartaz vazio não mexe na assinatura do autosave
+    }
     panX = 0; panY = 0; calculateLayout();
     return true;
 }
@@ -307,8 +356,9 @@ function aplicarMudancaDeFolha(mudar, repor) {
 function cleanupOutOfBoundsModules() {
     saveCharacter(currentChar); // garante que a letra atual está na memória antes do varrimento
 
-    for (var i = 0; i < characters.length; i++) {
-        var char = characters[i];
+    var telas = telasDaFolha();
+    for (var i = 0; i < telas.length; i++) {
+        var char = telas[i];
         var store = storedCharacters[char];
         if (!store || store.objects.length === 0) continue;
 
@@ -340,6 +390,15 @@ function forceCanvasLayout(cnv) {
         el.style.setProperty('top', '0', 'important');
         el.style.setProperty('left', '0', 'important');
         el.style.setProperty('z-index', '9998', 'important');
+        // Toque: o canvas é que decide o que fazem os dedos. Sem isto o
+        // browser fazia zoom à página com dois dedos, seleccionava texto ou
+        // abria o menu do toque longo por cima da ferramenta. Por JS, como o
+        // resto, porque o Cargo esvazia o CSS do embed. Com rato não muda nada.
+        el.style.setProperty('touch-action', 'none', 'important');
+        el.style.setProperty('user-select', 'none', 'important');
+        el.style.setProperty('-webkit-user-select', 'none', 'important');
+        el.style.setProperty('-webkit-touch-callout', 'none', 'important');
+        el.style.setProperty('-webkit-tap-highlight-color', 'transparent', 'important');
     }
     var nodes = [document.body, document.documentElement];
     for (var i = 0; i < nodes.length; i++) {
@@ -421,7 +480,7 @@ function calculateLayout() {
     // a interface inteira encolhe.
     var nModulos = (typeof modules !== 'undefined' && modules.length) ? modules.length : 22;
     var fimDaPaleta = 30 + (nModulos - 1) * 45 + 34 / 2;
-    var idealTotalWidth = fimDaPaleta + 11 + 100 + 18;   // paleta · intervalo · menu · margem
+    var idealTotalWidth = fimDaPaleta + 11 + LARGURA_BOTAO_MENU + 18;   // paleta · intervalo · menu · margem
     globalScale = min(1.0, width / idealTotalWidth);
 
     topBarHeight = 160 * globalScale;
@@ -526,6 +585,7 @@ function draw() {
         drawCustomCursor(); // desenhado ANTES da UI para os fantasmas ficarem por baixo dos painéis
     }
     drawUI();
+    desenharBarraDeToque();
 
     drawShortcutsModal();
     drawWordPreview();
@@ -536,19 +596,11 @@ function draw() {
     // Pousa por cima da miniatura da letra; sem miniatura, encosta ao fundo (ou
     // ao topo da faixa da palavra, para não cair sobre a composição).
     // É uma nota do canvas: com o manual aberto não deve flutuar por cima dele.
-    if (!showShortcutsModal && !telaPorEscolher) {
-        var reg = getReguaBounds();
-        var meiaAltura = 14 * globalScale;
-        var contCy;
-        if (reg.visivel) contCy = reg.y - 6 * globalScale - meiaAltura - 8 * globalScale;
-        else if (showWordPreview) contCy = getPreviewBounds().y - meiaAltura - 8 * globalScale;
-        else contCy = height - meiaAltura - 14 * globalScale;
-        // Só se desenha se couber abaixo da barra de ferramentas.
-        if (contCy - meiaAltura > topBarHeight + 8 * globalScale) {
-            desenharPilula('modules: ' + placedObjects.length,
-                           reg.x + reg.tam / 2, contCy, [249, 235], [120],
-                           { largura: reg.tam + 12 * globalScale, contorno: 238 });
-        }
+    var pil = getContagemBounds();
+    if (pil) {
+        desenharPilula('modules: ' + placedObjects.length,
+                       pil.cx, pil.cy, [249, 235], [120],
+                       { largura: pil.largura, contorno: 238 });
     }
 
     verificarAutosave();
@@ -557,12 +609,30 @@ function draw() {
 }
 
 function handleInteraction() {
+    // Sem tela escolhida não há onde desenhar. O draw() já não chama isto
+    // nesse caso; a camada de toque chama-o ao fim de um toque rápido, e sem
+    // esta linha pousava uma peça escondida atrás do convite.
+    if (telaPorEscolher) return;
     // Bloqueia o desenho se o manual estiver aberto, ou se o rato estiver
     // sobre a faixa da pré-visualização (fora dela continua tudo a funcionar)
     if (interfaceBloqueada()) return;
     if (menuAberto) return;
     if (showShortcutsModal) return;
     if (sobreFaixaPreview()) return;
+    if (sobreBarraDeToque()) return;
+    // Dois dedos são zoom, não desenho — nem o dedo que fica depois de um sair.
+    if (toque.gesto || toque.aguardarLevantar) return;
+    // Só um toque que começou na prancheta pousa ou apaga: arrastar a lista,
+    // ou partir de uma barra, e escorregar para o artboard não é desenhar.
+    if (toque.ativo && toque.zona !== 'tela') return;
+    // Um dedo espera um instante antes de pousar peças: se o segundo chegar
+    // logo a seguir é um zoom, e assim não fica uma peça pousada por engano.
+    // A caneta não espera — com ela não há zoom de dois dedos.
+    if (toque.ativo && !toque.caneta && Date.now() - toque.t0 < ESPERA_DO_DEDO) return;
+    // A primeira vez que a espera passa, num traço rápido o dedo já saiu da
+    // célula onde pousou: essa célula também conta (ver mais abaixo).
+    var primeiroDoToque = toque.ativo && !toque.esperou;
+    if (toque.ativo) toque.esperou = true;
 
     // O clique que fechou o modal não pode desenhar: espera que o rato seja largado
     if (suppressDrawUntilRelease) {
@@ -573,6 +643,16 @@ function handleInteraction() {
     if (keyIsDown(32) || selectedModule === -3) return;
     if (mouseIsPressed && mouseButton == LEFT) {
         if (draggedGuide) return;
+
+        if (primeiroDoToque && (toque.x0 !== mouseX || toque.y0 !== mouseY)) {
+            var mxAgora = mouseX, myAgora = mouseY;
+            mouseX = toque.x0; mouseY = toque.y0;     // onde o dedo pousou
+            if (mouseX > sidebarWidth && mouseY > topBarHeight) {
+                if (selectedModule >= 0 && !selectionBox.active && !isDraggingSelection) attemptSetTile(selectedModule);
+                else if (selectedModule == -1 && !selectionBox.active && !isDraggingSelection) attemptDeleteTile();
+            }
+            mouseX = mxAgora; mouseY = myAgora;
+        }
 
         if (mouseX > sidebarWidth && mouseY > topBarHeight) {
             if (selectedModule >= 0 && !selectionBox.active && !isDraggingSelection) attemptSetTile(selectedModule);
@@ -617,6 +697,19 @@ function getHoveredGuide() {
 }
 
 function mousePressed(evento) {
+    arrastoComecouNaTela = false;
+    // Toques fora do canvas (formulários, menus, a caixa de texto) são do
+    // HTML: o p5 escuta a janela inteira, e sem isto um toque numa opção do
+    // menu fechava o menu antes de a opção o receber.
+    // O p5 continua a ver esses toques e dá o "rato" por carregado: o dedo
+    // que parte da caixa de texto e escorrega para a prancheta não desenha.
+    if (eToque(evento) && !naTela(evento)) { suppressDrawUntilRelease = true; return; }
+    // Toques que a camada de toque está a tratar (lista e manual decidem no
+    // fim do toque se foi toque ou arrasto; dois dedos são zoom).
+    if (eToque(evento) && (toque.adiar || toque.gesto)) return false;
+    // O clique de rato que o browser fabrica a seguir a um toque: o toque já
+    // foi tratado, e tratá-lo duas vezes abria e fechava as secções do manual.
+    if (eRatoDeCompatibilidade(evento)) return false;
     if (interfaceBloqueada()) return;
     // Um menu aberto apanha o próximo clique: fecha-se, e o clique não passa
     // para o canvas — senão fechar o menu deixava um módulo no artboard.
@@ -626,6 +719,18 @@ function mousePressed(evento) {
         return;
     }
     shiftNoClique = evento ? !!evento.shiftKey : keyIsDown(SHIFT);
+    // No toque não há Shift: o botão Add da barra de baixo faz as vezes dele,
+    // só no canvas — na lista, a letra de referência fixa-se com toque longo.
+    if (modoJuntar && mouseX > sidebarWidth && mouseY > topBarHeight) shiftNoClique = true;
+    cliqueRepetido = evento ? evento.detail > 1 : false;
+    // A ferramenta Mão (e o Espaço) só desloca a prancheta se o arrasto
+    // começar nela. Começando na barra lateral ou na de cima, arrastar a
+    // lista das letras com o dedo movia a prancheta por baixo da interface.
+    arrastoComecouNaTela = !showShortcutsModal && mouseX > sidebarWidth && mouseY > topBarHeight &&
+                           !(showWordPreview && sobreFaixaPreview()) && !sobreBarraDeToque() &&
+                           !sobreNotasDoCanto(mouseX, mouseY);
+    panUltimoX = mouseX; panUltimoY = mouseY;
+    if (cliqueNaBarraDeToque()) return false;
     // Lido do evento, como o Shift: o keyIsDown(ALT) não é de fiar, porque o
     // Option no macOS não gera keydown repetido enquanto se arrasta.
     altNoClique = evento ? !!evento.altKey : false;
@@ -726,7 +831,10 @@ function mousePressed(evento) {
             // por cima do artboard e pode sobrepor-se a módulos.
             if (selectedModule == -2 && selectedObjects.length > 0 && !isDraggingSelection) {
                 var bb = getSelectionBounds();
-                if (bb && dist(mouseX, mouseY, bb.hx, bb.hy) < 12 * globalScale) {
+                // Um dedo não acerta num alvo de 12 px: no toque o punho apanha o
+                // dobro, que continua fora da caixa da seleção.
+                var raioPunho = (eToque(evento) && !toque.caneta ? 24 : 12) * globalScale;
+                if (bb && dist(mouseX, mouseY, bb.hx, bb.hy) < raioPunho) {
                     isRotatingSelection = true;
                     rotateLastAngle = atan2(mouseY - bb.cy, mouseX - bb.cx);
                     ensureRotationBase();
@@ -788,7 +896,9 @@ function mousePressed(evento) {
 
 }
 
-function mouseReleased() {
+function mouseReleased(evento) {
+    if (eToque(evento) && !naTela(evento)) return;
+    if (eToque(evento) && toque.ignorarFim) return false;   // fim de um gesto de dois dedos
     if (isDraggingSlider) { isDraggingSlider = false; return; } // Liberta o slider
     if (isRotatingSelection) {
         isRotatingSelection = false; // o punho volta a seguir a rotação da peça
@@ -2760,7 +2870,13 @@ function attemptSetTile(type) {
         // um segundo em cima de uma peça valia 60 recusas. Só conta quando o
         // alvo muda — uma recusa por tentativa, não por frame.
         var alvo = gridX + ',' + gridY + ',' + type + ',' + currentRotation;
-        if (alvo !== ultimaRecusa) { ultimaRecusa = alvo; acoes.recusas++; }
+        // As do cartaz contam também à parte: cada cartaz tem a sua folha, que
+        // não é recolhida, e o `formatoFinal` só diz a do alfabeto.
+        if (alvo !== ultimaRecusa) {
+            ultimaRecusa = alvo;
+            acoes.recusas++;
+            if (modoCartaz) acoes.recusasCartaz++;
+        }
     }
 }
 
@@ -2938,6 +3054,9 @@ function drawGrid() {
 // esbatida por baixo da atual, para se comparar hastes e larguras sem saltar
 // de artboard. Fica em cinzento e não a preto: é referência, não desenho.
 var shiftNoClique = false;   // Shift no momento do clique, lido do evento
+var cliqueRepetido = false;  // 2.º toque de um duplo clique (evento.detail > 1)
+var arrastoComecouNaTela = false;  // o arrasto em curso começou na prancheta (Mão, Espaço)
+var panUltimoX = 0, panUltimoY = 0;  // onde ia o ponteiro no último passo do arrasto da Mão
 var altNoClique = false;     // Option/Alt no momento do clique: arrastar duplica
 var snapshotAntesDoArrasto = null;   // tabuleiro antes de as peças saírem, para o undo
 
@@ -3212,7 +3331,9 @@ function initAllCharacters() {
             storedCharacters[char] = { objects: [], history: [], redoHistory: [] };
         }
     }
-    if (!storedCharacters[CHAVE_CARTAZ]) {
+    // Só quando não há cartaz nenhum. Recriar o '@CARTAZ' sempre que faltasse
+    // ressuscitava o Poster 1 depois de apagado, ao primeiro redimensionar.
+    if (listaDeCartazes().length === 0) {
         storedCharacters[CHAVE_CARTAZ] = { objects: [], history: [], redoHistory: [] };
     }
 }
@@ -3231,15 +3352,196 @@ function getSeletorModo() {
 }
 function getCharTop() { return topBarHeight + ALTURA_CABECALHO_MODO * globalScale; }
 
-// Alfabeto + cartaz. Usada onde interessa GRAVAR tudo; as contagens continuam a
-// percorrer só `characters`.
-function listaDeTelas() { return characters.concat([CHAVE_CARTAZ]); }
+// Alfabeto + todos os cartazes. Usada onde interessa GRAVAR ou CONTAR tudo —
+// as contagens separam depois o que é cartaz com o eCartaz().
+function listaDeTelas() { return characters.concat(listaDeCartazes()); }
+
+// --- CARTAZES ---
+function eCartaz(c) {
+    return typeof c === 'string' && c.indexOf(CHAVE_CARTAZ) === 0;
+}
+
+// Só as chaves que a própria ferramenta cria: '@CARTAZ', ou '@CARTAZ' seguido
+// de um número a partir de 2. Tudo o que chega de fora (autosave, ficheiro)
+// passa por aqui antes de virar cartaz.
+function chaveDeCartazValida(k) {
+    return k === CHAVE_CARTAZ || /^@CARTAZ([2-9]|[1-9][0-9]+)$/.test(k);
+}
+
+// O número sai da chave: '@CARTAZ' é o 1, '@CARTAZ7' é o 7. É ele que dá o
+// nome por omissão, e por isso apagar o 2 não muda o nome do 3.
+function numeroDoCartaz(k) {
+    var n = parseInt(String(k).slice(CHAVE_CARTAZ.length), 10);
+    return isNaN(n) ? 1 : n;
+}
+
+// Derivada das chaves que existem, e não guardada à parte: um autosave ou um
+// ficheiro antigos, que só têm o '@CARTAZ', dão uma lista certa sem conversão.
+// Ordenada pelo número — por ordem de texto, o @CARTAZ10 vinha antes do 2.
+function listaDeCartazes() {
+    var lista = [];
+    for (var k in storedCharacters) {
+        if (chaveDeCartazValida(k) && storedCharacters[k]) lista.push(k);
+    }
+    lista.sort(function (a, b) { return numeroDoCartaz(a) - numeroDoCartaz(b); });
+    return lista;
+}
+
+function nomeDoCartaz(k) {
+    var e = storedCharacters[k];
+    return (e && e.nome) ? e.nome : 'Poster ' + numeroDoCartaz(k);
+}
+
+// Números nunca reaproveitados. Um cartaz apagado deixa rasto no usosPorLetra
+// (gravado no browser e no ficheiro do projecto) e nas linhas da folha Letras:
+// se o número voltasse a ser dado, o cartaz novo herdava as colocações do
+// antigo. Por isso conta tudo o que já existiu — as chaves vivas, as do
+// usosPorLetra e um contador próprio no browser, que sobrevive mesmo quando o
+// autosave é apagado por estar tudo vazio.
+var CHAVE_ULTIMO_CARTAZ = 'pragmatipo-ultimo-cartaz';
+
+// O número mais alto que se conhece: das chaves vivas, das contagens por
+// caractere (que guardam cartazes já apagados) e do contador do browser.
+function maiorNumeroDeCartaz() {
+    var maior = 1;
+    function ver(k) { if (chaveDeCartazValida(k)) maior = Math.max(maior, numeroDoCartaz(k)); }
+    for (var k in storedCharacters) ver(k);
+    [usosPorLetra, ultimaLetra, baseLetra].forEach(function (porLetra) {
+        for (var chave in porLetra) ver(chave.split('|')[0]);
+    });
+    try { maior = Math.max(maior, parseInt(localStorage.getItem(CHAVE_ULTIMO_CARTAZ) || '1', 10) || 1); } catch (e) {}
+    return maior;
+}
+
+// Faz o contador do browser chegar pelo menos a n. Chamado ao apagar, ao
+// importar e ao recuperar: sem isto, um cartaz vindo de outro computador e
+// depois apagado deixava o número livre, e um cartaz novo herdava-o.
+function marcarNumeroDeCartaz(n) {
+    try {
+        var atual = parseInt(localStorage.getItem(CHAVE_ULTIMO_CARTAZ) || '1', 10) || 1;
+        if (n > atual) localStorage.setItem(CHAVE_ULTIMO_CARTAZ, String(n));
+    } catch (e) {}
+}
+
+function proximaChaveDeCartaz() {
+    var n = maiorNumeroDeCartaz() + 1;
+    marcarNumeroDeCartaz(n);
+    return CHAVE_CARTAZ + n;
+}
+
+// O formato do alfabeto, esteja-se onde se estiver.
+function formatoDoAlfabeto() {
+    return modoCartaz ? formatoAlfabeto : { idx: currentArtboardIdx, landscape: isLandscape };
+}
+
+function temFormatoProprio(e) {
+    return !!e && (e.formato === 0 || e.formato === 1 || e.formato === 2);
+}
+
+// O formato de um cartaz. Os de antes de cada cartaz ter o seu (autosave ou
+// ficheiro antigos) seguem o do alfabeto — era o que partilhavam — até serem
+// abertos; aí ficam com ele (ver loadCharacter). Só lê, nunca grava: gravar
+// aqui prendia-os ao formato que o alfabeto tivesse no primeiro autosave.
+function formatoDoCartaz(k) {
+    var e = storedCharacters[k];
+    return temFormatoProprio(e) ? { idx: e.formato, landscape: !!e.landscape } : formatoDoAlfabeto();
+}
+
+// Passa a folha para outro formato sem apagar nada: serve para trocar de tela,
+// não para mudar a folha da tela aberta (isso é o aplicarMudancaDeFolha).
+function usarFormato(f) {
+    var mudou = (currentArtboardIdx !== f.idx || isLandscape !== f.landscape);
+    currentArtboardIdx = f.idx;
+    isLandscape = f.landscape;
+    updateArtboardBounds();
+    if (mudou) { panX = 0; panY = 0; calculateLayout(); }
+}
+
+// Abrir um cartaz. Não passa pelo switchCharacter: esse regista a troca como
+// navegação no alfabeto (trocasDeCaractere, revisitas), e o dicionário dos
+// dados diz que essas colunas são só sobre o alfabeto.
+function escolherCartaz(k) {
+    if (!eCartaz(k) || !storedCharacters[k]) return;
+    telaPorEscolher = false;
+    if (k === currentChar) return;     // já aberto: só faltava escolhê-lo
+    saveCharacter(currentChar);
+    usarFormato(formatoDoCartaz(k));
+    loadCharacter(k);
+    cartazAtual = k;
+    resetRotationBase();
+}
+
+// Um cartaz novo, no formato do que está aberto — como uma prancheta nova no
+// Illustrator — e aberto logo. Com `copiar`, leva as peças e o nome do aberto.
+function novoCartaz(copiar) {
+    if (!modoCartaz) return;
+    var origem = storedCharacters[currentChar];
+    saveCharacter(currentChar);
+    var k = proximaChaveDeCartaz();
+    var entrada = { objects: [], history: [], redoHistory: [],
+                    formato: currentArtboardIdx, landscape: isLandscape };
+    if (copiar && origem) {
+        entrada.objects = JSON.parse(JSON.stringify(origem.objects));
+        entrada.nome = (nomeDoCartaz(currentChar) + ' copy').slice(0, TAMANHO_NOME_CARTAZ);
+    }
+    storedCharacters[k] = entrada;
+    escolherCartaz(k);
+    cartazScrollY = 1e6;     // a lista desce até ao novo; o desenho trava no fundo
+    guardarTrabalho();       // um cartaz vazio não mexe na assinatura do autosave
+}
+
+var TAMANHO_NOME_CARTAZ = 40;
+
+function renomearCartaz(k) {
+    var e = storedCharacters[k];
+    if (!e) return;
+    var novo = pedirTexto('Name this poster:', nomeDoCartaz(k));
+    if (novo === null) return;                       // cancelou
+    novo = novo.replace(/\s+/g, ' ').trim().slice(0, TAMANHO_NOME_CARTAZ);
+    // Vazio, ou o nome por omissão, é voltar a não ter nome.
+    if (novo === '' || novo === 'Poster ' + numeroDoCartaz(k)) delete e.nome;
+    else e.nome = novo;
+    guardarTrabalho();
+}
+
+// Apagar o cartaz aberto. O último não se apaga: o Clear esvazia-o.
+function apagarCartaz(k) {
+    var lista = listaDeCartazes();
+    var i = lista.indexOf(k);
+    if (lista.length < 2 || i === -1) return;
+    var n = (k === currentChar) ? placedObjects.length : storedCharacters[k].objects.length;
+    var msg = 'Delete "' + nomeDoCartaz(k) + '"?\n\n' +
+              (n > 0 ? 'Its ' + n + (n === 1 ? ' module' : ' modules') + ' and its undo history go with it. ' : '') +
+              'This cannot be undone.';
+    if (!perguntar(msg)) return;
+
+    var vizinho = lista[i + 1] || lista[i - 1];
+    var eraAberto = (k === currentChar);
+    if (!eraAberto) saveCharacter(currentChar);
+    marcarNumeroDeCartaz(maiorNumeroDeCartaz());   // o número dele não volta a ser dado
+    delete storedCharacters[k];
+    esquecerMiniatura(k);
+    if (letraReferencia === k) letraReferencia = null;
+    if (eraAberto) {
+        // Sem saveCharacter pelo caminho: gravava o cartaz apagado de volta,
+        // com as peças que ainda estão no placedObjects.
+        usarFormato(formatoDoCartaz(vizinho));
+        loadCharacter(vizinho);
+        resetRotationBase();
+    }
+    if (cartazAtual === k || eraAberto) cartazAtual = vizinho;
+    guardarTrabalho();
+}
 
 function definirModoCartaz(ligado) {
-    if (modoCartaz === ligado) return;
+    if (modoCartaz === ligado) {
+        // Depois de recarregar já dentro do cartaz, o modo já é este mas a tela
+        // está por escolher: sem isto, o clique em "Poster" não fazia nada.
+        if (ligado && telaPorEscolher) escolherCartaz(currentChar);
+        return;
+    }
     saveCharacter(currentChar);
     if (showWordPreview) fecharPreview();   // não faz sentido a compor palavras
-    modoCartaz = ligado;
     // Ir para o cartaz é escolher uma tela, tanto como carregar num thumbnail.
     // Voltar ao alfabeto também: a letra que reabre foi escolhida antes.
     telaPorEscolher = false;
@@ -3248,11 +3550,22 @@ function definirModoCartaz(ligado) {
     if (ligado && selectedModule === FERRAMENTA_GUIAS) selectedModule = -2;
     if (ligado) {
         charAntesDoCartaz = currentChar;
-        loadCharacter(CHAVE_CARTAZ);
+        formatoAlfabeto = { idx: currentArtboardIdx, landscape: isLandscape };
+        modoCartaz = true;
+        if (!storedCharacters[cartazAtual] || !eCartaz(cartazAtual)) {
+            initAllCharacters();
+            cartazAtual = listaDeCartazes()[0];
+        }
+        usarFormato(formatoDoCartaz(cartazAtual));
+        loadCharacter(cartazAtual);
     } else {
+        if (eCartaz(currentChar)) cartazAtual = currentChar;
+        modoCartaz = false;
+        usarFormato(formatoAlfabeto);
         loadCharacter(charAntesDoCartaz || 'A');
     }
     selectedObjects = [];
+    resetRotationBase();
 }
 
 function saveHistory() {
@@ -3303,10 +3616,19 @@ function saveCharacter(char) {
 
 function loadCharacter(char) {
     if (!storedCharacters[char]) initAllCharacters();
+    // Um cartaz que o initAllCharacters não cria (o 2, o 3…) nasce aqui, como
+    // no saveCharacter, em vez de rebentar a ler `.objects` de nada.
+    if (!storedCharacters[char]) storedCharacters[char] = { objects: [], history: [], redoHistory: [] };
     placedObjects = JSON.parse(JSON.stringify(storedCharacters[char].objects));
     rebuildCollisionMap();
     currentChar = char;
     selectedObjects = [];
+    // Um cartaz ainda sem formato próprio fica, ao abrir, com a folha em que
+    // abriu — a do alfabeto, que era a que partilhava.
+    if (eCartaz(char) && !temFormatoProprio(storedCharacters[char])) {
+        storedCharacters[char].formato = currentArtboardIdx;
+        storedCharacters[char].landscape = isLandscape;
+    }
 }
 
 function switchCharacter(newChar) {
@@ -3341,8 +3663,9 @@ function registarTrocaDeCaractere(novo) {
 }
 
 // Caracteres cuja composição mudou nesta sessão. Serve para normalizar as
-// revisitas: 8 trocas em 3 letras não é o mesmo que 8 trocas em 20. O cartaz
-// fica de fora, como nas outras duas — estas colunas são sobre o alfabeto.
+// revisitas: 8 trocas em 3 letras não é o mesmo que 8 trocas em 20. Os
+// cartazes ficam de fora, como nas outras duas — estas colunas são sobre o
+// alfabeto.
 function caracteresMexidosNaSessao(t) {
     var chaves = {}, mexidos = {};
     for (var k in baseLetra) chaves[k] = true;
@@ -3350,7 +3673,7 @@ function caracteresMexidosNaSessao(t) {
     for (var k in chaves) {
         if ((t.porLetra[k] || 0) !== (baseLetra[k] || 0)) {
             var c = k.split('|')[0];
-            if (c !== CHAVE_CARTAZ) mexidos[c] = true;
+            if (!eCartaz(c)) mexidos[c] = true;
         }
     }
     return Object.keys(mexidos).length;
@@ -3441,9 +3764,9 @@ function drawThumbnail(char, x, y, size) {
     var objs = (char == currentChar) ? placedObjects : (storedCharacters[char] ? storedCharacters[char].objects : []);
     if (!objs || objs.length == 0) return;
 
-    // O cartaz mede-se por si; as letras partilham a caixa do alfabeto para
+    // Cada cartaz mede-se por si; as letras partilham a caixa do alfabeto para
     // aparecerem todas à mesma escala.
-    var bounds = (char === CHAVE_CARTAZ) ? boundsDosObjectos([objs]) : getGlobalBounds();
+    var bounds = eCartaz(char) ? boundsDosObjectos([objs]) : getGlobalBounds();
     if (!bounds.hasContent) return;
 
     var bW = bounds.maxX - bounds.minX;
@@ -3491,6 +3814,318 @@ function drawThumbnail(char, x, y, size) {
         pop();
     }
     pop();
+}
+
+// Quadrículas de uma folha, para um formato dado. A mesma tabela do
+// updateArtboardBounds, sem mexer na folha aberta.
+function dimensoesDaFolha(idx, deitada) {
+    var w = (idx === 2) ? 46 : (idx === 1) ? 33 : 23;
+    var h = (idx === 2) ? 66 : (idx === 1) ? 46 : 33;
+    return deitada ? { w: h, h: w } : { w: w, h: h };
+}
+
+// Miniatura de um cartaz na lista: a folha inteira, no formato dele, com as
+// peças no sítio. Nas letras a miniatura enquadra o desenho; aqui interessa ver
+// a folha, porque é ela que distingue um F1 deitado de um F3 de pé.
+//
+// Fica guardada numa imagem e só se refaz quando o cartaz muda: um F3 pode ter
+// centenas de peças, e redesenhá-las todas, em todos os cartazes, a cada frame,
+// pesava na ferramenta inteira.
+var miniaturasCartaz = {};
+
+function esquecerMiniatura(k) {
+    if (miniaturasCartaz[k]) { miniaturasCartaz[k].g.remove(); delete miniaturasCartaz[k]; }
+}
+
+function desenharMiniaturaCartaz(k, x, y, tam) {
+    var objs = (k === currentChar) ? placedObjects
+             : (storedCharacters[k] ? storedCharacters[k].objects : []);
+    var f = formatoDoCartaz(k);
+    var lado = Math.max(1, Math.round(tam));
+    // Chave exacta, peça a peça. Uma soma ponderada deixava escapar mudanças
+    // que a mantêm — um Flip de uma composição equilibrada no eixo, por
+    // exemplo — e a miniatura ficava com o desenho antigo.
+    var partes = new Array(objs.length);
+    for (var i = 0; i < objs.length; i++) {
+        partes[i] = objs[i].type + ',' + objs[i].rot + ',' + objs[i].x + ',' + objs[i].y;
+    }
+    var assinatura = [f.idx, f.landscape, lado, currentVisualTheme].join(',') + '|' + partes.join(';');
+
+    var m = miniaturasCartaz[k];
+    if (!m || m.assinatura !== assinatura) {
+        // Do mesmo tamanho, aproveita-se a imagem: a pintar, a miniatura do
+        // cartaz aberto muda a cada peça, e criar uma tela nova de cada vez
+        // era trabalho deitado fora.
+        var g;
+        if (m && m.lado === lado) g = m.g;
+        else {
+            esquecerMiniatura(k);
+            g = createGraphics(lado, lado);
+            g.angleMode(DEGREES);
+            g.imageMode(CENTER);
+        }
+        g.clear();
+
+        var folha = dimensoesDaFolha(f.idx, f.landscape);
+        var margem = 2;
+        var s = (lado - 2 * margem) / Math.max(folha.w, folha.h);
+        var ox = (lado - folha.w * s) / 2, oy = (lado - folha.h * s) / 2;
+        var inicioX = GRID_CX - Math.floor(folha.w / 2);   // como o artOffsetX
+        var inicioY = GRID_CY - Math.floor(folha.h / 2);
+
+        g.rectMode(CORNER);
+        g.fill(255); g.stroke(205); g.strokeWeight(1);
+        g.rect(ox, oy, folha.w * s, folha.h * s);
+        g.noStroke();
+
+        for (var j = 0; j < objs.length; j++) {
+            var o = objs[j];
+            var d = getModuleDims(o.type);
+            // Centro da célula pivô, como no drawModules.
+            var cx = ox + (o.x - inicioX + 0.5) * s;
+            var cy = oy + (o.y - inicioY + 0.5) * s;
+            g.push();
+            g.translate(cx, cy);
+            g.rotate(o.rot * 90);
+            if (modules[o.type] && modules[o.type].width > 1) {
+                g.image(modules[o.type], (d.len - 1) * s / 2, (d.wid - 1) * s / 2, d.len * s, d.wid * s);
+            } else {
+                g.fill(0); g.rectMode(CENTER);
+                g.rect((d.len - 1) * s / 2, (d.wid - 1) * s / 2, d.len * s, d.wid * s);
+            }
+            g.pop();
+        }
+        m = miniaturasCartaz[k] = { assinatura: assinatura, g: g, lado: lado };
+    }
+    push();
+    imageMode(CORNER);
+    image(m.g, x, y, lado, lado);
+    pop();
+}
+
+// Uma só fonte para a geometria da lista de cartazes, para o desenho e os
+// cliques nunca divergirem. Mesma grelha das letras: linhas a 45 de distância,
+// blocos de 124 de largura, os mesmos dos botões do rodapé.
+function geometriaDosCartazes() {
+    var g = globalScale;
+    var gapY = 45 * g, largura = (2 * 45 * g) + 34 * g;
+    var cx = 30 * g + 45 * g;
+    var bottomPanelH = 150 * g;
+    var effectiveBottom = max(height, topBarHeight + bottomPanelH + 50 * g);
+    var topo = getCharTop();
+    var fundo = effectiveBottom - bottomPanelH;
+    var lista = listaDeCartazes();
+
+    // Linhas dos cartazes, o botão de criar e a fila das três acções.
+    var maxScroll = max(0, (lista.length + 2) * gapY + 20 * g - (fundo - topo));
+    cartazScrollY = constrain(cartazScrollY, 0, maxScroll);
+    var inicioY = topo + 18 * g - cartazScrollY;
+
+    var linhas = [];
+    for (var i = 0; i < lista.length; i++) {
+        linhas.push({ k: lista[i], x: cx, y: inicioY + i * gapY, w: largura, h: 34 * g });
+    }
+    var novo = { x: cx, y: inicioY + lista.length * gapY, w: largura, h: 30 * g };
+    var yAccoes = novo.y + gapY;
+    var accoes = [
+        { id: 'duplicar', x: 30 * g, y: yAccoes, w: 34 * g, h: 34 * g },
+        { id: 'renomear', x: 75 * g, y: yAccoes, w: 34 * g, h: 34 * g },
+        { id: 'apagar',   x: 120 * g, y: yAccoes, w: 34 * g, h: 34 * g }
+    ];
+    return { topo: topo, fundo: fundo, linhas: linhas, novo: novo, accoes: accoes, total: lista.length };
+}
+
+// Um elemento da lista só responde se estiver inteiro dentro da zona com scroll
+// — meio escondido debaixo do cabeçalho ou do rodapé, não.
+function visivelNaLista(b, geo) {
+    return b.y - b.h / 2 >= geo.topo && b.y + b.h / 2 <= geo.fundo;
+}
+
+// Sem cartaz aberto (a tela ainda por escolher) não há a que aplicar as acções.
+// Apagar pede também que fique pelo menos um.
+function accaoDisponivel(id, geo) {
+    if (telaPorEscolher || !eCartaz(currentChar)) return false;
+    if (id === 'apagar') return geo.total > 1;
+    return true;
+}
+
+function dicaDaAccao(id, geo) {
+    if (telaPorEscolher) return 'Open a poster first';
+    if (id === 'duplicar') return 'Duplicate this poster';
+    if (id === 'renomear') return 'Rename this poster';
+    return geo.total > 1 ? 'Delete this poster' : 'The only poster cannot be deleted';
+}
+
+// Os mesmos SVG da barra de ferramentas (copy, pencil e o lixo do Clear
+// entire alphabet), no mesmo tamanho e com o mesmo esbatido quando não se
+// pode usar. Se algum não carregar, fica o desenho à mão de antes.
+var ICONES_DAS_ACCOES = { duplicar: 'copiar', renomear: 'lapis', apagar: 'limparAlfabeto' };
+
+function desenharIconeAccao(id, cx, cy, cor, fundo, pode, sobre) {
+    var g = globalScale;
+    var img = toolIcons[ICONES_DAS_ACCOES[id]];
+    if (img && img.width > 1) {
+        push();
+        imageMode(CENTER);
+        if (!pode) tint(255, 55);
+        else tint(sobre ? 40 : 80);
+        image(img, cx, cy, 20 * g, 20 * g);
+        pop();
+        return;
+    }
+    push();
+    stroke(cor); strokeWeight(1); noFill(); rectMode(CENTER);
+    if (id === 'duplicar') {
+        rect(cx + 2.2 * g, cy - 2.2 * g, 9 * g, 9 * g, 1.5 * g);
+        fill(fundo); rect(cx - 2.2 * g, cy + 2.2 * g, 9 * g, 9 * g, 1.5 * g);   // tapa a de trás
+    } else if (id === 'renomear') {
+        translate(cx, cy);
+        rotate(-45);
+        rect(1.5 * g, 0, 10 * g, 3.6 * g, 0.6 * g);
+        line(-3.5 * g, -1.8 * g, -6.5 * g, 0);
+        line(-6.5 * g, 0, -3.5 * g, 1.8 * g);
+    } else {
+        line(cx - 5.5 * g, cy - 4 * g, cx + 5.5 * g, cy - 4 * g);
+        line(cx - 1.8 * g, cy - 5.8 * g, cx + 1.8 * g, cy - 5.8 * g);
+        rectMode(CORNERS);
+        rect(cx - 4 * g, cy - 4 * g, cx + 4 * g, cy + 5.8 * g, 0, 0, 1.2 * g, 1.2 * g);
+        line(cx - 1.3 * g, cy - 1.3 * g, cx - 1.3 * g, cy + 3.3 * g);
+        line(cx + 1.3 * g, cy - 1.3 * g, cx + 1.3 * g, cy + 3.3 * g);
+    }
+    pop();
+}
+
+// Corta o texto com reticências para caber em `largura` (no tamanho de letra
+// que estiver activo).
+function encurtar(texto, largura) {
+    if (textWidth(texto) <= largura) return texto;
+    var t = texto;
+    while (t.length > 1 && textWidth(t + '…') > largura) t = t.slice(0, -1);
+    return t + '…';
+}
+
+// A barra lateral no modo cartaz: um cartaz por linha, o botão de criar e as
+// três acções sobre o aberto. Devolve a dica a mostrar, ou null.
+function desenharListaDeCartazes() {
+    var geo = geometriaDosCartazes();
+    var g = globalScale;
+    var dica = null;
+    var livre = !showShortcutsModal && mouseY > geo.topo && mouseY < geo.fundo;
+
+    for (var i = 0; i < geo.linhas.length; i++) {
+        var r = geo.linhas[i];
+        if (r.y + r.h / 2 < geo.topo || r.y - r.h / 2 > geo.fundo) continue;
+        var aberto = (r.k === currentChar && !telaPorEscolher);
+        var sobre = livre && dentroDe(r);
+        push();
+        rectMode(CENTER);
+        fill(aberto ? 220 : (sobre ? 235 : 249));
+        stroke(aberto ? [0, 200, 0] : 238); strokeWeight(0.75);
+        rect(r.x, r.y, r.w, r.h, 4 * g);
+        var tam = r.h - 4 * g;
+        var mx = r.x - r.w / 2 + 2 * g, my = r.y - r.h / 2 + 2 * g;
+        desenharMiniaturaCartaz(r.k, mx, my, tam);
+        noStroke();
+        fill(aberto ? 0 : (sobre ? 60 : 110));
+        textAlign(LEFT, CENTER); textSize(10 * g); textStyle(aberto ? BOLD : NORMAL);
+        var xTexto = mx + tam + 6 * g;
+        text(encurtar(nomeDoCartaz(r.k), r.x + r.w / 2 - 6 * g - xTexto), xTexto, r.y);
+        textStyle(NORMAL);
+        pop();
+        // No toque não há duplo clique: o nome muda-se com o botão do meio.
+        if (sobre) dica = { texto: aberto ? (dicaDeToque() ? 'Rename with the middle button below' : 'Double-click to rename')
+                                          : 'Open ' + nomeDoCartaz(r.k), y: r.y };
+    }
+
+    // + New artboard: o mesmo desenho do Preview word, que fecha o alfabeto.
+    var b = geo.novo;
+    if (visivelNaLista(b, geo)) {
+        var sobreNovo = livre && dentroDe(b);
+        push();
+        rectMode(CENTER);
+        fill(sobreNovo ? 235 : 249); stroke(238); strokeWeight(0.75);
+        rect(b.x, b.y, b.w, b.h, 6 * g);
+        noStroke(); fill(sobreNovo ? 80 : 150);
+        textAlign(CENTER, CENTER); textSize(9.5 * g); textStyle(BOLD);
+        text('+ New artboard', b.x, b.y);
+        textStyle(NORMAL);
+        pop();
+        if (sobreNovo) dica = { texto: 'Add a poster in the format of this one', y: b.y };
+    }
+
+    // Duplicar, mudar o nome, apagar — sempre sobre o cartaz aberto.
+    for (var a = 0; a < geo.accoes.length; a++) {
+        var ac = geo.accoes[a];
+        if (!visivelNaLista(ac, geo)) continue;
+        var pode = accaoDisponivel(ac.id, geo);
+        var sobreAc = livre && dentroDe(ac);
+        var perigo = (ac.id === 'apagar');
+        var fundo = !pode ? color(252) : (sobreAc ? (perigo ? color(255, 235, 235) : color(235)) : color(249));
+        push();
+        rectMode(CENTER);
+        fill(fundo);
+        stroke(!pode ? 246 : (sobreAc && perigo ? color(255, 205, 205) : 238));
+        strokeWeight(0.75);
+        rect(ac.x, ac.y, ac.w, ac.h, 6 * g);
+        pop();
+        var cor = !pode ? color(215) : (sobreAc ? (perigo ? color(200, 40, 40) : color(40)) : color(100));
+        desenharIconeAccao(ac.id, ac.x, ac.y, cor, fundo, pode, sobreAc);
+        if (sobreAc) dica = { texto: dicaDaAccao(ac.id, geo), y: ac.y };
+    }
+    return dica;
+}
+
+// O cartaz debaixo do ponteiro, ou null.
+function cartazSobOPonteiro() {
+    var geo = geometriaDosCartazes();
+    if (mouseY <= geo.topo || mouseY >= geo.fundo) return null;
+    for (var i = 0; i < geo.linhas.length; i++) {
+        if (dentroDe(geo.linhas[i])) return geo.linhas[i].k;
+    }
+    return null;
+}
+
+// O cartaz em que caiu o primeiro clique de um duplo clique. O duplo clique só
+// muda o nome a esse: entre os dois cliques a lista pode ter mexido.
+var cartazDoPrimeiroClique = null;
+
+function cliqueNaListaDeCartazes() {
+    var geo = geometriaDosCartazes();
+    if (mouseY <= geo.topo || mouseY >= geo.fundo) return;
+    if (!cliqueRepetido) cartazDoPrimeiroClique = null;
+    var k = cartazSobOPonteiro();
+    if (k) {
+        if (!cliqueRepetido) cartazDoPrimeiroClique = k;
+        escolherCartaz(k);
+        return;
+    }
+    // O segundo clique de um duplo clique não cria, não duplica, não apaga.
+    // Criar mexe na lista, e o segundo clique caía no botão que tinha passado
+    // para debaixo do ponteiro — um duplo clique em Duplicate dava uma cópia
+    // e mais um cartaz vazio.
+    if (cliqueRepetido) return;
+    if (visivelNaLista(geo.novo, geo) && dentroDe(geo.novo)) { novoCartaz(false); return; }
+    for (var a = 0; a < geo.accoes.length; a++) {
+        var ac = geo.accoes[a];
+        if (!visivelNaLista(ac, geo) || !dentroDe(ac)) continue;
+        if (!accaoDisponivel(ac.id, geo)) return;
+        if (ac.id === 'duplicar') novoCartaz(true);
+        else if (ac.id === 'renomear') renomearCartaz(currentChar);
+        else apagarCartaz(currentChar);
+        return;
+    }
+}
+
+// Duplo clique num cartaz da lista: abre-o e pede o nome novo.
+function doubleClicked() {
+    if (interfaceBloqueada() || showShortcutsModal || !modoCartaz) return;
+    if (mouseX >= sidebarWidth || mouseY <= topBarHeight) return;
+    var k = cartazSobOPonteiro();
+    if (!k || k !== cartazDoPrimeiroClique) return;
+    cartazDoPrimeiroClique = null;
+    escolherCartaz(k);
+    renomearCartaz(k);
+    return false;
 }
 
 function checkTopBarClick() {
@@ -3576,10 +4211,12 @@ function checkTopBarClick() {
                         : (mouseX < startX + 2 * segW) ? 1 : 2;
             var idxAnterior = currentArtboardIdx;
             // Só conta quando a folha mudou mesmo: carregar no formato que já
-            // estava escolhido, ou recusar o aviso, não é uma troca.
+            // estava escolhido, ou recusar o aviso, não é uma troca. E só no
+            // alfabeto: no cartaz o formato é do cartaz aberto, e a coluna é
+            // sobre a folha em que se desenha o alfabeto.
             if (aplicarMudancaDeFolha(function () { currentArtboardIdx = novoIdx; },
                                       function () { currentArtboardIdx = idxAnterior; })
-                && novoIdx !== idxAnterior && sessao) {
+                && novoIdx !== idxAnterior && sessao && !modoCartaz) {
                 acoes.trocasDeFormato++;
             }
             return;
@@ -3590,7 +4227,7 @@ function checkTopBarClick() {
             var orientAnterior = isLandscape;
             if (aplicarMudancaDeFolha(function () { isLandscape = novaOrient; },
                                       function () { isLandscape = orientAnterior; })
-                && novaOrient !== orientAnterior && sessao) {
+                && novaOrient !== orientAnterior && sessao && !modoCartaz) {
                 acoes.trocasDeOrientacao++;
             }
             return;
@@ -3599,7 +4236,14 @@ function checkTopBarClick() {
 
     // 4. Botões da Direita (Exportações)
     var rightMargin = width - (35 * globalScale);
-    if (dentroDe(btnImport)) { fecharMenu(); importProjectJSON(); return; }
+    if (dentroDe(btnImport)) {
+        fecharMenu();
+        // No iPad, a janela de escolher ficheiro só abre no FIM do toque; aberta
+        // no início, o Safari recusava-a e o Import não fazia nada.
+        if (toque.ativo) toque.importar = true;
+        else importProjectJSON();
+        return;
+    }
     if (dentroDe(btnClear)) {
         if (menuDeQuem === 'clear') { fecharMenu(); return; }
         abrirMenu('clear', itensLimpar(), btnClear.x + btnClear.w / 2, btnClear.y + btnClear.h / 2 + 6 * globalScale);
@@ -3628,7 +4272,7 @@ function checkSidebarClick() {
     // do controlo de modo, que é o mesmo intervalo usado entre os botões do
     // rodapé. Com menos, subia por cima do controlo.
     var charStartY = getCharTop() + 18 * globalScale - alphabetScrollY;
-    if (modoCartaz) return;      // não há letras para clicar
+    if (modoCartaz) { cliqueNaListaDeCartazes(); return; }   // não há letras: há cartazes
 
     for (var i = 0; i < characters.length; i++) {
         var col = i % charCols;
@@ -3664,11 +4308,13 @@ function desenharConviteAEscolher() {
     fill(150);
     textStyle(BOLD);
     textSize(16 * globalScale);
-    text('Choose a character to begin', cx, cy - 12 * globalScale);
+    // Depois de recarregar dentro do cartaz, a tela por escolher é um cartaz.
+    text(modoCartaz ? 'Choose a poster to begin' : 'Choose a character to begin', cx, cy - 12 * globalScale);
     textStyle(NORMAL);
     textSize(11.5 * globalScale);
     fill(175);
-    text('Pick one from the list on the left, or switch to Poster', cx, cy + 12 * globalScale);
+    text(modoCartaz ? 'Pick one from the list on the left, or add a new artboard'
+                    : 'Pick one from the list on the left, or switch to Poster', cx, cy + 12 * globalScale);
     pop();
 }
 
@@ -3854,9 +4500,14 @@ function drawUI() {
         if (mouseX > cx3 - styleBtnW / 2 && mouseX < cx3 + styleBtnW / 2) {
             var segW = styleBtnW / 3;
             var startX = cx3 - styleBtnW / 2;
-            if (mouseX < startX + segW) { activeTooltip = "Format 1 (690x990px)"; tooltipX = startX + segW / 2; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
-            else if (mouseX < startX + 2 * segW) { activeTooltip = "Format 2 (990x1410px)"; tooltipX = startX + 1.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
-            else { activeTooltip = "Format 3 (1410x1980px)"; tooltipX = startX + 2.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
+            // No cartaz, o formato muda só o cartaz aberto — convém dizê-lo.
+            var soEste = modoCartaz ? ' — this poster only' : '';
+            if (mouseX < startX + segW) { activeTooltip = "Format 1 (690x990px)" + soEste; tooltipX = startX + segW / 2; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
+            else if (mouseX < startX + 2 * segW) { activeTooltip = "Format 2 (990x1410px)" + soEste; tooltipX = startX + 1.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
+            else { activeTooltip = "Format 3 (1410x1980px)" + soEste; tooltipX = startX + 2.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
+        }
+        if (modoCartaz && mouseX > cx4 - styleBtnW / 2 && mouseX < cx4 + styleBtnW / 2) {
+            activeTooltip = "Orientation of this poster only"; tooltipX = cx4; tooltipY = ly + styleBtnH / 2 + 15 * globalScale;
         }
     }
 
@@ -3867,7 +4518,7 @@ function drawUI() {
     // à esquerda — o mesmo intervalo que separa dois módulos entre si. Quando
     // deixa de haver espaço, param de encolher a distância e encostam a esse
     // mínimo em vez de colarem aos módulos.
-    var larguraMenu = 100 * globalScale;
+    var larguraMenu = LARGURA_BOTAO_MENU * globalScale;
     var fimDaPaleta = toolStartX + (modules.length - 1) * toolGapX + tBoxSize / 2;
     var fimDaLinha1 = toolStartX + (18 * toolGapX) + ((2 * toolGapX) + tBoxSize) / 2;
     var limiteEsquerdo = max(fimDaPaleta, fimDaLinha1) + 11 * globalScale;
@@ -3876,7 +4527,8 @@ function drawUI() {
     var bordaDir = esquerdaBotoes + larguraMenu;
 
     // Empilhados nas três linhas da barra, todos com a mesma forma. O Import
-    // não leva seta: não abre menu, executa.
+    // não leva a seta de menu, porque não abre menu, executa. Leva no mesmo
+    // sítio um sinal de importar, para os três ficarem equilibrados.
     btnClear.w = larguraMenu; btnClear.h = tBoxSize;
     btnClear.x = bordaDir - larguraMenu / 2; btnClear.y = ty;
     btnExport.w = larguraMenu; btnExport.h = tBoxSize;
@@ -3884,9 +4536,9 @@ function drawUI() {
     btnImport.w = larguraMenu; btnImport.h = tBoxSize;
     btnImport.x = bordaDir - larguraMenu / 2; btnImport.y = 125 * globalScale;
 
-    desenharBotaoMenu(btnClear, 'Clear', menuDeQuem === 'clear', true, true);
-    desenharBotaoMenu(btnExport, 'Export', menuDeQuem === 'export', false, true);
-    desenharBotaoMenu(btnImport, 'Import', false, false, false);
+    desenharBotaoMenu(btnClear, 'Clear', menuDeQuem === 'clear', true, 'seta');
+    desenharBotaoMenu(btnExport, 'Export', menuDeQuem === 'export', false, 'seta');
+    desenharBotaoMenu(btnImport, 'Import', false, false, 'importar');
 
     // --- BARRA LATERAL (ALFABETO EM SCROLL) ---
     fill(249); noStroke(); rectMode(CORNER); rect(0, topBarHeight, sidebarWidth, height - topBarHeight);
@@ -3911,10 +4563,23 @@ function drawUI() {
     alphabetScrollY = constrain(alphabetScrollY, 0, maxScroll);
     var charStartY = charTop + 18 * globalScale - alphabetScrollY;
 
-    // Em modo cartaz não há letras para escolher: a lista inteira desaparece.
+    // Em modo cartaz não há letras para escolher: a lista inteira desaparece,
+    // e o lugar dela passa a ser dos cartazes.
     if (modoCartaz) { btnPreview.visivel = false; }
 
     push(); drawingContext.save(); drawingContext.beginPath(); drawingContext.rect(0, charTop, sidebarWidth, availableHForChars); drawingContext.clip();
+    if (modoCartaz) {
+        var dicaCartaz = desenharListaDeCartazes();
+        if (dicaCartaz) {
+            // Encostada à barra lateral, por inteiro fora dela.
+            push(); textSize(10 * globalScale);
+            var larguraDica = textWidth(dicaCartaz.texto) + 16 * globalScale;
+            pop();
+            activeTooltip = dicaCartaz.texto;
+            tooltipX = sidebarWidth + 8 * globalScale + larguraDica / 2;
+            tooltipY = dicaCartaz.y;
+        }
+    }
     textSize(12 * globalScale); textStyle(NORMAL); rectMode(CENTER);
     for (var i = 0; !modoCartaz && i < characters.length; i++) {
         var col = i % 3; var row = floor(i / 3); var x = toolStartX + (col * toolGapX); var y = charStartY + (row * charGapY);
@@ -3928,6 +4593,9 @@ function drawUI() {
                 if (keyIsDown(SHIFT)) {
                     activeTooltip = (characters[i] === letraReferencia)
                         ? 'Unpin reference letter' : 'Pin as reference letter';
+                } else if (dicaDeToque()) {
+                    activeTooltip = (characters[i] === letraReferencia)
+                        ? 'Hold to unpin reference' : 'Hold to use as reference';
                 } else {
                     activeTooltip = (characters[i] === letraReferencia)
                         ? 'Shift-click to unpin reference' : 'Shift-click to use as reference';
@@ -4036,6 +4704,26 @@ function drawUI() {
 // --- CONTEÚDO DO MANUAL (modal) ---
 // h = secção, li = tópico, key = linha de atalho
 var MANUAL = [
+    { t: 'cat', s: 'Touch & pen', tactil: true },
+
+    { t: 'h', s: 'Drawing', tactil: true },
+    { t: 'li', s: 'A finger or a pen does what the mouse does: pick a module at the top, then tap or drag on the artboard', tactil: true },
+
+    { t: 'h', s: 'Two fingers', tactil: true },
+    { t: 'li', s: 'Pinch to zoom in and out, and drag with two fingers to move the artboard', tactil: true },
+    { t: 'li', s: 'If the second finger lands right after the first, whatever the first one did is taken back: it was the start of the gesture, not drawing', tactil: true },
+    { t: 'li', s: 'With a pen, a hand resting on the screen is ignored: it does not zoom, and the stroke carries on', tactil: true },
+
+    { t: 'h', s: 'Lists', tactil: true },
+    { t: 'li', s: 'Drag the side list, or this guide, with one finger to scroll it. A tap opens; a drag only scrolls', tactil: true },
+    { t: 'li', s: 'Hold a letter in the side list to pin it as the reference letter, drawn faded underneath. Hold it again to unpin it — on a computer this is Shift-click', tactil: true },
+    { t: 'li', s: 'In Poster mode, rename a poster with the middle button below the list — double-clicking is for the mouse', tactil: true },
+
+    { t: 'h', s: 'The bar at the bottom', tactil: true },
+    { t: 'li', s: 'Stands in for the keyboard shortcuts: Select all, Copy, Cut, Paste, Paste in place, Duplicate and Delete. The ones that do not apply yet are greyed out', tactil: true },
+    { t: 'li', s: 'Add: while it is on, tapping a module adds it to the selection, or takes it out — on a computer this is Shift-click', tactil: true },
+    { t: 'li', s: 'Paste puts the copy next to the original; Paste in place puts it exactly where it was copied from, even on another artboard', tactil: true },
+
     { t: 'cat', s: 'Working modes' },
 
     { t: 'h', s: 'Letterpress mode' },
@@ -4114,7 +4802,7 @@ var MANUAL = [
     { t: 'li', s: 'Click it again while the tool is already selected to hide them' },
     { t: 'li', s: 'Their position carries across every artboard, and is remembered between visits' },
     { t: 'li', s: 'Their order cannot be changed \u2014 except for the ascender and cap height, which may sometimes be swapped' },
-    { t: 'li', s: 'They belong to the alphabet, so they are unavailable while the poster is open' },
+    { t: 'li', s: 'They belong to the alphabet, so they are unavailable while a poster is open' },
 
     { t: 'h', s: 'Fit to screen', ic: 'enquadrar' },
     { t: 'li', s: 'Fit everything you have drawn into the visible area' },
@@ -4149,7 +4837,8 @@ var MANUAL = [
     { t: 'li', s: 'F1: close to 25 \u00d7 35 cm \u2014 23 \u00d7 33 cells' },
     { t: 'li', s: 'F2: close to 35 \u00d7 50 cm \u2014 33 \u00d7 46 cells' },
     { t: 'li', s: 'F3: close to 50 \u00d7 70 cm \u2014 46 \u00d7 66 cells' },
-    { t: 'li', s: 'The sheet is a frame, not a wall: you can draw past it. But changing format or orientation deletes whatever sits outside the new sheet, so it asks first and tells you which letters would lose modules' },
+    { t: 'li', s: 'Modules always sit inside the sheet. Changing format or orientation deletes whatever would fall outside the new sheet, so it asks first and tells you which letters would lose modules' },
+    { t: 'li', s: 'With a poster open, the format and orientation belong to that poster alone: the alphabet and the other posters keep their own' },
 
     { t: 'h', s: 'Portrait / Landscape' },
     { t: 'li', s: 'Portrait: vertical artboard' },
@@ -4158,9 +4847,16 @@ var MANUAL = [
     { t: 'h', s: 'Alphabet / Poster' },
     { t: 'li', s: 'Sits above the thumbnail list and chooses what you are drawing on' },
     { t: 'li', s: 'Alphabet: the 36 artboards of the side list, one per character' },
-    { t: 'li', s: 'Poster: a single artboard of its own, for composing with the modules without the result having to be a character. The thumbnails are hidden while it is open; every tool works the same' },
-    { t: 'li', s: 'The poster is kept apart from the alphabet — switching back and forth never mixes the two — and is saved and restored along with it' },
-    { t: 'li', s: 'The alphabet-wide exports and Clear alphabet are not listed while the poster is open, since they do not apply to it' },
+    { t: 'li', s: 'Poster: artboards of their own, for composing with the modules without the result having to be a character. The side list shows the posters instead of the letters; every tool works the same' },
+    { t: 'li', s: 'The posters are kept apart from the alphabet — switching back and forth never mixes them — and are saved and restored along with it' },
+    { t: 'li', s: 'The alphabet-wide exports and Clear alphabet are not listed while a poster is open, since they do not apply to it' },
+
+    { t: 'h', s: 'Poster artboards' },
+    { t: 'li', s: 'Click a poster in the side list to open it. Each one shows its whole sheet in miniature' },
+    { t: 'li', s: '+ New artboard adds a poster in the format of the one that is open, and opens it' },
+    { t: 'li', s: 'The three buttons below act on the open poster: duplicate it, rename it, delete it. Double-clicking a poster in the list also renames it' },
+    { t: 'li', s: 'Each poster has its own format and orientation, chosen with F1 / F2 / F3 and Portrait / Landscape while it is open' },
+    { t: 'li', s: 'Deleting asks first and cannot be undone. The last poster cannot be deleted — Clear poster empties it instead' },
 
     { t: 'h', s: '36 side thumbnails' },
     { t: 'li', s: '26 of them correspond to the letters of the Latin alphabet; the remaining 10 to the digits' },
@@ -4177,7 +4873,7 @@ var MANUAL = [
 
     { t: 'h', s: 'Export ▾' },
     { t: 'li', s: 'Top right of the screen. Gathers everything that leaves the tool as a file' },
-    { t: 'li', s: 'Only the entries that apply to what is open are listed: with the poster open, the two alphabet-wide exports are not offered' },
+    { t: 'li', s: 'Only the entries that apply to what is open are listed: with a poster open, the two alphabet-wide exports are not offered' },
 
     { t: 'h', s: 'Import project', ic: 'importar' },
     { t: 'li', s: 'Below the two menus. Import files previously exported from this tool' },
@@ -4189,7 +4885,7 @@ var MANUAL = [
 
     { t: 'h', s: 'Export letter (SVG)', ic: 'exportarLetra' },
     { t: 'li', s: 'Export the selected artboard as an SVG file' },
-    { t: 'li', s: 'With the poster open it exports the poster instead' },
+    { t: 'li', s: 'With a poster open it exports that poster instead, in a file named after it' },
     { t: 'sc', k: 'Shift + E', s: 'Export current letter (SVG)' },
 
     { t: 'h', s: 'Export alphabet (SVG)', ic: 'exportarAlfabeto' },
@@ -4215,11 +4911,14 @@ var MANUAL = [
 
     { t: 'h', s: 'Clear this artboard', ic: 'limparLetra', perigo: true },
     { t: 'li', s: 'Delete every module on the selected artboard. Can be undone' },
-    { t: 'li', s: 'With the poster open it clears the poster, and nothing else' },
+    { t: 'li', s: 'With a poster open it clears that poster, and nothing else' },
+
+    { t: 'h', s: 'Delete this poster', ic: 'limparAlfabeto', perigo: true },
+    { t: 'li', s: 'Only listed with a poster open, when there is more than one. Removes the poster and its undo history. It asks first, and cannot be undone' },
 
     { t: 'h', s: 'Clear entire alphabet', ic: 'limparAlfabeto', perigo: true },
     { t: 'li', s: 'Delete every module on every artboard. It asks first, and afterwards each letter can only be recovered one at a time' },
-    { t: 'li', s: 'Not offered while the poster is open' }
+    { t: 'li', s: 'Not offered while a poster is open' }
 ];
 
 // Uma única fonte para as dimensões do modal, para o desenho e a deteção
@@ -4290,15 +4989,20 @@ function drawShortcutsModal() {
     // coordenadas de ecrã para o mousePressed as poder testar.
     modalCatAreas = [];
     var categoriaAberta = false;
+    var primeiraCat = true;   // o primeiro cabeçalho desenhado (a secção do toque pode não estar)
 
     for (var i = 0; i < MANUAL.length; i++) {
         var bloco = MANUAL[i];
+        // A secção do toque só aparece em aparelhos tácteis: no computador o
+        // manual fica como estava.
+        if (bloco.tactil && !ecraTatil) continue;
 
         if (bloco.t === 'cat') {
             var aberta = !!categoriasAbertas[bloco.s];
             categoriaAberta = aberta;
 
-            y += (i === 0 ? 4 : 16) * globalScale;
+            y += (primeiraCat ? 4 : 16) * globalScale;
+            primeiraCat = false;
             var linhaTopo = y;
             var alturaCab = 42 * globalScale;
 
@@ -4554,6 +5258,34 @@ function getReguaBounds() {
              y: y,
              cabe: cabe,
              visivel: cabe && !showShortcutsModal && !showWordPreview && !telaPorEscolher && placedObjects.length > 0 };
+}
+
+// Onde fica a cápsula "modules: N" — a mesma conta para a desenhar e para
+// saber se um arrasto começou nela. Pousa por cima da miniatura da letra; sem
+// miniatura, encosta ao fundo (ou ao topo da faixa da palavra, para não cair
+// sobre a composição). É uma nota do canvas: com o manual aberto não flutua
+// por cima dele, e só aparece se couber abaixo da barra de ferramentas.
+function getContagemBounds() {
+    if (showShortcutsModal || telaPorEscolher) return null;
+    var g = globalScale, reg = getReguaBounds(), meia = 14 * g, cy;
+    if (reg.visivel) cy = reg.y - 6 * g - meia - 8 * g;
+    else if (showWordPreview) cy = getPreviewBounds().y - meia - 8 * g;
+    else cy = height - meia - 14 * g;
+    if (cy - meia <= topBarHeight + 8 * g) return null;
+    push(); textSize(11 * g); textStyle(NORMAL);
+    var largura = max(textWidth('modules: ' + placedObjects.length) + 24 * g, reg.tam + 12 * g);
+    pop();
+    return { cx: reg.x + reg.tam / 2, cy: cy, largura: largura, altura: 28 * g };
+}
+
+// A régua de referência e a contagem, no canto inferior direito. Não são
+// botões, mas são interface: a Mão não desloca a prancheta a partir delas.
+function sobreNotasDoCanto(x, y) {
+    var g = globalScale, reg = getReguaBounds();
+    if (reg.visivel && x > reg.x - 6 * g && x < reg.x + reg.tam + 6 * g &&
+        y > reg.y - 6 * g && y < reg.y + reg.tam + 6 * g) return true;
+    var c = getContagemBounds();
+    return !!c && abs(x - c.cx) < c.largura / 2 && abs(y - c.cy) < c.altura / 2;
 }
 
 function desenharReguaReferencia() {
@@ -4884,9 +5616,16 @@ var autosaveOK = true;     // falso se o browser não deixar guardar (janela pri
 // Impressão digital barata do estado: deteta peças acrescentadas, apagadas,
 // movidas ou rodadas sem ter de serializar tudo a cada segundo.
 function assinaturaDoTrabalho() {
-    var s = currentArtboardIdx + (isLandscape ? 'L' : 'P');
-    // O cartaz entra na assinatura, senão desenhar nele nunca disparava o
-    // autosave. Fica fora das contagens, mas não fora da gravação.
+    // O formato que conta é o do alfabeto, e o de cada cartaz vai com ele mais
+    // abaixo. Usar o da folha aberta fazia de cada troca entre cartazes de
+    // formatos diferentes uma mudança no trabalho — e o registarActividade,
+    // que corre a cada mudança, abria uma sessão de desenho a quem só olhou.
+    var fa = formatoDoAlfabeto();
+    var s = fa.idx + (fa.landscape ? 'L' : 'P');
+    // Os cartazes entram na assinatura, senão desenhar neles nunca disparava o
+    // autosave. Ficam fora das contagens do alfabeto, mas não fora da gravação.
+    // A lista em si (criar, apagar, mudar o nome de um cartaz vazio) não entra:
+    // isso grava-se directamente, sem passar por aqui.
     var telas = listaDeTelas();
     for (var i = 0; i < telas.length; i++) {
         var c = telas[i];
@@ -4897,9 +5636,26 @@ function assinaturaDoTrabalho() {
         for (var k = 0; k < objs.length; k++) {
             soma += objs[k].x * 31 + objs[k].y * 17 + objs[k].rot * 7 + objs[k].type * 3;
         }
-        s += '|' + c + objs.length + ',' + soma;
+        // O ':' separa a chave da contagem: sem ele, '@CARTAZ' com 21 peças e
+        // '@CARTAZ2' com 1 davam o mesmo texto.
+        s += '|' + c + ':' + objs.length + ',' + soma;
+        if (eCartaz(c)) {
+            var f = formatoDoCartaz(c);
+            s += ',' + f.idx + (f.landscape ? 'L' : 'P');
+        }
     }
     return s;
+}
+
+// Nome e formato de cada cartaz, pela ordem da lista — vazios incluídos.
+function descreverCartazes() {
+    return listaDeCartazes().map(function (k) {
+        var e = storedCharacters[k];
+        // Sem formato próprio vai null, para continuar a seguir o alfabeto.
+        return { k: k, nome: e.nome || null,
+                 formato: temFormatoProprio(e) ? e.formato : null,
+                 landscape: temFormatoProprio(e) ? !!e.landscape : null };
+    });
 }
 
 function guardarTrabalho() {
@@ -4912,19 +5668,26 @@ function guardarTrabalho() {
                      : (storedCharacters[c] ? storedCharacters[c].objects : []);
             if (objs && objs.length > 0) chars[c] = objs;
         }
-        // Alfabeto vazio: apaga o registo em vez de guardar um vazio, para não
-        // ressuscitar trabalho que a pessoa apagou de propósito.
-        if (Object.keys(chars).length === 0) {
+        var cartazes = descreverCartazes();
+        // Tudo vazio e só o cartaz de origem, sem nome: apaga o registo em vez
+        // de guardar um vazio, para não ressuscitar trabalho que a pessoa
+        // apagou de propósito. Cartazes criados ou com nome guardam-se, mesmo
+        // vazios — perdê-los ao recarregar seria perder uma decisão.
+        var soOCartazDeOrigem = cartazes.length === 1 && cartazes[0].k === CHAVE_CARTAZ && !cartazes[0].nome;
+        if (Object.keys(chars).length === 0 && soOCartazDeOrigem) {
             localStorage.removeItem(CHAVE_AUTOSAVE);
             return;
         }
+        var fa = formatoDoAlfabeto();
         localStorage.setItem(CHAVE_AUTOSAVE, JSON.stringify({
-            v: 1,
+            v: 2,
             quando: Date.now(),
-            artboard: currentArtboardIdx,
-            landscape: isLandscape,
+            artboard: fa.idx,              // o formato do ALFABETO, como no v1
+            landscape: fa.landscape,
             letra: currentChar,
             letraAntesDoCartaz: charAntesDoCartaz,
+            cartazAtual: cartazAtual,
+            cartazes: cartazes,
             ref: letraReferencia,
             participante: participante ? participante.id : null,
             coorte: participante ? participante.coorte : null,
@@ -4943,15 +5706,37 @@ function recuperarTrabalho() {
         var bruto = localStorage.getItem(CHAVE_AUTOSAVE);
         if (!bruto) return false;
         var d = JSON.parse(bruto);
-        if (!d || !d.chars || Object.keys(d.chars).length === 0) return false;
+        var temCartazes = !!(d && Array.isArray(d.cartazes) && d.cartazes.length);
+        if (!d || !d.chars || (Object.keys(d.chars).length === 0 && !temCartazes)) return false;
+
+        // Os cartazes. Um registo v2 traz a lista (os vazios incluídos), com o
+        // nome e o formato de cada um, e é ela que manda: o '@CARTAZ' que o
+        // setup criou sai se lá não estiver. Um v1 não traz lista — só podia
+        // ter o '@CARTAZ', que já existe, e o formato vem-lhe do alfabeto.
+        if (temCartazes) {
+            var validos = d.cartazes.filter(function (c) { return c && chaveDeCartazValida(c.k); });
+            if (validos.length) {
+                listaDeCartazes().forEach(function (k) { delete storedCharacters[k]; });
+                validos.forEach(function (c) {
+                    var e = { objects: [], history: [], redoHistory: [] };
+                    if (c.formato === 0 || c.formato === 1 || c.formato === 2) {
+                        e.formato = c.formato;
+                        e.landscape = !!c.landscape;
+                    }
+                    if (typeof c.nome === 'string' && c.nome.trim()) e.nome = c.nome.slice(0, TAMANHO_NOME_CARTAZ);
+                    storedCharacters[c.k] = e;
+                });
+            }
+        }
 
         for (var c in d.chars) {
-            if (storedCharacters[c]) storedCharacters[c].objects = d.chars[c];
+            if (storedCharacters[c] && Array.isArray(d.chars[c])) storedCharacters[c].objects = d.chars[c];
         }
+        // O formato gravado é sempre o do alfabeto.
         if (typeof d.artboard === 'number') currentArtboardIdx = d.artboard;
         if (typeof d.landscape === 'boolean') isLandscape = d.landscape;
-        letraReferencia = (d.ref && storedCharacters[d.ref]) ? d.ref : null;
-        updateArtboardBounds();
+        formatoAlfabeto = { idx: currentArtboardIdx, landscape: isLandscape };
+        letraReferencia = (d.ref && storedCharacters[d.ref] && !eCartaz(d.ref)) ? d.ref : null;
 
         var letra = (d.letra && storedCharacters[d.letra]) ? d.letra : 'A';
 
@@ -4959,12 +5744,24 @@ function recuperarTrabalho() {
         // Guardado à parte podiam divergir — e divergiam: ao gravar em modo
         // cartaz, a tela voltava com o cartaz mas a barra dizia "Alphabet".
         // Assim é impossível estarem em desacordo.
-        modoCartaz = (letra === CHAVE_CARTAZ);
+        modoCartaz = eCartaz(letra);
         charAntesDoCartaz = (d.letraAntesDoCartaz && storedCharacters[d.letraAntesDoCartaz]
-                             && d.letraAntesDoCartaz !== CHAVE_CARTAZ)
+                             && !eCartaz(d.letraAntesDoCartaz))
                           ? d.letraAntesDoCartaz : 'A';
+        cartazAtual = modoCartaz ? letra
+                    : (eCartaz(d.cartazAtual) && storedCharacters[d.cartazAtual]) ? d.cartazAtual
+                    : listaDeCartazes()[0];
+
+        // No cartaz, a folha aberta é a dele; o alfabeto espera no formatoAlfabeto.
+        if (modoCartaz) {
+            var f = formatoDoCartaz(letra);
+            currentArtboardIdx = f.idx;
+            isLandscape = f.landscape;
+        }
+        updateArtboardBounds();
 
         loadCharacter(letra);
+        marcarNumeroDeCartaz(maiorNumeroDeCartaz());
         return true;
     } catch (e) {
         return false;
@@ -5127,7 +5924,16 @@ function windowResized() {
     loadCharacter(currentChar);
 }
 
-function mouseDragged() {
+function mouseDragged(evento) {
+    // Arrastar o dedo num formulário tem de o deixar rolar: devolver false
+    // aqui cancelava o scroll da página inteira.
+    if (eToque(evento) && !naTela(evento)) return;
+    if (eToque(evento) && (toque.adiar || toque.gesto || toque.aguardarLevantar)) return false;
+    // O passo da Mão mede-se desde o evento anterior, e a referência anda em
+    // todos os eventos, não só a deslocar: carregar no Espaço a meio de um
+    // arrasto fazia a prancheta saltar tudo o que se tinha arrastado até ali.
+    var passoX = mouseX - panUltimoX, passoY = mouseY - panUltimoY;
+    panUltimoX = mouseX; panUltimoY = mouseY;
     if (isDraggingSlider) {
         updateSliderFromMouse();
         return false;
@@ -5154,9 +5960,12 @@ function mouseDragged() {
         return false;
     }
 
-    if (keyIsDown(32) || mouseButton === CENTER || selectedModule === -3) {
-        panX += mouseX - pmouseX;
-        panY += mouseY - pmouseY;
+    if ((keyIsDown(32) || mouseButton === CENTER || selectedModule === -3) && arrastoComecouNaTela) {
+        // Mede-se desde o último evento, e não desde o último frame (pmouseX):
+        // um iPad a 120 Hz manda dois movimentos por frame, e a prancheta
+        // andava o dobro do dedo.
+        panX += passoX;
+        panY += passoY;
         calculateLayout();
         return false;
     }
@@ -5375,7 +6184,9 @@ function cantoDoGrupo(grupo) {
 
 // noSitio = cola nas coordenadas originais, sem seguir o rato. É o que permite
 // levar uma letra inteira para outro artboard sem a desalinhar.
-function colarAreaTransferencia(noSitio) {
+// aoLado = cola junto ao original em vez de no ponteiro. É o que a barra de
+// toque usa: o dedo está no botão, e colar debaixo dele não faria sentido.
+function colarAreaTransferencia(noSitio, aoLado) {
     if (areaTransferencia.length === 0) return false;
 
     var canto = cantoDoGrupo(areaTransferencia);
@@ -5399,7 +6210,7 @@ function colarAreaTransferencia(noSitio) {
     // Cola onde está o rato (se estiver sobre o artboard); caso contrário,
     // ligeiramente ao lado do original, para a cópia não ficar escondida.
     var destX, destY;
-    if (mouseX > sidebarWidth && mouseY > topBarHeight) {
+    if (!aoLado && mouseX > sidebarWidth && mouseY > topBarHeight) {
         destX = floor((mouseX - centerX) / tileSize) + GRID_CX;
         destY = floor((mouseY - centerY) / tileSize) + GRID_CY;
     } else {
@@ -5743,6 +6554,47 @@ function adotarIdentidade(data) {
     abrirPortao();
 }
 
+// Depois de trocar a memória inteira (importar um projecto): garante as 36
+// letras e pelo menos um cartaz, e dá a cada entrada as três listas — um
+// ficheiro antigo ou editado à mão podia não as ter, e o undo rebentava.
+function normalizarTelas() {
+    var telas = characters.concat(listaDeCartazes());
+    for (var i = 0; i < telas.length; i++) {
+        var e = storedCharacters[telas[i]];
+        if (!e || typeof e !== 'object') { delete storedCharacters[telas[i]]; continue; }
+        if (!Array.isArray(e.objects)) e.objects = [];
+        if (!Array.isArray(e.history)) e.history = [];
+        if (!Array.isArray(e.redoHistory)) e.redoHistory = [];
+        if (eCartaz(telas[i]) && e.nome !== undefined) {
+            if (typeof e.nome === 'string' && e.nome.trim()) e.nome = e.nome.slice(0, TAMANHO_NOME_CARTAZ);
+            else delete e.nome;
+        }
+    }
+    // Um ficheiro sem cartazes, depois de a pessoa já ter numerado alguns: o
+    // cartaz que se cria tem número novo. Recriar o '@CARTAZ' devolvia o 1,
+    // que pode ter sido apagado e ter colocações suas nos usos.
+    if (!listaDeCartazes().length && maiorNumeroDeCartaz() > 1) {
+        storedCharacters[proximaChaveDeCartaz()] = { objects: [], history: [], redoHistory: [] };
+    }
+    initAllCharacters();
+}
+
+// O número de cartaz mais alto que um ficheiro de projecto conhece: o que ele
+// declara, as chaves dos cartazes que traz e as das contagens da pessoa.
+function maiorCartazDoFicheiro(data) {
+    var maior = (typeof data.ultimoCartaz === 'number' && isFinite(data.ultimoCartaz)) ? Math.floor(data.ultimoCartaz) : 1;
+    function ver(k) { if (chaveDeCartazValida(k)) maior = Math.max(maior, numeroDoCartaz(k)); }
+    for (var k in data.characters) ver(k);
+    var e = data.estadoParticipante;
+    if (e && e.usosPorLetra) for (var chave in e.usosPorLetra) ver(chave.split('|')[0]);
+    return maior;
+}
+
+// As miniaturas guardadas eram do projecto anterior.
+function miniaturasDeOutroProjecto() {
+    for (var k in miniaturasCartaz) esquecerMiniatura(k);
+}
+
 function exportProjectJSON() {
     acoes.expProjeto++;
     // 1. GUARDA O ESTADO ATUAL (A linha mágica que faltava!)
@@ -5752,8 +6604,10 @@ function exportProjectJSON() {
     // O ficheiro leva o trabalho E a identidade. É isto que permite continuar
     // noutro computador sem passar a contar como outra pessoa — e sem os dados
     // ficarem incoerentes, porque o alfabeto viaja junto com o participante.
+    // 1.2: pode haver vários cartazes, e cada entrada de cartaz leva o nome e
+    // o formato da folha. Um ficheiro 1.1 abre na mesma, com um só cartaz.
     var projectData = {
-        version: "1.1",
+        version: "1.2",
         appName: "Plataforma Modular Tipográfica",
         participante: participante ? participante.id : null,
         coorte: participante ? participante.coorte : null,
@@ -5765,6 +6619,10 @@ function exportProjectJSON() {
             primeiroCaractere: primeiroCaractere,
             avaliou: !!lerTexto(CHAVE_AVALIACAO)
         } : null,
+        // O número de cartaz mais alto já usado por esta pessoa. Viaja com o
+        // ficheiro para o outro computador não voltar a dar um número que
+        // já tem linhas na folha Letras.
+        ultimoCartaz: maiorNumeroDeCartaz(),
         characters: storedCharacters
     };
 
@@ -5819,16 +6677,32 @@ function importProjectJSON() {
                 // Lê e tenta converter de volta para a memória da plataforma
                 var data = JSON.parse(event.target.result);
 
-                if (data && data.characters) {
+                if (data && data.characters && typeof data.characters === 'object') {
                     storedCharacters = data.characters; // Atualiza a memória global
+                    normalizarTelas();
+                    miniaturasDeOutroProjecto();
+                    marcarNumeroDeCartaz(maiorCartazDoFicheiro(data));
+
+                    // A tela aberta pode não existir no ficheiro — um cartaz
+                    // que lá não há. Nesse caso abre o primeiro cartaz dele.
+                    if (!eCartaz(cartazAtual) || !storedCharacters[cartazAtual]) cartazAtual = listaDeCartazes()[0];
+                    var abrir = (modoCartaz && !storedCharacters[currentChar]) ? cartazAtual : currentChar;
+                    if (modoCartaz) {
+                        cartazAtual = abrir;
+                        usarFormato(formatoDoCartaz(abrir));
+                    }
 
                     panX = 0; // Centra a câmara para evitar que o projeto carregue "perdido" no espaço
                     panY = 0;
 
-                    loadCharacter(currentChar);         // Atualiza a grelha visual
+                    loadCharacter(abrir);               // Atualiza a grelha visual
                     calculateLayout();                  // Refaz as matemáticas
                     realinharContagens();               // importar não é colocar
                     adotarIdentidade(data);             // continuar como a mesma pessoa
+                    // A lista de cartazes (vazios, nomes, formatos) não entra na
+                    // assinatura do autosave: sem isto, recarregar a página
+                    // devolvia a lista de antes da importação.
+                    guardarTrabalho();
                 } else {
                     avisar("This file doesn't look like a valid project for this platform.");
                 }
@@ -5846,6 +6720,14 @@ function importProjectJSON() {
     input.click();
 }
 
+// Um nome escrito pela pessoa, reduzido ao que é seguro num nome de ficheiro:
+// sem acentos, e tudo o que não for letra, número, - ou _ passa a hífen.
+function nomeParaFicheiro(nome) {
+    var t = String(nome).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    t = t.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+    return t || 'Poster';
+}
+
 function exportCharacterSVG(charToExport) {
     acoes.expLetra++;
     if (charToExport === currentChar) {
@@ -5855,8 +6737,8 @@ function exportCharacterSVG(charToExport) {
     var objs = storedCharacters[charToExport] ? storedCharacters[charToExport].objects : [];
 
     if (!objs || objs.length === 0) {
-        avisar(charToExport === CHAVE_CARTAZ
-            ? "The poster is empty! There is nothing to export."
+        avisar(eCartaz(charToExport)
+            ? "\"" + nomeDoCartaz(charToExport) + "\" is empty! There is nothing to export."
             : "The letter '" + charToExport + "' is empty! There is nothing to export.");
         return;
     }
@@ -5974,8 +6856,10 @@ function exportCharacterSVG(charToExport) {
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
-    a.download = (charToExport === CHAVE_CARTAZ)
-        ? "Pragmatipo_Cartaz.svg"
+    // Cada cartaz sai com o seu nome: com todos a chamar-se Pragmatipo_Cartaz,
+    // o segundo ficava "Pragmatipo_Cartaz (1).svg" e já ninguém sabia qual era.
+    a.download = eCartaz(charToExport)
+        ? "Pragmatipo_Cartaz_" + nomeParaFicheiro(nomeDoCartaz(charToExport)) + ".svg"
         : "Letra_" + charToExport + "_Vetores.svg";
 
     a.setAttribute("data-no-ajax", "true");
@@ -6268,6 +7152,501 @@ function clearEntireAlphabet() {
     return false;           // Impede que o navegador propague o clique para o canvas
 }
 
+// ==========================================
+// TOQUE E CANETA (tablets)
+// ==========================================
+// O p5 já traduz um dedo em rato, e a ferramenta desenhava com o dedo e com a
+// Apple Pencil antes disto. O que falta é o que o rato não tem: deslocar e
+// fazer zoom com dois dedos, rolar listas com o dedo, um Shift e atalhos sem
+// teclado. Tudo aqui só entra em jogo com toque — com rato, nada muda.
+
+// Aparelho táctil: decide se a barra de atalhos aparece. Confirma-se também
+// ao primeiro toque, para os aparelhos que não o anunciam.
+var ecraTatil = ((navigator.maxTouchPoints || 0) > 0) ||
+                !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+
+var ESPERA_DO_DEDO = 90;        // ms antes de um dedo pousar peças (ver handleInteraction)
+var LIMIAR_DO_ARRASTO = 10;     // px: abaixo disto um toque é um toque, não um arrasto
+var DURACAO_TOQUE_LONGO = 500;  // ms: fixar a letra de referência
+
+var toque = {
+    ativo: false,          // há um dedo ou caneta em baixo
+    caneta: false,         // o toque é da Apple Pencil (ou outra caneta)
+    zona: null,            // 'tela' | 'lista' | 'manual' | 'outra'
+    adiar: false,          // lista e manual: decide-se no fim se foi toque ou arrasto
+    x0: 0, y0: 0, yAnterior: 0, t0: 0,
+    moveu: false,
+    longo: false,          // o toque longo já fixou a referência: o fim não abre a letra
+    temporizador: null,
+    antes: null,           // o desenho antes deste toque, para o desfazer se virar zoom
+    gesto: null,           // zoom/deslocação de dois dedos em curso
+    aguardarLevantar: false,  // depois do gesto, até todos os dedos saírem
+    ignorarFim: false,     // o fim do gesto não é um "largar o rato"
+    fim: 0,                // quando acabou o último toque
+    importar: false,       // abrir o Import no fim deste toque
+    esperou: false,        // a espera do dedo já passou neste toque (ver aoAcabarToque)
+    id: null,              // o identificador do toque que manda (a caneta, se pousou)
+    restoDaMao: false      // o dono levantou e ficaram outros dedos: ignoram-se até saírem
+};
+
+function eToque(ev) { return !!(ev && ev.type && String(ev.type).indexOf('touch') === 0); }
+function naTela(ev) { return !!(ev && ev.target && ev.target.tagName === 'CANVAS'); }
+
+// Os cliques de rato que o browser fabrica a partir de um toque. Os toques na
+// prancheta já não os produzem (são cancelados à cabeça, em aoComecarToque);
+// isto fica só como rede, onde o browser diz de onde vem o evento. Nunca por
+// tempo: assim apanhava também cliques verdadeiros de rato.
+function eRatoDeCompatibilidade(ev) {
+    return !!(ev && ev.type === 'mousedown' && naTela(ev) &&
+              ev.sourceCapabilities && ev.sourceCapabilities.firesTouchEvents);
+}
+
+function fundoDaListaLateral() {
+    var g = globalScale;
+    return max(height, topBarHeight + 150 * g + 50 * g) - 150 * g;
+}
+
+// Onde caiu o toque, em coordenadas do canvas (que ocupa a janela toda).
+function zonaDoToque(x, y) {
+    if (interfaceBloqueada()) return 'outra';
+    if (showShortcutsModal) {
+        var b = getModalBounds();
+        var topo = (b.y - b.h / 2) + b.headerH, fundo = (b.y + b.h / 2) - 14 * globalScale;
+        var dentro = x > b.x - b.w / 2 && x < b.x + b.w / 2 && y > topo && y < fundo;
+        return dentro ? 'manual' : 'outra';
+    }
+    if (x < sidebarWidth && y > getCharTop() && y < fundoDaListaLateral()) return 'lista';
+    if (x > sidebarWidth && y > topBarHeight && !sobreBarraDeToqueEm(x, y) &&
+        !(showWordPreview && y > getPreviewBounds().y)) return 'tela';
+    return 'outra';
+}
+
+function pontoDoToque(t) { return { x: t.clientX, y: t.clientY }; }
+
+// Desfaz o que o primeiro dedo fez antes de o segundo chegar: era o início de
+// um zoom, não desenho. Repõe as peças, o histórico e a seleção.
+var JANELA_DO_SEGUNDO_DEDO = 300;  // ms: um segundo dedo depois disto já não é o início de um zoom
+
+// Desfaz o que o primeiro dedo fez antes de o segundo chegar: era o início de
+// um zoom, não desenho. Repõe as peças, o histórico, a seleção, as guias e as
+// recusas que o primeiro dedo tenha somado.
+function desfazerInicioDoToque() {
+    cancelarInteraccaoEmCurso();
+    var a = toque.antes;
+    toque.antes = null;
+    if (!a) return;
+    if (a.acoes === acoes) {
+        acoes.recusas = a.recusas;
+        acoes.recusasCartaz = a.recusasCartaz;
+    }
+    ultimaRecusa = a.ultimaRecusa;
+    Object.assign(guidesX, a.guiasX);
+    Object.assign(guidesY, a.guiasY);
+    if (a.char !== currentChar || !storedCharacters[currentChar]) return;
+    placedObjects = a.objs;
+    storedCharacters[currentChar].history = a.hist;
+    storedCharacters[currentChar].redoHistory = a.redo;
+    rebuildCollisionMap();
+    selectedObjects = a.sel.map(function (i) { return placedObjects[i]; });
+    resetRotationBase();
+}
+
+function cancelarInteraccaoEmCurso() {
+    isDraggingSelection = false;
+    dragOriginals = [];
+    snapshotAntesDoArrasto = null;
+    selectionBox.active = false;
+    isRotatingSelection = false;
+    draggedGuide = null;
+    isDraggingSlider = false;
+}
+
+// O estado de um toque novo, a partir do primeiro dedo (ou da caneta).
+function iniciarToque(t) {
+    var p = pontoDoToque(t);
+    toque.ativo = true;
+    toque.id = t.identifier;      // o dedo ou a caneta que começou o toque
+    // A caneta reconhece-se pelo touchType do iPad ou pelo tipo de ponteiro,
+    // que chega um instante antes do toque.
+    toque.caneta = (t.touchType === 'stylus') || (ultimoPonteiro === 'pen' && Date.now() - ultimoPonteiroEm < 300);
+    if (toque.caneta) canetaTactil = true;
+    toque.x0 = p.x; toque.y0 = p.y; toque.yAnterior = p.y;
+    toque.t0 = Date.now();
+    toque.esperou = false;
+    toque.moveu = false;
+    toque.longo = false;
+    toque.ignorarFim = false;
+    toque.aguardarLevantar = false;
+    toque.importar = false;
+    toque.zona = zonaDoToque(p.x, p.y);
+    toque.adiar = (toque.zona === 'lista' || toque.zona === 'manual');
+    toque.antes = null;
+    clearTimeout(toque.temporizador);
+
+    if (toque.zona === 'tela' && storedCharacters[currentChar]) {
+        // Tirada aqui, antes de o p5 chamar o mousePressed: a seleção ainda é a
+        // de antes do toque, e os índices batem com esta cópia das peças.
+        toque.antes = {
+            char: currentChar,
+            objs: JSON.parse(JSON.stringify(placedObjects)),
+            sel: selectedObjects.map(function (o) { return placedObjects.indexOf(o); })
+                                .filter(function (i) { return i > -1; }),
+            hist: storedCharacters[currentChar].history.slice(),
+            redo: storedCharacters[currentChar].redoHistory,
+            guiasX: Object.assign({}, guidesX),
+            guiasY: Object.assign({}, guidesY),
+            acoes: acoes, recusas: acoes.recusas, recusasCartaz: acoes.recusasCartaz,
+            ultimaRecusa: ultimaRecusa
+        };
+    }
+    // Toque longo numa letra da lista: fixa-a (ou solta-a) como referência —
+    // o que no computador é o Shift-clique.
+    if (toque.zona === 'lista' && !modoCartaz) {
+        toque.temporizador = setTimeout(function () {
+            if (!toque.ativo || toque.moveu || toque.gesto) return;
+            var antes = letraReferencia;
+            shiftNoClique = true;
+            checkSidebarClick();
+            shiftNoClique = false;
+            if (letraReferencia !== antes) toque.longo = true;
+        }, DURACAO_TOQUE_LONGO);
+    }
+}
+
+// A base de um zoom de dois dedos. Os dedos seguem-se pelo identificador, não
+// pela ordem na lista: com três dedos, levantar um trocava a ordem e a
+// prancheta saltava.
+function baseDoGesto(t1, t2) {
+    var a = pontoDoToque(t1), b = pontoDoToque(t2);
+    return {
+        idA: t1.identifier, idB: t2.identifier,
+        d0: max(1, dist(a.x, a.y, b.x, b.y)),
+        mx0: (a.x + b.x) / 2, my0: (a.y + b.y) / 2,
+        tile0: tileSize, cx0: centerX, cy0: centerY
+    };
+}
+
+function toquePorId(lista, id) {
+    for (var i = 0; i < lista.length; i++) if (lista[i].identifier === id) return lista[i];
+    return null;
+}
+
+function canetaEm(lista) {
+    for (var i = 0; i < lista.length; i++) {
+        if (lista[i].touchType === 'stylus') return lista[i];
+    }
+    // Sem touchType (fora do iPad), a caneta reconhece-se pelo ponteiro que
+    // acabou de pousar.
+    if (lista.length === 1 && ultimoPonteiro === 'pen' && Date.now() - ultimoPonteiroEm < 300) return lista[0];
+    return null;
+}
+
+// O p5 não vê os toques na prancheta: é esta camada que lhe diz onde está o
+// "rato" e se está carregado. Assim o ponteiro segue sempre o toque que
+// manda — o p5 seguia o primeiro da lista, que podia ser a palma.
+function p5Instancia() { return (window.p5 && p5.instance) || null; }
+function porPonteiro(x, y, inicio) {
+    var i = p5Instancia();
+    if (i && i._setProperty) {
+        i._setProperty('mouseX', x); i._setProperty('mouseY', y);
+        if (inicio) { i._setProperty('pmouseX', x); i._setProperty('pmouseY', y); }
+    } else { window.mouseX = x; window.mouseY = y; }
+}
+function porPressao(v) {
+    var i = p5Instancia();
+    if (i && i._setProperty) i._setProperty('mouseIsPressed', v); else window.mouseIsPressed = v;
+}
+
+// Um toque passa a mandar: põe o ponteiro nele e carrega, como o rato.
+function comecarDono(e, t) {
+    iniciarToque(t);
+    var p = pontoDoToque(t);
+    porPonteiro(p.x, p.y, true);
+    porPressao(true);
+    mousePressed(e);
+}
+
+// O toque que mandava deixa de mandar (chegou um segundo dedo, ou a caneta):
+// mesmo a seguir ao início, o que fez desfaz-se — era o começo de outra coisa;
+// mais tarde, fica feito, como se tivesse levantado.
+function largarDono() {
+    clearTimeout(toque.temporizador);
+    if (toque.zona === 'tela' && Date.now() - toque.t0 < JANELA_DO_SEGUNDO_DEDO) {
+        desfazerInicioDoToque();
+    } else if (!toque.adiar) {
+        porPressao(false);
+        mouseReleased(null);
+        cancelarInteraccaoEmCurso();
+        toque.antes = null;
+    }
+    toque.adiar = false;
+    porPressao(false);
+}
+
+function comecarGesto(t1, t2) {
+    largarDono();
+    toque.gesto = baseDoGesto(t1, t2);
+    toque.ignorarFim = true;
+}
+
+function aoComecarToque(e) {
+    if (!naTela(e)) return;                       // formulários e menus: são do HTML
+    if (typeof width === 'undefined' || !width) return;
+    e.preventDefault();   // sem cliques de rato fabricados, sem zoom da página, sem menu do toque longo
+    e.stopPropagation();  // o p5 não o vê: quem o conduz é esta camada
+    ecraTatil = true;
+    // O p5 só define o botão do rato com eventos de rato; num toque ficava por
+    // definir, e o desenho, que exige o botão esquerdo, não respondia.
+    var i5 = p5Instancia();
+    if (i5 && i5._setProperty) i5._setProperty('mouseButton', LEFT); else window.mouseButton = LEFT;
+
+    var caneta = canetaEm(e.changedTouches);
+    if (!toque.ativo && !toque.gesto) {
+        // Toque novo. Manda a caneta, se pousou; senão o primeiro dedo.
+        // A mão que tenha ficado de antes continua ignorada.
+        if (caneta) { comecarDono(e, caneta); return; }
+        comecarDono(e, e.changedTouches[0]);
+        // Dois dedos a pousar no mesmo instante, ambos na prancheta: zoom.
+        if (e.changedTouches.length >= 2) {
+            var b2 = pontoDoToque(e.changedTouches[1]);
+            if (toque.zona === 'tela' && zonaDoToque(b2.x, b2.y) === 'tela') comecarGesto(e.changedTouches[0], e.changedTouches[1]);
+        }
+        return;
+    }
+    if (toque.gesto) return;                      // um terceiro dedo não muda o zoom
+    // A caneta desenha: a mão ou um dedo que pousa entretanto é ignorado.
+    if (toque.caneta) return;
+    if (caneta) {
+        // A caneta chega com a palma (ou um dedo) já pousada: passa ela a mandar.
+        largarDono();
+        comecarDono(e, caneta);
+        return;
+    }
+    // Um segundo dedo: zoom, se os dois estão na prancheta. Um toque na barra
+    // de baixo, ou na lista, não é o segundo dedo de um zoom.
+    var novo = e.changedTouches[0], pn = pontoDoToque(novo);
+    var dono = toquePorId(e.touches, toque.id);
+    if (!dono || toque.zona !== 'tela' || zonaDoToque(pn.x, pn.y) !== 'tela') return;
+    comecarGesto(dono, novo);
+}
+
+function aoMoverToque(e) {
+    if (!naTela(e)) {
+        // Dois dedos num formulário ou num menu: sem zoom da página. A prancheta
+        // (touch-action: none) não deixava desfazê-lo depois.
+        if (e.touches && e.touches.length > 1 && e.cancelable) e.preventDefault();
+        return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (toque.gesto) {
+        var g = toque.gesto;
+        var ta = toquePorId(e.touches, g.idA), tb = toquePorId(e.touches, g.idB);
+        if (!ta || !tb) return;
+        var a = pontoDoToque(ta), b = pontoDoToque(tb);
+        var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        var novo = constrain(g.tile0 * dist(a.x, a.y, b.x, b.y) / g.d0, uiSlider.min, uiSlider.max);
+        // O ponto da grelha que estava debaixo dos dedos fica debaixo deles:
+        // aproximar e afastar à volta dos dedos, e deslocar ao mesmo tempo.
+        var gx = (g.mx0 - g.cx0) / g.tile0, gy = (g.my0 - g.cy0) / g.tile0;
+        tileSize = Math.round(novo * 100) / 100;
+        panX = (mx - gx * tileSize) - (sidebarWidth + availableW / 2);
+        panY = (my - gy * tileSize) - (topBarHeight + availableH / 2);
+        calculateLayout();
+        return;
+    }
+    if (!toque.ativo) return;                     // o resto da mão, ou o dedo que ficou do zoom
+    var t = toquePorId(e.touches, toque.id);
+    if (!t) return;                               // mexeu-se outro dedo, não o que manda
+    var p = pontoDoToque(t);
+    porPonteiro(p.x, p.y);
+    if (!toque.moveu && dist(p.x, p.y, toque.x0, toque.y0) > LIMIAR_DO_ARRASTO) {
+        toque.moveu = true;
+        clearTimeout(toque.temporizador);
+    }
+    if (toque.adiar) {
+        // Lista e manual: um dedo a arrastar rola-os.
+        if (toque.moveu) {
+            var dy = p.y - toque.yAnterior;
+            if (toque.zona === 'manual') modalScrollY = constrain(modalScrollY - dy, 0, modalMaxScroll);
+            else if (modoCartaz) cartazScrollY -= dy;   // o desenho da lista trava-o nos limites
+            else alphabetScrollY -= dy;
+        }
+    } else {
+        mouseDragged(e);
+    }
+    toque.yAnterior = p.y;
+}
+
+function aoAcabarToque(e) {
+    if (!naTela(e)) return;
+    e.stopPropagation();
+    if (toque.gesto) {
+        var g = toque.gesto;
+        if (toquePorId(e.touches, g.idA) && toquePorId(e.touches, g.idB)) {
+            // saiu um terceiro dedo: o zoom continua com os mesmos dois
+        } else if (e.touches.length >= 2) {
+            toque.gesto = baseDoGesto(e.touches[0], e.touches[1]);   // saiu um dos dois: segue com os que ficam
+        } else {
+            toque.gesto = null;
+            toque.ativo = false;
+            toque.aguardarLevantar = e.touches.length > 0;   // o dedo que fica não desenha
+        }
+    } else {
+        var dono = toque.ativo ? toquePorId(e.changedTouches, toque.id) : null;
+        if (dono) acabarDono(e, dono);
+    }
+    if (e.touches.length === 0) {
+        toque.ativo = false;
+        toque.gesto = null;
+        toque.aguardarLevantar = false;
+        toque.restoDaMao = false;
+        toque.fim = Date.now();
+        porPressao(false);
+    }
+}
+
+// O toque que manda levantou (ou o sistema cancelou-o).
+function acabarDono(e, t) {
+    var p = pontoDoToque(t);
+    porPonteiro(p.x, p.y);
+    clearTimeout(toque.temporizador);
+    if (e.type === 'touchend') {
+        // Um toque rápido no artboard acaba antes da espera do dedo: pousa (ou
+        // apaga) uma vez onde o dedo esteve. A espera serve para dar tempo ao
+        // segundo dedo, não para engolir o toque. O "rato" ainda está em baixo.
+        if (toque.zona === 'tela' && !toque.ignorarFim && !toque.esperou) {
+            toque.t0 = -Infinity;
+            handleInteraction();
+        }
+        // Lista e manual: sem arrasto e sem toque longo, foi um toque — e só
+        // agora se trata, para arrastar a lista não abrir a letra onde o dedo pousou.
+        if (toque.adiar && !toque.moveu && !toque.longo) {
+            toque.adiar = false;
+            mousePressed(null);
+        }
+        if (toque.importar && dentroDe(btnImport)) importProjectJSON();
+    }
+    toque.adiar = false;
+    toque.importar = false;
+    porPressao(false);
+    // Cancelado pelo sistema (gesto do iPad, rejeição da palma): larga-se na
+    // mesma, para o "rato" não ficar em baixo a pintar sozinho.
+    if (!toque.ignorarFim) mouseReleased(e.type === 'touchcancel' ? null : e);
+    toque.ativo = false;
+    toque.antes = null;
+    // Ficaram outros dedos (a mão apoiada): ignoram-se até saírem. Uma caneta
+    // que volte a pousar entretanto manda outra vez.
+    if (e.touches.length > 0) toque.restoDaMao = true;
+    toque.fim = Date.now();
+}
+
+// Capturados na janela antes dos do p5 (que também escuta a janela). Nos
+// toques na prancheta param aqui: o p5 não os chega a ver. Assim funciona
+// também no Firefox, a que o p5 não passava o início do toque.
+window.addEventListener('touchstart', aoComecarToque, { capture: true, passive: false });
+window.addEventListener('touchmove', aoMoverToque, { capture: true, passive: false });
+window.addEventListener('touchend', aoAcabarToque, { capture: true, passive: false });
+window.addEventListener('touchcancel', aoAcabarToque, { capture: true, passive: false });
+// O zoom de dois dedos do Safari, sobre formulários e menus.
+document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, { passive: false });
+
+// --- BARRA DE ATALHOS (só em aparelhos tácteis) ---
+// O que no computador são atalhos de teclado, aqui são botões, sempre no
+// mesmo sítio, ao fundo da prancheta. Chamam exactamente as mesmas funções.
+var modoJuntar = false;   // Add: cada toque numa peça junta-a à seleção (ou tira-a), como o Shift
+var BOTOES_DE_TOQUE = [
+    { id: 'tudo', texto: 'Select all' },
+    { id: 'juntar', texto: 'Add' },
+    { id: 'copiar', texto: 'Copy' },
+    { id: 'cortar', texto: 'Cut' },
+    { id: 'colar', texto: 'Paste' },
+    { id: 'colarSitio', texto: 'In place' },
+    { id: 'duplicar', texto: 'Duplicate' },
+    { id: 'apagar', texto: 'Delete' }
+];
+
+function barraDeToque() {
+    if (!ecraTatil || telaPorEscolher || showShortcutsModal || !portaoAberto) return null;
+    var g = globalScale;
+    var h = 40 * g;
+    var areaX = sidebarWidth, areaW = width - sidebarWidth;
+    var larguraBotao = 70 * g;
+    var w = larguraBotao * BOTOES_DE_TOQUE.length;
+    // Não passa por cima da régua de referência, no canto inferior direito.
+    var reg = getReguaBounds();
+    var limiteDir = reg.visivel ? reg.x - 18 * g : width - 12 * g;
+    var disponivel = limiteDir - (areaX + 12 * g);
+    if (w > disponivel) { larguraBotao = max(36 * g, disponivel / BOTOES_DE_TOQUE.length); w = larguraBotao * BOTOES_DE_TOQUE.length; }
+    var cx = areaX + areaW / 2;
+    if (cx + w / 2 > limiteDir) cx = limiteDir - w / 2;
+    var base = showWordPreview ? getPreviewBounds().y : height;
+    var cy = base - 14 * g - h / 2;
+    var botoes = BOTOES_DE_TOQUE.map(function (b, i) {
+        return { id: b.id, texto: b.texto, x: cx - w / 2 + larguraBotao * (i + 0.5), y: cy, w: larguraBotao, h: h };
+    });
+    return { x: cx, y: cy, w: w, h: h, botoes: botoes };
+}
+
+function sobreBarraDeToqueEm(x, y) {
+    var b = barraDeToque();
+    return !!b && x > b.x - b.w / 2 && x < b.x + b.w / 2 && y > b.y - b.h / 2 && y < b.y + b.h / 2;
+}
+function sobreBarraDeToque() { return sobreBarraDeToqueEm(mouseX, mouseY); }
+
+function botaoDeToqueDisponivel(id) {
+    if (id === 'juntar') return true;
+    if (id === 'tudo') return placedObjects.length > 0;
+    if (id === 'colar' || id === 'colarSitio') return areaTransferencia.length > 0;
+    return selectedObjects.length > 0;
+}
+
+function desenharBarraDeToque() {
+    var b = barraDeToque();
+    if (!b) return;
+    var g = globalScale;
+    push();
+    rectMode(CENTER); textAlign(CENTER, CENTER);
+    fill(249, 245); stroke(238); strokeWeight(0.75);
+    rect(b.x, b.y, b.w, b.h, 8 * g);
+    textSize(10 * g); textStyle(BOLD);
+    for (var i = 0; i < b.botoes.length; i++) {
+        var bt = b.botoes[i];
+        var activo = (bt.id === 'juntar' && modoJuntar);
+        if (activo) {
+            noStroke(); fill(0, 200, 0, 30);
+            rect(bt.x, bt.y, bt.w - 6 * g, bt.h - 8 * g, 5 * g);
+        }
+        if (i > 0) { stroke(238); strokeWeight(0.75); line(bt.x - bt.w / 2, bt.y - b.h / 2 + 8 * g, bt.x - bt.w / 2, bt.y + b.h / 2 - 8 * g); }
+        noStroke();
+        fill(activo ? color(0, 150, 0) : (botaoDeToqueDisponivel(bt.id) ? color(80) : color(200)));
+        text(bt.texto, bt.x, bt.y);
+    }
+    textStyle(NORMAL);
+    pop();
+}
+
+// Devolve true se o clique foi na barra (e trata-o).
+function cliqueNaBarraDeToque() {
+    var b = barraDeToque();
+    if (!b || !sobreBarraDeToque()) return false;
+    for (var i = 0; i < b.botoes.length; i++) {
+        var bt = b.botoes[i];
+        if (!dentroDe(bt)) continue;
+        if (!botaoDeToqueDisponivel(bt.id)) return true;
+        if (bt.id === 'tudo') selecionarTudo();
+        else if (bt.id === 'juntar') modoJuntar = !modoJuntar;
+        else if (bt.id === 'copiar') copiarSelecao();
+        else if (bt.id === 'cortar') cortarSelecao();
+        else if (bt.id === 'colar') colarAreaTransferencia(false, true);
+        else if (bt.id === 'colarSitio') colarAreaTransferencia(true);
+        else if (bt.id === 'duplicar') duplicarSelecao();
+        else if (bt.id === 'apagar') apagarSelecao();
+        return true;
+    }
+    return true;   // entre botões: não passa para a prancheta
+}
+
 // --- DETEÇÃO DE SCROLL (RATO / TRACKPAD) ---
 function mouseWheel(event) {
     // Com o modal aberto, a roda faz scroll ao manual
@@ -6278,7 +7657,9 @@ function mouseWheel(event) {
 
     // Só deixa fazer scroll se o rato estiver a sobrevoar a barra lateral
     if (mouseX < sidebarWidth && mouseY > topBarHeight) {
-        alphabetScrollY += event.delta; // Soma o movimento
+        // Cada lista rola por si: voltar ao alfabeto encontra-o onde estava.
+        if (modoCartaz) cartazScrollY += event.delta;
+        else alphabetScrollY += event.delta; // Soma o movimento
         return false; // Bloqueia a página do browser de fazer scroll para baixo!
     }
 }
@@ -6355,6 +7736,13 @@ function avisar(mensagem) {
 
 function perguntar(mensagem) {
     var resposta = confirm(mensagem);
+    reporEstadoDoRato();
+    return resposta;
+}
+
+// O mesmo, para pedir um texto. Devolve null se a pessoa cancelar.
+function pedirTexto(mensagem, valor) {
+    var resposta = prompt(mensagem, valor);
     reporEstadoDoRato();
     return resposta;
 }
@@ -6580,7 +7968,20 @@ var EMAIL_CONTACTO = 'adg@esmad.ipp.pt';
 // Muda sempre que o texto do RGPD mudar — é o que permite dizer, na tese, ao
 // que cada participante consentiu. O endereço de contacto faz parte do texto:
 // estando errado, o direito à eliminação não era exercível.
-var VERSAO_CONSENTIMENTO = '2026-08-06';
+var VERSAO_CONSENTIMENTO = '2026-10-02';
+
+// --- VERSÃO DA FERRAMENTA ---
+// Vai em cada registo enviado (inscrição, sessão, letras, módulos, avaliação),
+// para se saber com que versão do Pragmatipo foi feito cada dado. NÃO segue o
+// ?v= do Cargo nem o do Index.html: esses só servem para o browser não usar
+// ficheiros em cache, e mudam muito mais vezes. Esta só muda quando o script
+// muda de uma forma que importa para os dados — o que se recolhe, ou como a
+// ferramenta se comporta para quem desenha — e sempre por decisão do Ângelo,
+// ou avisando-o. Acrescentar um código de workshop não muda a versão: isso já
+// se vê na `coorte`. Cada versão fica registada no COLUNAS-BASE-DE-DADOS.md, em
+// "Histórico de versões da ferramenta". Numeração simples: v1, v2, v3… (tudo o
+// que foi recolhido antes de existir esta coluna é a v0).
+var VERSAO_FERRAMENTA = 'v1';
 
 var CONSENTIMENTOS = [
     { id: 'rgpd', obrigatorio: true,
@@ -6634,8 +8035,8 @@ var TEXTO_RGPD =
     'The answers below are collected by Ângelo Gonçalves and used only for that research. ' +
     'No name, e-mail or any other direct identifier is asked for, and your answers are stored under an anonymous code. ' +
     'Alongside your answers, the research also records how the tool is used: how often you come back, how long you work, ' +
-    'which letters and modules you build, how you rotate and arrange them, which working mode you choose, and which ' +
-    'commands you reach for. Nothing you type into the tool itself is recorded, and the letterforms themselves are never sent. ' +
+    'which letters and modules you build, how you rotate and arrange them, which working mode you choose, whether you ' +
+    'draw with a mouse, a finger or a pen, and which commands you reach for. Nothing you type into the tool itself is recorded, and the letterforms themselves are never sent. ' +
     'You can ask for your data to be deleted at any time by sending that code to ' + EMAIL_CONTACTO + '.';
 
 // --- ESTADO ----------------------------------------------------------------
@@ -6956,6 +8357,7 @@ function concluirPortao(grupo, respostas) {
         material: participante.material,
         quando: participante.quando,
         versaoConsentimento: VERSAO_CONSENTIMENTO,
+        versaoFerramenta: VERSAO_FERRAMENTA,
         ecra: window.innerWidth + 'x' + window.innerHeight,   // não as globais do p5
         idioma: navigator.language || ''
     };
@@ -7016,6 +8418,8 @@ var ultimaContagem = {};                   // fotografia do tique anterior
 // Comportamento da sessão. Tudo somado em memória e despejado no registo.
 var acoes = {
     recusas: 0,          // colocações barradas pelo modo Letterpress
+    recusasCartaz: 0,    // as mesmas, só as feitas num cartaz
+    ptrRato: 0, ptrToque: 0, ptrCaneta: 0,   // toques na prancheta, por tipo de ponteiro
     undos: 0,
     preview: 0,          // vezes que abriu o Preview word
     expLetra: 0, expAlfabeto: 0, expZip: 0, expProjeto: 0,
@@ -7037,7 +8441,7 @@ var CHAVE_N_SESSOES = 'pragmatipo-n-sessoes';
 var sessao = null;
 
 function contarTrabalho() {
-    var letras = 0, numeros = 0, modulos = 0, cartaz = 0;
+    var letras = 0, numeros = 0, modulos = 0, cartaz = 0, cartazes = 0;
 
     // Contagem por módulo, com o NOME DO FICHEIRO (00.svg -> "00"), não com a
     // etiqueta da interface. O ficheiro é identificador estável; a etiqueta é
@@ -7055,16 +8459,19 @@ function contarTrabalho() {
     // rende quatro vezes mais ao sistema do que um preso a uma só.
     var porRotacao = {};
 
-    // O cartaz entra nas contagens de módulos — um módulo usado num cartaz foi
-    // usado na mesma — mas não conta como letra nem como número. Fica separado
-    // em `cartaz` e etiquetado nas linhas, para se poder filtrar na análise.
+    // Os cartazes entram nas contagens de módulos — um módulo usado num cartaz
+    // foi usado na mesma — mas não contam como letra nem como número. Ficam
+    // separados em `cartaz` (as peças de todos) e `cartazes` (quantos têm
+    // desenho), e etiquetados nas linhas, para se poder filtrar na análise.
+    // O eCartaz e não uma comparação com '@CARTAZ': '@' vem depois do '9', e o
+    // segundo cartaz caía no ramo das letras.
     var telas = listaDeTelas();
     for (var i = 0; i < telas.length; i++) {
         var c = telas[i];
         var objs = (c === currentChar) ? placedObjects
                  : (storedCharacters[c] ? storedCharacters[c].objects : []);
         if (!objs || !objs.length) continue;
-        if (c === CHAVE_CARTAZ) cartaz += objs.length;
+        if (eCartaz(c)) { cartaz += objs.length; cartazes++; }
         else if (c >= '0' && c <= '9') numeros++;
         else letras++;
         modulos += objs.length;
@@ -7078,7 +8485,7 @@ function contarTrabalho() {
         }
     }
     return { letras: letras, numeros: numeros, desenhados: letras + numeros,
-             cartaz: cartaz, modulos: modulos,
+             cartaz: cartaz, cartazes: cartazes, modulos: modulos,
              porModulo: porModulo, porLetra: porLetra, porRotacao: porRotacao };
 }
 
@@ -7148,7 +8555,7 @@ function iniciarSessao() {
 
     // A base da sessão é o alfabeto tal como chegou — já com o que veio do
     // autosave. Assim o "dif" mede esta sessão e não o histórico todo.
-    acoes = { recusas: 0, undos: 0, preview: 0,
+    acoes = { recusas: 0, recusasCartaz: 0, ptrRato: 0, ptrToque: 0, ptrCaneta: 0, undos: 0, preview: 0,
               expLetra: 0, expAlfabeto: 0, expZip: 0, expProjeto: 0, trocasDeModo: 0,
               trocasDeCaractere: 0, revisitas: 0,
               trocasDeFormato: 0, trocasDeOrientacao: 0 };
@@ -7171,18 +8578,103 @@ function iniciarSessao() {
         coorte: participante.coorte,
         material: participante.material || '',
         numero: null,                        // atribuído ao primeiro módulo
+        // A versão com que a sessão correu — fica com ela mesmo que só seja
+        // enviada na visita seguinte, já com outra versão no ar.
+        versaoFerramenta: VERSAO_FERRAMENTA,
         inicio: new Date().toISOString(),
         fim: null, segundos: 0,
-        desenhou: false, letras: 0, numeros: 0, cartaz: 0, modulos: 0
+        desenhou: false, letras: 0, numeros: 0, cartaz: 0, cartazes: 0, modulos: 0
     };
     escoarFila();
+}
+
+// Os ponteiros passam para a sessão também fora das mudanças de trabalho: um
+// dedo só conta quando levanta, já depois de as peças estarem pousadas, e a
+// sessão é enviada sem esperar por outra mudança.
+function copiarEntradaParaSessao() {
+    if (!sessao) return;
+    sessao.ptrRato = acoes.ptrRato;
+    sessao.ptrToque = acoes.ptrToque;
+    sessao.ptrCaneta = acoes.ptrCaneta;
+    sessao.entrada = tipoDeEntrada(acoes);
+}
+
+// 'rato', 'toque' ou 'caneta' quando só se usou um; 'misto' quando mais de um.
+function tipoDeEntrada(a) {
+    var usados = [];
+    if (a.ptrRato > 0) usados.push('rato');
+    if (a.ptrToque > 0) usados.push('toque');
+    if (a.ptrCaneta > 0) usados.push('caneta');
+    return usados.length === 1 ? usados[0] : (usados.length > 1 ? 'misto' : '');
+}
+
+// Conta cada vez que se carrega na ferramenta, pelo tipo de ponteiro que o
+// browser diz: rato (ou trackpad), dedo, caneta. Só no canvas — os toques nos
+// formulários não são desenho.
+//
+// Um dedo só conta quando acaba em pointerup. A palma que pousa ao lado da
+// Apple Pencil, e que o iPad cancela (pointercancel), não é uso do dedo — sem
+// isto uma sessão só de caneta saía como "misto". Pela mesma razão, toques com
+// a caneta em baixo, ou acabada de levantar, não contam.
+var ultimoPonteiro = '', ultimoPonteiroEm = 0;
+var ponteiroDaDica = '';          // o ponteiro em uso, para as dicas (paira ou carrega)
+var dedosPorConfirmar = {};       // pointerId -> acoes em que vai contar
+var canetaEmBaixo = false, canetaLevantouEm = 0;
+window.addEventListener('pointerdown', function (e) {
+    ultimoPonteiro = e.pointerType; ultimoPonteiroEm = Date.now();
+    ponteiroDaDica = e.pointerType;
+    if (e.pointerType === 'pen') canetaEmBaixo = true;
+    if (!sessao || !naTela(e)) return;
+    if (e.pointerType === 'touch') {
+        if (canetaEmBaixo || Date.now() - canetaLevantouEm < 1000) return;
+        dedosPorConfirmar[e.pointerId] = acoes;
+    }
+    else if (e.pointerType === 'pen') acoes.ptrCaneta++;
+    else acoes.ptrRato++;
+}, true);
+function fimDoPonteiro(e) {
+    if (e.pointerType === 'pen') { canetaEmBaixo = false; canetaLevantouEm = Date.now(); }
+    var a = dedosPorConfirmar[e.pointerId];
+    delete dedosPorConfirmar[e.pointerId];
+    // Só se a sessão for a mesma em que o dedo pousou.
+    if (a && a === acoes && e.type === 'pointerup') {
+        acoes.ptrToque++;
+        if (sessao && sessao.desenhou) { copiarEntradaParaSessao(); guardarSessao(); }
+    }
+}
+window.addEventListener('pointerup', fimDoPonteiro, true);
+window.addEventListener('pointercancel', fimDoPonteiro, true);
+// As dicas seguem o ponteiro que se está a usar, não o aparelho: num portátil
+// com ecrã táctil usado com rato, "Hold…" não servia de nada.
+window.addEventListener('pointermove', function (e) { ponteiroDaDica = e.pointerType; }, true);
+// Uma caneta só segura como um dedo se der toques (a Apple Pencil); uma caneta
+// de mesa (Wacom) dá cliques de rato, e com ela vale o Shift-clique.
+var canetaTactil = false;
+function dicaDeToque() { return ponteiroDaDica === 'touch' || (ponteiroDaDica === 'pen' && canetaTactil); }
+
+// Como cada tela aparece na `ordemDesenho`: as letras por si, o primeiro
+// cartaz como '@' (o que sempre foi, para os dados já recolhidos continuarem a
+// ler-se igual) e os seguintes como '@2', '@3'… — o número da chave, que nunca
+// é reaproveitado. Todos como '@' não servia: as repetições seguidas colapsam,
+// e passar do cartaz 1 para o 2 desaparecia do percurso.
+function simboloNaOrdem(c) {
+    if (!eCartaz(c)) return c;
+    var n = numeroDoCartaz(c);
+    return n === 1 ? '@' : '@' + n;
 }
 
 // Chamado quando o trabalho muda de facto. É aqui que a sessão passa a contar.
 function registarActividade() {
     if (!sessao) return;
     var t = contarTrabalho();
-    if (t.modulos === 0) return;             // alfabeto vazio não é desenhar
+    // Vazio desde o início não é desenhar. Mas esvaziar o que havia — apagar
+    // o único cartaz com desenho, ou o Clear — é uma mudança: sem isto, a
+    // sessão ficava com a fotografia de antes de apagar.
+    if (t.modulos === 0 && !sessao.desenhou) {
+        var havia = false;
+        for (var fb in baseSessao) if (baseSessao[fb] > 0) { havia = true; break; }
+        if (!havia) return;
+    }
 
     if (!sessao.desenhou) {
         sessao.desenhou = true;
@@ -7195,7 +8687,8 @@ function registarActividade() {
     sessao.segundos = Math.round((Date.now() - Date.parse(sessao.inicio)) / 1000);
     sessao.letras = t.letras;     // A–Z (quantos artboards têm desenho)
     sessao.numeros = t.numeros;   // 0–9
-    sessao.cartaz = t.cartaz;     // peças no cartaz; 0 = nunca usou o modo
+    sessao.cartaz = t.cartaz;     // peças nos cartazes, todos somados; 0 = nunca usou o modo
+    sessao.cartazes = t.cartazes; // quantos cartazes têm desenho
     sessao.modulos = t.modulos;   // total, cartaz incluído
 
     // B — colocações acumuladas: só as subidas contam. Apagar não desconta,
@@ -7231,9 +8724,9 @@ function registarActividade() {
     // enchia o alfabeto sem ninguém ter desenhado nada; como o realinhamento
     // põe o ultimaLetra em dia, deixa de haver subida para atribuir.
     //
-    // O cartaz não é um caractere: quem começa por lá continua sem primeira
+    // Um cartaz não é um caractere: quem começa por lá continua sem primeira
     // letra até desenhar uma.
-    if (!primeiroCaractere && ganhou && ganhou !== CHAVE_CARTAZ) {
+    if (!primeiroCaractere && ganhou && !eCartaz(ganhou)) {
         primeiroCaractere = ganhou;
         try { localStorage.setItem(CHAVE_PRIMEIRO, primeiroCaractere); } catch (e) {}
     }
@@ -7247,7 +8740,7 @@ function registarActividade() {
     // que é o que o `trocasDeCaractere` mede. Repetições seguidas colapsam:
     // continuar a trabalhar no A durante um minuto é um A, não sessenta.
     if (ganhou && sequenciaDesenho.length < 300) {
-        var simbolo = (ganhou === CHAVE_CARTAZ) ? '@' : ganhou;
+        var simbolo = simboloNaOrdem(ganhou);
         if (simbolo !== sequenciaDesenho[sequenciaDesenho.length - 1]) {
             sequenciaDesenho.push(simbolo);
         }
@@ -7259,7 +8752,12 @@ function registarActividade() {
     sessao.segLivre = Math.round(tempoModo.livre);
     sessao.modoFinal = isOverlapMode ? 'livre' : 'letterpress';
     sessao.trocasDeModo = acoes.trocasDeModo;
-    sessao.recusas = acoes.recusas;
+    sessao.recusas = acoes.recusas;              // todas, cartazes incluídos
+    sessao.recusasCartaz = acoes.recusasCartaz;  // a parte feita em cartazes
+    // Com que se desenhou. Dedo e rato não se comparam: sem hover não há o
+    // aviso vermelho antes de pousar, e o dedo é menos preciso — recusas e
+    // undos de uma sessão de toque não são as de uma sessão de rato.
+    copiarEntradaParaSessao();
     sessao.undos = acoes.undos;
     sessao.preview = acoes.preview;
     sessao.expLetra = acoes.expLetra;
@@ -7275,8 +8773,10 @@ function registarActividade() {
     sessao.caracteresTocados = caracteresMexidosNaSessao(t);
     sessao.trocasDeFormato = acoes.trocasDeFormato;
     sessao.trocasDeOrientacao = acoes.trocasDeOrientacao;
-    sessao.formatoFinal = 'F' + (currentArtboardIdx + 1);
-    sessao.orientacaoFinal = isLandscape ? 'landscape' : 'portrait';
+    // A folha do ALFABETO. No cartaz, as globais são as do cartaz aberto.
+    var fa = formatoDoAlfabeto();
+    sessao.formatoFinal = 'F' + (fa.idx + 1);
+    sessao.orientacaoFinal = fa.landscape ? 'landscape' : 'portrait';
 
     sessao.linhas = linhasPorCaractere(t);
     sessao.modulosDetalhe = linhasPorModulo(t);
@@ -7304,13 +8804,22 @@ function registarActividade() {
 function linhasPorCaractere(t) {
     var linhas = [];
     var telas = listaDeTelas();
+    // Cartazes apagados nesta sessão já não estão na lista, mas a descida deles
+    // (dif negativo) tem de chegar à folha Letras — senão a soma dos dif por
+    // caractere deixava de bater com a da folha Sessoes.
+    var naLista = {};
+    for (var j = 0; j < telas.length; j++) naLista[telas[j]] = true;
+    for (var chave in baseLetra) {
+        var cb = chave.split('|')[0];
+        if (eCartaz(cb) && !naLista[cb]) { naLista[cb] = true; telas.push(cb); }
+    }
     for (var i = 0; i < telas.length; i++) {
         var c = telas[i];
         var objs = (c === currentChar) ? placedObjects
                  : (storedCharacters[c] ? storedCharacters[c].objects : []);
         var total = (objs && objs.length) ? objs.length : 0;
 
-        var tipoC = (c === CHAVE_CARTAZ) ? 'cartaz'
+        var tipoC = eCartaz(c) ? 'cartaz'
                   : (c >= '0' && c <= '9') ? 'numero' : 'letra';
         var linha = { caractere: c, tipoCaractere: tipoC, total: total };
         var mudou = false;
@@ -7361,6 +8870,7 @@ function despacharSessao(s) {
             tipo: 'modulos',
             sessaoId: s.sessaoId, participante: s.participante,
             coorte: s.coorte, numero: s.numero,
+            versaoFerramenta: s.versaoFerramenta || '',
             quando: s.fim || new Date().toISOString(),
             linhas: detalhe
         });
@@ -7372,6 +8882,7 @@ function despacharSessao(s) {
             participante: s.participante,
             coorte: s.coorte,
             numero: s.numero,
+            versaoFerramenta: s.versaoFerramenta || '',
             quando: s.fim || new Date().toISOString(),
             linhas: linhas
         });
@@ -7381,6 +8892,7 @@ function despacharSessao(s) {
 // pagehide dispara onde o unload já não é de fiar (Safari, iOS, bfcache).
 window.addEventListener('pagehide', function () {
     if (!sessao || !sessao.desenhou) return;
+    copiarEntradaParaSessao();   // os toques depois da última mudança também contam
 
     // Grava primeiro na fila — localStorage é síncrono e sobrevive ao fecho.
     // Só depois se tenta entregar. Se a entrega falhar, fica para a visita
@@ -7574,6 +9086,7 @@ function mostrarAvaliacao(aoSair) {
     b.addEventListener('click', function () {
         var registo = {
             tipo: 'avaliacao',
+            versaoFerramenta: VERSAO_FERRAMENTA,
             participante: participante ? participante.id : null,
             coorte: participante ? participante.coorte : null,
             sessao: sessao ? sessao.numero : null,
@@ -7582,6 +9095,7 @@ function mostrarAvaliacao(aoSair) {
             letras: sessao ? sessao.letras : null,
             numeros: sessao ? sessao.numeros : null,
             cartaz: sessao ? sessao.cartaz : null,
+            cartazes: sessao ? sessao.cartazes : null,
             modulos: sessao ? sessao.modulos : null
         };
         PERGUNTAS_SAIDA.forEach(function (p) {
@@ -7669,13 +9183,21 @@ var btnImport = { x: 0, y: 0, w: 0, h: 0 };
 var menuAberto = null;
 var menuDeQuem = null;
 
+// Largura do Clear, do Export e do Import, à escala 1. Era 100; com o texto
+// encostado à esquerda chega menos. Entra também na largura ideal do
+// calculateLayout, para a escala só encolher quando deixa mesmo de caber.
+var LARGURA_BOTAO_MENU = 72;
+
 // Gatilho de menu: texto e uma seta, no mesmo estilo dos outros botões.
-// O vermelho fica reservado ao Clear, que é o destrutivo.
-function desenharBotaoMenu(b, texto, aberto, perigo, temSeta) {
+// O vermelho fica reservado ao Clear, que é o destrutivo. O texto vai encostado
+// à esquerda, com a mesma folga que a seta tem à direita. `marca` é o sinal à
+// direita: 'seta' nos que abrem menu, 'importar' no Import (uma seta a descer
+// para um tabuleiro), ambos com o traço e a cor do texto.
+function desenharBotaoMenu(b, texto, aberto, perigo, marca) {
     var sobre = !showShortcutsModal && dentroDe(b);
     var activo = aberto || sobre;
     push();
-    rectMode(CENTER); textAlign(CENTER, CENTER);
+    rectMode(CENTER); textAlign(LEFT, CENTER);
     if (perigo) {
         fill(activo ? [255, 200, 200] : [255, 235, 235]);
         stroke(activo ? [255, 50, 50] : [255, 205, 205]);
@@ -7689,18 +9211,25 @@ function desenharBotaoMenu(b, texto, aberto, perigo, temSeta) {
     noStroke();
     fill(perigo ? [200, 40, 40] : (activo ? [0, 130, 0] : 110));
     textSize(11 * globalScale); textStyle(BOLD);
-    text(texto, b.x - (temSeta ? 7 * globalScale : 0), b.y);
+    text(texto, b.x - b.w / 2 + 10 * globalScale, b.y);
     textStyle(NORMAL);
 
-    if (!temSeta) { pop(); return; }
-
-    // seta
-    var sx = b.x + b.w / 2 - 14 * globalScale, sy = b.y;
-    var d = 3.2 * globalScale;
+    var g = globalScale;
+    var sx = b.x + b.w / 2 - 12 * g, sy = b.y;
     stroke(perigo ? [200, 40, 40] : (activo ? [0, 130, 0] : 110));
-    strokeWeight(1.2 * globalScale); noFill();
-    line(sx - d, sy - d / 2, sx, sy + d / 2);
-    line(sx, sy + d / 2, sx + d, sy - d / 2);
+    strokeWeight(1.2 * g); noFill();
+    if (marca === 'importar') {
+        line(sx, sy - 4.5 * g, sx, sy + 1.2 * g);                 // haste
+        line(sx - 2.6 * g, sy - 1.4 * g, sx, sy + 1.2 * g);       // ponta
+        line(sx, sy + 1.2 * g, sx + 2.6 * g, sy - 1.4 * g);
+        line(sx - 4.2 * g, sy + 0.8 * g, sx - 4.2 * g, sy + 4 * g);   // tabuleiro
+        line(sx - 4.2 * g, sy + 4 * g, sx + 4.2 * g, sy + 4 * g);
+        line(sx + 4.2 * g, sy + 4 * g, sx + 4.2 * g, sy + 0.8 * g);
+    } else if (marca === 'seta') {
+        var d = 3.2 * g;
+        line(sx - d, sy - d / 2, sx, sy + d / 2);
+        line(sx, sy + d / 2, sx + d, sy - d / 2);
+    }
     pop();
 }
 
@@ -7722,6 +9251,10 @@ function abrirMenu(quem, itens, direita, topo) {
         'box-shadow': '0 8px 28px rgba(0,0,0,0.13)', 'z-index': '2147482000',
         'font': '400 12.5px ' + PILHA_DE_FONTES, 'color': '#111'
     });
+
+    // Um item sem ícone num menu que os tem guarda o lugar dele, para os
+    // textos ficarem todos alinhados.
+    var algumIcone = itens.some(function (it) { return !!it.icone; });
 
     itens.forEach(function (it) {
         if (it.separador) {
@@ -7746,6 +9279,10 @@ function abrirMenu(quem, itens, direita, topo) {
                           'opacity': it.perigo ? '1' : '0.72',
                           'filter': it.perigo ? 'invert(24%) sepia(88%) saturate(4000%) hue-rotate(354deg)' : 'none' });
             linha.appendChild(img);
+        } else if (algumIcone) {
+            var vazio = document.createElement('span');
+            estilo(vazio, { 'width': '17px', 'height': '17px', 'flex': '0 0 auto' });
+            linha.appendChild(vazio);
         }
         var rotulo = document.createElement('span');
         rotulo.textContent = it.texto;
@@ -7805,6 +9342,13 @@ function itensLimpar() {
     if (!modoCartaz) {
         itens.push({ texto: 'Clear entire alphabet', perigo: true,
                      icone: 'limpar-alfabeto.svg', accao: clearEntireAlphabet });
+    }
+    // Apagar o cartaz aberto, além de o esvaziar. Só com mais de um: o último
+    // fica, e o Clear poster chega para o deixar em branco.
+    if (modoCartaz && !telaPorEscolher && listaDeCartazes().length > 1) {
+        itens.push({ texto: 'Delete this poster', perigo: true,
+                     icone: 'limpar-alfabeto.svg',
+                     accao: function () { apagarCartaz(currentChar); } });
     }
     return itens;
 }
