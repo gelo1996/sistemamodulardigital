@@ -430,6 +430,7 @@ function setup() {
         redModulesDotted[i] = createRedVersion(modulesDotted[i]);
         blueModulesDotted[i] = createBlueVersion(modulesDotted[i]);
     }
+    repintarSVGsSemTamanho();   // o Safari pinta-os com o tamanho errado (ver a função)
 
     setVisualTheme('fill');
     updateArtboardBounds(); // Inicia com o Formato 1 Vertical
@@ -514,6 +515,85 @@ function createBlueVersion(img) {
     pg.drawingContext.globalCompositeOperation = 'source-in';
     pg.background(0, 200, 0);
     return pg;
+}
+
+// --- SVG SEM LARGURA NEM ALTURA ---
+// Os SVG dos módulos (e o ícone exportar-alfabeto) só têm viewBox. O p5 cria
+// a imagem com a medida que o browser lhe dá e pinta o SVG lá dentro sem
+// dizer o tamanho. O Safari mais recente (macOS 27, e o do iPhone) dá uma
+// medida — 150 px — e pinta com outra — a do viewBox: o módulo de 2×2 saía
+// com 2/3 do tamanho, encostado ao canto da célula e desalinhado da grelha,
+// o de 2×1 com 1/3, e as curvas grandes vazias. Aqui cada um é pintado de
+// novo a partir do texto do SVG, com a largura e a altura escritas nele, o
+// que dá o mesmo em todos os browsers — no Chrome, a mesma imagem de antes.
+// Fica a medida que o browser deu (não pesa mais na memória), só com a
+// proporção do viewBox garantida. Nenhum ficheiro da pasta data muda.
+function viewBoxDoSVG(texto) {
+    var m = texto.match(/viewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/);
+    return m ? { w: parseFloat(m[1]), h: parseFloat(m[2]) } : null;
+}
+
+function repintarSVG(pImg, texto, depois) {
+    if (!pImg || !pImg.canvas || !texto) return false;
+    var vb = viewBoxDoSVG(texto);
+    if (!vb || !(vb.w > 0 && vb.h > 0)) return false;
+    var w = pImg.width, h = pImg.height;
+    if (!(w > 1 && h > 1)) { w = vb.w; h = vb.h; }
+    else if (Math.abs(w / h - vb.w / vb.h) > 0.01) w = Math.max(1, Math.round(h * vb.w / vb.h));
+    // Só a raiz <svg> leva o tamanho; o resto do desenho fica igual.
+    var comTamanho = texto.replace(/<svg\b([^>]*)>/, function (tag, atributos) {
+        atributos = atributos.replace(/\s(width|height)\s*=\s*("[^"]*"|'[^']*')/g, '');
+        return '<svg width="' + w + '" height="' + h + '"' + atributos + '>';
+    });
+    var url = URL.createObjectURL(new Blob([comTamanho], { type: 'image/svg+xml' }));
+    var im = new Image();
+    im.onload = function () {
+        pImg.width = pImg.canvas.width = w;      // também limpa a tela
+        pImg.height = pImg.canvas.height = h;
+        pImg.drawingContext.drawImage(im, 0, 0, w, h);
+        pImg.modified = true;
+        URL.revokeObjectURL(url);
+        if (depois) depois(true);
+    };
+    im.onerror = function () { URL.revokeObjectURL(url); if (depois) depois(false); };
+    im.src = url;
+    return true;
+}
+
+function repintarSVGsSemTamanho() {
+    var conjuntos = [
+        { imgs: modulesFill, textos: moduleSVGStringsFill, vermelhos: redModulesFill, azuis: blueModulesFill },
+        { imgs: modulesDotted, textos: moduleSVGStringsDotted, vermelhos: redModulesDotted, azuis: blueModulesDotted }
+    ];
+    var pendentes = 0;
+    function acabou() { if (--pendentes === 0) miniaturasDeOutroProjecto(); }
+    conjuntos.forEach(function (c) {
+        for (var i = 0; i < c.imgs.length; i++) (function (i) {
+            var linhas = c.textos[i];
+            var texto = (linhas && linhas.join) ? linhas.join('\n') : '';
+            pendentes++;
+            var ok = repintarSVG(c.imgs[i], texto, function (pintou) {
+                if (pintou) {
+                    // Os fantasmas vermelho e azul saem desta imagem: refazem-se.
+                    var r = c.vermelhos[i], a = c.azuis[i];
+                    c.vermelhos[i] = createRedVersion(c.imgs[i]);
+                    c.azuis[i] = createBlueVersion(c.imgs[i]);
+                    if (r) libertarGraphics(r);
+                    if (a) libertarGraphics(a);
+                }
+                acabou();
+            });
+            if (!ok) pendentes--;
+        })(i);
+    });
+    // O único ícone da barra sem tamanho no ficheiro.
+    var icone = toolIcons.exportarAlfabeto;
+    if (icone && window.fetch) {
+        fetch(BASE_PATH + 'exportar-alfabeto.svg')
+            .then(function (r) { return r.ok ? r.text() : ''; })
+            .then(function (t) { repintarSVG(icone, t); })
+            .catch(function () {});
+    }
 }
 
 function calculateLayout() {
@@ -711,15 +791,8 @@ function handleInteraction() {
                 // frame não o desenhou (sobre uma guia, por exemplo), vale o
                 // ponto onde o dedo saiu.
                 var cf = toque.aLevantar ? toque.celulaFantasma : null;
-                if (cf && cf.frame === frameCount) {
-                    var mxSaida = mouseX, mySaida = mouseY;
-                    mouseX = centerX + (cf.x - GRID_CX + 0.5) * tileSize;
-                    mouseY = centerY + (cf.y - GRID_CY + 0.5) * tileSize;
-                    attemptSetTile(selectedModule);
-                    mouseX = mxSaida; mouseY = mySaida;
-                } else {
-                    attemptSetTile(selectedModule);
-                }
+                if (cf && cf.frame === frameCount) attemptSetTile(selectedModule, { x: cf.x, y: cf.y });
+                else attemptSetTile(selectedModule);
             }
             else if (selectedModule == -1 && !selectionBox.active && !isDraggingSelection) attemptDeleteTile();
         }
@@ -2907,11 +2980,27 @@ function canPlaceTile(gx, gy, type, rot) {
 }
 
 
-function attemptSetTile(type) {
-    var localX = mouseX - centerX;
-    var localY = mouseY - centerY;
-    var gridX = floor(localX / tileSize) + GRID_CX;
-    var gridY = floor(localY / tileSize) + GRID_CY;
+// A célula de onde o módulo parte (o pivô) para que o CENTRO do módulo fique
+// no ponteiro, em qualquer rotação. Antes, a célula do ponteiro era o pivô —
+// um canto —, e uma peça grande ficava quase toda ao lado do rato ou do dedo.
+// Em cada direcção, um lado com número par de células põe o centro na linha
+// da grelha mais perto do ponteiro, e um lado ímpar no meio de uma célula
+// (com os dois lados pares, num cruzamento de linhas).
+function pivoCentrado(type, rot, px, py) {
+    var d = getModuleDims(type), v = getFillVectors(rot);
+    // Do centro da célula pivô ao centro do módulo, em células.
+    var cx = ((d.len - 1) * v.p.x + (d.wid - 1) * v.s.x) / 2;
+    var cy = ((d.len - 1) * v.p.y + (d.wid - 1) * v.s.y) / 2;
+    var ux = (px - centerX) / tileSize + GRID_CX;
+    var uy = (py - centerY) / tileSize + GRID_CY;
+    return { x: Math.floor(ux - cx), y: Math.floor(uy - cy) };
+}
+
+// `pivo` (opcional): a célula já escolhida — a do fantasma, ao levantar o dedo.
+function attemptSetTile(type, pivo) {
+    var pv = pivo || pivoCentrado(type, currentRotation, mouseX, mouseY);
+    var gridX = pv.x;
+    var gridY = pv.y;
 
     if (gridX < 0 || gridX >= GRID_W || gridY < 0 || gridY >= GRID_H) return;
 
@@ -3351,8 +3440,9 @@ function drawCustomCursor() {
                 toque.celulaFantasma = null;
                 return;
             }
-            if (deToque) toque.celulaFantasma = { x: gX, y: gY, frame: frameCount };
-            var baseObj = { type: selectedModule, x: gX, y: gY, rot: currentRotation };
+            var pvF = pivoCentrado(selectedModule, currentRotation, mouseX, mouseY);
+            if (deToque) toque.celulaFantasma = { x: pvF.x, y: pvF.y, frame: frameCount };
+            var baseObj = { type: selectedModule, x: pvF.x, y: pvF.y, rot: currentRotation };
             var groupToTest = getMirroredGroup(baseObj);
             var overallValid = checkPlacementValidGroup(groupToTest);
 
@@ -4871,7 +4961,7 @@ var MANUAL = [
     { t: 'sc', k: TECLA_CMD + ' + A', s: 'Select every module' },
     { t: 'sc', k: TECLA_CMD + ' + C', s: 'Copy the selection' },
     { t: 'sc', k: TECLA_CMD + ' + X', s: 'Cut the selection' },
-    { t: 'sc', k: TECLA_CMD + ' + V', s: 'Paste at the pointer' },
+    { t: 'sc', k: TECLA_CMD + ' + V', s: 'Paste, centred on the pointer' },
     { t: 'sc', k: TECLA_CMD + ' + Shift + V', s: 'Paste in place (great across letters)' },
     { t: 'sc', k: TECLA_CMD + ' + D', s: 'Duplicate the selection in place' },
     { t: 'sc', k: 'Arrow keys', s: 'Nudge the selection one cell' },
@@ -6289,7 +6379,13 @@ function duplicarSelecao() {
 
 // Canto superior-esquerdo do conjunto, em células
 function cantoDoGrupo(grupo) {
-    var minX = 1e9, minY = 1e9;
+    var lim = limitesDoGrupo(grupo);
+    return { x: lim.minX, y: lim.minY };
+}
+
+// As células extremas ocupadas por um grupo de peças.
+function limitesDoGrupo(grupo) {
+    var minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
     for (var k = 0; k < grupo.length; k++) {
         var o = grupo[k], d = getModuleDims(o.type), v = getFillVectors(o.rot);
         var cs = [{ i: 0, j: 0 }, { i: d.len - 1, j: 0 }, { i: 0, j: d.wid - 1 }, { i: d.len - 1, j: d.wid - 1 }];
@@ -6298,9 +6394,11 @@ function cantoDoGrupo(grupo) {
             var py = o.y + v.p.y * cs[c].i + v.s.y * cs[c].j;
             if (px < minX) minX = px;
             if (py < minY) minY = py;
+            if (px > maxX) maxX = px;
+            if (py > maxY) maxY = py;
         }
     }
-    return { x: minX, y: minY };
+    return { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
 }
 
 // noSitio = cola nas coordenadas originais, sem seguir o rato. É o que permite
@@ -6328,12 +6426,16 @@ function colarAreaTransferencia(noSitio, aoLado) {
         return false;   // não cabe exatamente aí; não inventa outro sítio
     }
 
-    // Cola onde está o rato (se estiver sobre o artboard); caso contrário,
-    // ligeiramente ao lado do original, para a cópia não ficar escondida.
+    // Cola onde está o rato (se estiver sobre o artboard), com o centro do
+    // grupo no ponteiro, como os módulos; caso contrário, ligeiramente ao
+    // lado do original, para a cópia não ficar escondida.
     var destX, destY;
     if (!aoLado && mouseX > sidebarWidth && mouseY > topBarHeight) {
-        destX = floor((mouseX - centerX) / tileSize) + GRID_CX;
-        destY = floor((mouseY - centerY) / tileSize) + GRID_CY;
+        var lim = limitesDoGrupo(areaTransferencia);
+        var ux = (mouseX - centerX) / tileSize + GRID_CX;
+        var uy = (mouseY - centerY) / tileSize + GRID_CY;
+        destX = canto.x + Math.floor(ux - (lim.minX + lim.maxX + 1) / 2 + 0.5);
+        destY = canto.y + Math.floor(uy - (lim.minY + lim.maxY + 1) / 2 + 0.5);
     } else {
         destX = canto.x + 2;
         destY = canto.y + 2;
