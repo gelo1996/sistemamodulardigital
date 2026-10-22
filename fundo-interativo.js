@@ -112,6 +112,23 @@
                          Math.pow(a[2] - b[2], 2));
     }
 
+    // Média dos três canais de um fill "#rrggbb"; -1 se não for desse tipo
+    // (os Fill não escrevem fill nenhum).
+    function luzDoHex(hex) {
+        var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "");
+        if (!m) return -1;
+        return (parseInt(m[1], 16) + parseInt(m[2], 16) + parseInt(m[3], 16)) / 3;
+    }
+
+    function escurecerHex(hex, f) {
+        var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+        if (!m) return hex;
+        return "#" + [1, 2, 3].map(function (i) {
+            var v = Math.round(parseInt(m[i], 16) * f);
+            return (v < 16 ? "0" : "") + v.toString(16);
+        }).join("");
+    }
+
     // --- CARREGAR E COLORIR UM SVG ------------------------------------
     async function prepararSVG(ficheiro, cor) {
         try {
@@ -128,13 +145,22 @@
             }
             if (!largura || !altura || isNaN(largura) || isNaN(altura)) { largura = 100; altura = 100; }
 
-            svg.querySelectorAll("path, rect, circle, polygon, ellipse, polyline, line")
-               .forEach(function (forma) {
-                    if (forma.getAttribute("fill") !== "none") forma.setAttribute("fill", cor);
-                    if (forma.getAttribute("stroke") && forma.getAttribute("stroke") !== "none") {
-                        forma.setAttribute("stroke", cor);
-                    }
-               });
+            // Os Dot trazem duas cores (forma clara, pontos escuros). Tudo na
+            // mesma cor apagava os pontos: cada forma leva a cor sorteada,
+            // escurecida na proporção em que era mais escura do que a mais clara.
+            var formas = svg.querySelectorAll("path, rect, circle, polygon, ellipse, polyline, line");
+            var luzes = [], maisClara = 0;
+            formas.forEach(function (forma, i) {
+                luzes[i] = luzDoHex(forma.getAttribute("fill"));
+                if (luzes[i] > maisClara) maisClara = luzes[i];
+            });
+            formas.forEach(function (forma, i) {
+                var tom = (luzes[i] >= 0 && maisClara > 0) ? escurecerHex(cor, luzes[i] / maisClara) : cor;
+                if (forma.getAttribute("fill") !== "none") forma.setAttribute("fill", tom);
+                if (forma.getAttribute("stroke") && forma.getAttribute("stroke") !== "none") {
+                    forma.setAttribute("stroke", cor);
+                }
+            });
 
             // 50 unidades de SVG = 1 célula da grelha, a mesma convenção do
             // script.js. É isto que permite as peças encaixarem sem folgas.
