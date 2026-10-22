@@ -29,6 +29,7 @@ var modalScrollY = 0;    // posição do scroll dentro do modal
 var modalMaxScroll = 0;  // recalculado a cada frame conforme a altura do conteúdo
 var categoriasAbertas = {}; // acordeão: que categorias do manual estão expandidas
 var modalCatAreas = [];     // zonas clicáveis dos cabeçalhos de categoria (por frame)
+var modalBotoes = [];       // e dos botões dentro do manual
 
 // --- SISTEMA DE ARTBOARD E UI ---
 var currentArtboardIdx = 0; // 0 = F1, 1 = F2, 2 = F3
@@ -427,8 +428,10 @@ function setup() {
     for (var i = 0; i < 22; i++) {
         redModulesFill[i] = createRedVersion(modulesFill[i]);
         blueModulesFill[i] = createBlueVersion(modulesFill[i]);
-        redModulesDotted[i] = createRedVersion(modulesDotted[i]);
-        blueModulesDotted[i] = createBlueVersion(modulesDotted[i]);
+        // Com o texto já aqui: se a repintura de algum falhar, o realce mantém os pontos.
+        var textoDot = moduleSVGStringsDotted[i] && moduleSVGStringsDotted[i].join ? moduleSVGStringsDotted[i].join('\n') : '';
+        redModulesDotted[i] = createRedVersion(modulesDotted[i], textoDot);
+        blueModulesDotted[i] = createBlueVersion(modulesDotted[i], textoDot);
     }
     repintarSVGsSemTamanho();   // o Safari pinta-os com o tamanho errado (ver a função)
 
@@ -497,24 +500,70 @@ function mostrarAvisoTelemovel() {
     document.body.appendChild(ov);
 }
 
-function createRedVersion(img) {
+// `texto` (opcional): o SVG do módulo. Os Dot têm duas cores — forma clara,
+// pontos escuros — e pintar a imagem toda com a cor do realce apagava os
+// pontos. Para esses, o realce sai do próprio SVG (ver svgNaCorDoRealce).
+function createRedVersion(img, texto) { return versaoColorida(img, texto, [255, 50, 50]); }
+function createBlueVersion(img, texto) { return versaoColorida(img, texto, [0, 200, 0]); }
+
+function versaoColorida(img, texto, cor) {
     var w = img.width > 10 ? img.width : 100;
     var h = img.height > 10 ? img.height : 100;
     var pg = createGraphics(w, h);
     pg.image(img, 0, 0, w, h);
     pg.drawingContext.globalCompositeOperation = 'source-in';
-    pg.background(255, 50, 50);
+    pg.background(cor[0], cor[1], cor[2]);
+    // Fica liso até o SVG recolorido carregar (ou para sempre, se falhar).
+    var recolorido = texto ? svgNaCorDoRealce(texto, cor) : null;
+    if (recolorido) pintarSVGNaTela(pg, recolorido);
     return pg;
 }
 
-function createBlueVersion(img) {
-    var w = img.width > 10 ? img.width : 100;
-    var h = img.height > 10 ? img.height : 100;
-    var pg = createGraphics(w, h);
-    pg.image(img, 0, 0, w, h);
-    pg.drawingContext.globalCompositeOperation = 'source-in';
-    pg.background(0, 200, 0);
-    return pg;
+// Troca cada cor de preenchimento pela do realce, escurecida na mesma
+// proporção em que era mais escura do que a mais clara do ficheiro: a forma
+// fica na cor do realce e os pontos num tom mais fundo dela. Com uma cor só
+// (os Fill, pretos e sem fill escrito) devolve null e basta o source-in.
+function svgNaCorDoRealce(texto, cor) {
+    var padrao = /fill="#([0-9a-fA-F]{6})"/g;
+    var luzes = {}, maisClara = 0, n = 0;
+    texto.replace(padrao, function (m, hex) {
+        if (!(hex in luzes)) {
+            luzes[hex] = (parseInt(hex.substr(0, 2), 16) + parseInt(hex.substr(2, 2), 16) + parseInt(hex.substr(4, 2), 16)) / 3;
+            maisClara = Math.max(maisClara, luzes[hex]);
+            n++;
+        }
+        return m;
+    });
+    if (n < 2 || !(maisClara > 0)) return null;
+    return texto.replace(padrao, function (m, hex) {
+        var f = luzes[hex] / maisClara;
+        return 'fill="rgb(' + Math.round(cor[0] * f) + ',' + Math.round(cor[1] * f) + ',' + Math.round(cor[2] * f) + ')"';
+    });
+}
+
+// Pinta o SVG por cima de tudo o que a tela tinha, à resolução real dela.
+// Leva width/height escritos pela mesma razão do repintarSVG (o Safari), e
+// estica como o realce liso, para os dois nunca saírem de tamanhos diferentes.
+function pintarSVGNaTela(pg, texto) {
+    var tela = pg.elt;
+    var w = tela.width, h = tela.height;
+    var comTamanho = texto.replace(/<svg\b([^>]*)>/, function (tag, atributos) {
+        atributos = atributos.replace(/\s(width|height|preserveAspectRatio)\s*=\s*("[^"]*"|'[^']*')/g, '');
+        return '<svg width="' + w + '" height="' + h + '" preserveAspectRatio="none"' + atributos + '>';
+    });
+    var url = URL.createObjectURL(new Blob([comTamanho], { type: 'image/svg+xml' }));
+    var im = new Image();
+    im.onload = function () {
+        var ctx = pg.drawingContext;
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalCompositeOperation = 'copy';   // substitui o realce liso
+        ctx.drawImage(im, 0, 0, w, h);
+        ctx.restore();
+        URL.revokeObjectURL(url);
+    };
+    im.onerror = function () { URL.revokeObjectURL(url); };
+    im.src = url;
 }
 
 // --- SVG SEM LARGURA NEM ALTURA ---
@@ -576,8 +625,8 @@ function repintarSVGsSemTamanho() {
                 if (pintou) {
                     // Os fantasmas vermelho e azul saem desta imagem: refazem-se.
                     var r = c.vermelhos[i], a = c.azuis[i];
-                    c.vermelhos[i] = createRedVersion(c.imgs[i]);
-                    c.azuis[i] = createBlueVersion(c.imgs[i]);
+                    c.vermelhos[i] = createRedVersion(c.imgs[i], texto);
+                    c.azuis[i] = createBlueVersion(c.imgs[i], texto);
                     if (r) libertarGraphics(r);
                     if (a) libertarGraphics(a);
                 }
@@ -902,6 +951,16 @@ function mousePressed(evento) {
             // recortados e não devem responder).
             var areaTop = (b.y - b.h / 2) + b.headerH;
             var areaBot = (b.y + b.h / 2) - 14 * globalScale;
+            for (var bi = 0; bi < modalBotoes.length; bi++) {
+                var mb = modalBotoes[bi];
+                if (mouseX > mb.x0 && mouseX < mb.x1 && mouseY > mb.y0 && mouseY < mb.y1 &&
+                    mouseY > areaTop && mouseY < areaBot) {
+                    suppressDrawUntilRelease = true;
+                    if (mb.acao === 'dividir') pedirParaDividir();
+                    else if (mb.acao === 'sozinho') continuarSozinho();
+                    return;
+                }
+            }
             for (var ci = 0; ci < modalCatAreas.length; ci++) {
                 var a = modalCatAreas[ci];
                 var meio = (a.y0 + a.y1) / 2;
@@ -3226,6 +3285,10 @@ function empurrarHistorico(snapshot) {
 }
 var letraReferencia = null;
 var ALPHA_REFERENCIA = 45;
+// A referência desenha-se sempre com a silhueta dos Fill (os contornos são os
+// mesmos dos Dot). Os Dot pousados já são cinzento claro: a 45 a referência
+// ficaria quase do tom deles; a 30 fica entre eles e a grelha, e sem pontos.
+var ALPHA_REFERENCIA_DOT = 30;
 var bufferReferencia = null;   // recriado quando a janela muda de tamanho
 
 function desenharLetraReferencia() {
@@ -3257,8 +3320,8 @@ function desenharLetraReferencia() {
         g.push();
         g.translate(cellCenterX, cellCenterY);
         g.rotate(obj.rot * 90);
-        if (modules[obj.type] && modules[obj.type].width > 1) {
-            g.image(modules[obj.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+        if (modulesFill[obj.type] && modulesFill[obj.type].width > 1) {
+            g.image(modulesFill[obj.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
         } else {
             g.fill(150);
             g.rect(offX, offY, tileSize * dims.len, tileSize * dims.wid);
@@ -3268,7 +3331,8 @@ function desenharLetraReferencia() {
 
     push();
     imageMode(CORNER);
-    tint(255, ALPHA_REFERENCIA);     // esbate o conjunto, sem recolorir
+    // esbate o conjunto, sem recolorir
+    tint(255, currentVisualTheme === 'dotted' ? ALPHA_REFERENCIA_DOT : ALPHA_REFERENCIA);
     image(g, 0, 0);
     pop();
 }
@@ -3458,7 +3522,9 @@ function drawCustomCursor() {
                 translate(mSnapX, mSnapY);
                 rotate(ghost.rot * 90);
                 if (overallValid) {
-                    tint(255, deToque ? ALPHA_FANTASMA_TOQUE : 127);
+                    var emDot = currentVisualTheme === 'dotted';
+                    tint(255, deToque ? (emDot ? ALPHA_FANTASMA_TOQUE_DOT : ALPHA_FANTASMA_TOQUE)
+                                      : (emDot ? ALPHA_FANTASMA_DOT : 127));
                     if (modules[ghost.type]) image(modules[ghost.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
                 } else {
                     if (deToque) tint(255, ALPHA_RECUSA_TOQUE);   // ainda não pousou: vermelho esbatido
@@ -3594,6 +3660,7 @@ function maiorNumeroDeCartaz() {
 // importar e ao recuperar: sem isto, um cartaz vindo de outro computador e
 // depois apagado deixava o número livre, e um cartaz novo herdava-o.
 function marcarNumeroDeCartaz(n) {
+    if (MODO_CONSULTA) return;   // os cartazes vistos na consulta não são de quem está a ver
     try {
         var atual = parseInt(localStorage.getItem(CHAVE_ULTIMO_CARTAZ) || '1', 10) || 1;
         if (n > atual) localStorage.setItem(CHAVE_ULTIMO_CARTAZ, String(n));
@@ -3982,8 +4049,10 @@ function drawThumbnail(char, x, y, size) {
         rotate(o.rot * 90);
         imageMode(CENTER);
 
-        if (modules[o.type] && modules[o.type].width > 1) {
-            image(modules[o.type], rectOffX, rectOffY, dims.len * miniSize, dims.wid * miniSize);
+        // Sempre a silhueta dos Fill: a este tamanho os pontos dos Dot não se
+        // vêem, e o cinzento claro deles deixava as miniaturas desbotadas.
+        if (modulesFill[o.type] && modulesFill[o.type].width > 1) {
+            image(modulesFill[o.type], rectOffX, rectOffY, dims.len * miniSize, dims.wid * miniSize);
         } else {
             fill(0); noStroke(); rectMode(CENTER);
             rect(rectOffX, rectOffY, dims.len * miniSize, dims.wid * miniSize);
@@ -4040,7 +4109,8 @@ function desenharMiniaturaCartaz(k, x, y, tam) {
     for (var i = 0; i < objs.length; i++) {
         partes[i] = objs[i].type + ',' + objs[i].rot + ',' + objs[i].x + ',' + objs[i].y;
     }
-    var assinatura = [f.idx, f.landscape, lado, currentVisualTheme].join(',') + '|' + partes.join(';');
+    // Sem o tema: a miniatura é sempre a silhueta dos Fill.
+    var assinatura = [f.idx, f.landscape, lado].join(',') + '|' + partes.join(';');
 
     var m = miniaturasCartaz[k];
     // Uma miniatura que não foi desenhada no frame anterior (estava fora da
@@ -4083,8 +4153,9 @@ function desenharMiniaturaCartaz(k, x, y, tam) {
             g.push();
             g.translate(cx, cy);
             g.rotate(o.rot * 90);
-            if (modules[o.type] && modules[o.type].width > 1) {
-                g.image(modules[o.type], (d.len - 1) * s / 2, (d.wid - 1) * s / 2, d.len * s, d.wid * s);
+            // Silhueta dos Fill, como nas miniaturas das letras.
+            if (modulesFill[o.type] && modulesFill[o.type].width > 1) {
+                g.image(modulesFill[o.type], (d.len - 1) * s / 2, (d.wid - 1) * s / 2, d.len * s, d.wid * s);
             } else {
                 g.fill(0); g.rectMode(CENTER);
                 g.rect((d.len - 1) * s / 2, (d.wid - 1) * s / 2, d.len * s, d.wid * s);
@@ -4707,9 +4778,9 @@ function drawUI() {
             var startX = cx3 - styleBtnW / 2;
             // No cartaz, o formato muda só o cartaz aberto — convém dizê-lo.
             var soEste = modoCartaz ? ' — this poster only' : '';
-            if (mouseX < startX + segW) { activeTooltip = "Format 1 (690x990px)" + soEste; tooltipX = startX + segW / 2; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
-            else if (mouseX < startX + 2 * segW) { activeTooltip = "Format 2 (990x1410px)" + soEste; tooltipX = startX + 1.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
-            else { activeTooltip = "Format 3 (1410x1980px)" + soEste; tooltipX = startX + 2.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
+            if (mouseX < startX + segW) { activeTooltip = "Format 1 (690 \u00d7 990 px)" + soEste; tooltipX = startX + segW / 2; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
+            else if (mouseX < startX + 2 * segW) { activeTooltip = "Format 2 (990 \u00d7 1380 px)" + soEste; tooltipX = startX + 1.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
+            else { activeTooltip = "Format 3 (1380 \u00d7 1980 px)" + soEste; tooltipX = startX + 2.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
         }
         if (modoCartaz && mouseX > cx4 - styleBtnW / 2 && mouseX < cx4 + styleBtnW / 2) {
             activeTooltip = "Orientation of this poster only"; tooltipX = cx4; tooltipY = ly + styleBtnH / 2 + 15 * globalScale;
@@ -5125,7 +5196,31 @@ var MANUAL = [
 
     { t: 'h', s: 'Clear entire alphabet', ic: 'limparAlfabeto', perigo: true },
     { t: 'li', s: 'Delete every module on every artboard. It asks first, and afterwards each letter can only be recovered one at a time' },
-    { t: 'li', s: 'Not offered while a poster is open' }
+    { t: 'li', s: 'Not offered while a poster is open' },
+
+    // Só com participante (não na consulta). O código é o que permite pedir
+    // que os dados sejam apagados — e só aparecia no agradecimento final.
+    { t: 'cat', s: 'Your data', participante: true },
+
+    { t: 'h', participante: true, s: 'Your participant code' },
+    { t: 'li', participante: true, s: function () {
+        if (participante.membros && !participante.importadoDe) {
+            var dono = participante.membros.filter(function (m) { return m.papel === 'computador'; })[0] || participante.membros[0];
+            var colega = participante.membros.filter(function (m) { return m !== dono; })[0];
+            return participante.id + ' \u2014 your pair code: what you make together on this computer is stored under it. ' +
+                   'Your own codes: ' + dono.id + ' (registered on this computer)' + (colega ? ' and ' + colega.id + ' (partner)' : '') +
+                   '. Write them down: each person\'s code is the only way to ask for their data to be deleted';
+        }
+        return participante.id + ' \u2014 the anonymous code your answers and your work are stored under. Write it down: it is the only way to ask for them to be deleted';
+    } },
+    { t: 'li', participante: true, s: function () { return 'To ask, send the code to ' + EMAIL_CONTACTO + '. Work that has already been printed or shown cannot be withdrawn from those copies'; } },
+    // Para quem desenhou a dois num computador: passa a ter o seu código, e o
+    // do par fica só com o trabalho feito em conjunto. Desaparece depois de
+    // usado (quem já se separou tem importadoDe).
+    { t: 'btn', participante: true, acao: 'sozinho', s: 'Continue alone on this computer',
+      mostrar: function () { return !!participante.membros && !participante.importadoDe; } },
+    { t: 'btn', participante: true, acao: 'dividir', s: 'Start as myself \u2014 we worked in a pair',
+      mostrar: function () { return !participante.membros && !participante.importadoDe; } }
 ];
 
 // Uma única fonte para as dimensões do modal, para o desenho e a deteção
@@ -5195,6 +5290,7 @@ function drawShortcutsModal() {
     // quando a categoria está aberta. As áreas de clique são registadas em
     // coordenadas de ecrã para o mousePressed as poder testar.
     modalCatAreas = [];
+    modalBotoes = [];
     var categoriaAberta = false;
     var primeiraCat = true;   // o primeiro cabeçalho desenhado (a secção do toque pode não estar)
 
@@ -5203,6 +5299,8 @@ function drawShortcutsModal() {
         // A secção do toque só aparece em aparelhos tácteis: no computador o
         // manual fica como estava.
         if (bloco.tactil && !ecraTatil) continue;
+        if (bloco.participante && !participante) continue;
+        if (bloco.mostrar && !bloco.mostrar()) continue;
 
         if (bloco.t === 'cat') {
             var aberta = !!categoriasAbertas[bloco.s];
@@ -5284,7 +5382,7 @@ function drawShortcutsModal() {
 
         } else if (bloco.t === 'li') {
             textSize(13 * globalScale); textStyle(NORMAL);
-            var linhas = wrapText(bloco.s, textW - 16 * globalScale);
+            var linhas = wrapText(typeof bloco.s === 'function' ? bloco.s() : bloco.s, textW - 16 * globalScale);
             fill(150); textAlign(LEFT, TOP);
             text('•', textX, y);
             fill(90);
@@ -5293,6 +5391,21 @@ function drawShortcutsModal() {
                 y += 18 * globalScale;
             }
             y += 3 * globalScale;
+
+        } else if (bloco.t === 'btn') {
+            y += 10 * globalScale;
+            textSize(13 * globalScale); textStyle(BOLD);
+            var bw = textWidth(bloco.s) + 32 * globalScale, bh = 34 * globalScale;
+            var sobreBtn = mouseX > textX && mouseX < textX + bw && mouseY > y && mouseY < y + bh &&
+                           mouseY > areaTop && mouseY < areaTop + areaH;
+            push(); rectMode(CORNER); fill(sobreBtn ? color(236, 250, 236) : 255);
+            stroke(0, 200, 0); strokeWeight(1);
+            rect(textX, y, bw, bh, 6 * globalScale); pop();
+            noStroke(); fill(0, 170, 0); textAlign(CENTER, CENTER);
+            text(bloco.s, textX + bw / 2, y + bh / 2);
+            textStyle(NORMAL);
+            modalBotoes.push({ acao: bloco.acao, x0: textX, x1: textX + bw, y0: y, y1: y + bh });
+            y += bh + 8 * globalScale;
 
         } else if (bloco.t === 'sc') {
             // Atalho junto da ferramenta a que pertence, com aspeto de tecla
@@ -5796,6 +5909,7 @@ function fecharPreview() {
 var CHAVE_GUIAS = 'pragmatipo-guias';
 
 function guardarGuias() {
+    if (MODO_CONSULTA) return;
     try {
         localStorage.setItem(CHAVE_GUIAS, JSON.stringify({
             ligadas: showGuides, y: guidesY, x: guidesX
@@ -5866,6 +5980,7 @@ function descreverCartazes() {
 }
 
 function guardarTrabalho() {
+    if (MODO_CONSULTA) return;
     try {
         var chars = {};
         var telas = listaDeTelas();
@@ -5909,6 +6024,7 @@ function guardarTrabalho() {
 }
 
 function recuperarTrabalho() {
+    if (MODO_CONSULTA) return false;
     try {
         var bruto = localStorage.getItem(CHAVE_AUTOSAVE);
         if (!bruto) return false;
@@ -6736,6 +6852,7 @@ function lerNumero(chave) {
 // como esse colega. Por isso pergunta-se — e a resposta "não" fica só com os
 // desenhos, que é o comportamento antigo.
 function adotarIdentidade(data) {
+    if (MODO_CONSULTA) return;   // na consulta abrem-se os desenhos; a identidade de quem os fez, nunca
     var e = data.estadoParticipante;
     if (!e || !e.participante || !e.participante.id) {
         // Ficheiro antigo, sem identidade. Quem está preso no portão precisa
@@ -6748,14 +6865,71 @@ function adotarIdentidade(data) {
     }
     if (participante && participante.id === e.participante.id) return;
 
+    // No portão (ainda sem participante): a pessoa escolhe se o projecto é dela
+    // ou se o fez a dois.
+    if (!participante) {
+        escolherDonoDoProjecto(e, function () { adotar(e); });
+        return;
+    }
+
+    // O ficheiro do par, aberto por quem já se separou dele: continua com o
+    // código próprio (voltar a ser o par desfazia a separação).
+    if (participante.importadoDe && participante.importadoDe === e.participante.id) {
+        origemImportacao = 'importacao-alheia';
+        codigoImportacao = e.participante.id;
+        return;
+    }
+
+    // O projecto de um par inscrito a dois, aberto num browser que já tem
+    // código: quem é? Se já for do par (uma das pessoas, ou o próprio par),
+    // fica como está, só com os desenhos.
+    var mf = e.participante.membros;
+    if (mf && mf.length) {
+        var idDoParF = e.participante.importadoDe || e.participante.id;
+        var jaDoPar = participante.id === idDoParF || participante.importadoDe === idDoParF ||
+                      mf.some(function (m) { return m.id === participante.id; });
+        if (jaDoPar) {
+            origemImportacao = 'importacao-alheia';
+            codigoImportacao = e.participante.id;
+            return;
+        }
+        // Enquanto escolhe, nada do projecto importado sai como desenho deste
+        // código. Back fica com o código e só os desenhos, como o Cancel antigo.
+        escolhaPendente = true;
+        portaoAberto = false;
+        var ov = construirPortao();
+        escolherMembro(e, function () { adotar(e); }, ov.firstChild, {
+            sub: 'Who are you? (Back keeps your own code, ' + participante.id + ', with these drawings.)',
+            antes: fecharSessaoSemDesenhos,
+            aoVoltar: function () {
+                if (overlayPortao) { overlayPortao.remove(); overlayPortao = null; }
+                portaoAberto = true;
+                escolhaPendente = false;
+                importacaoPendente = true;
+                origemImportacao = 'importacao-alheia';
+                codigoImportacao = e.participante.id;
+            }
+        });
+        return;
+    }
+
     var texto = participante
         ? 'This file belongs to participant ' + e.participante.id +
           '.\n\nContinue as that participant? Your current code (' + participante.id +
           ') will be replaced on this computer.\n\nChoose Cancel to keep only the drawings.'
         : 'This file belongs to participant ' + e.participante.id +
           '.\n\nContinue as that participant on this computer?';
-    if (!perguntar(texto)) return;
+    if (!perguntar(texto)) {
+        // Fica só com os desenhos de outra pessoa: o envio da importação diz
+        // isso, e de quem eram.
+        origemImportacao = 'importacao-alheia';
+        codigoImportacao = e.participante.id;
+        return;
+    }
+    adotar(e);
+}
 
+function adotar(e) {
     participante = e.participante;
     usosAcumulados = e.usos || {};
     usosPorLetra = e.usosPorLetra || {};
@@ -6829,8 +7003,11 @@ function exportProjectJSON() {
     // ficarem incoerentes, porque o alfabeto viaja junto com o participante.
     // 1.2: pode haver vários cartazes, e cada entrada de cartaz leva o nome e
     // o formato da folha. Um ficheiro 1.1 abre na mesma, com um só cartaz.
+    // 1.3: leva também o formato do alfabeto (sem ele, noutro browser as letras
+    // abriam na folha que lá estivesse e podiam ficar fora dela).
+    var fa = formatoDoAlfabeto();
     var projectData = {
-        version: "1.2",
+        version: "1.3",
         appName: "Plataforma Modular Tipográfica",
         participante: participante ? participante.id : null,
         coorte: participante ? participante.coorte : null,
@@ -6846,6 +7023,8 @@ function exportProjectJSON() {
         // ficheiro para o outro computador não voltar a dar um número que
         // já tem linhas na folha Letras.
         ultimoCartaz: maiorNumeroDeCartaz(),
+        artboard: fa.idx,              // o formato do ALFABETO, como no autosave
+        landscape: fa.landscape,
         characters: storedCharacters
     };
 
@@ -6901,6 +7080,9 @@ function importProjectJSON() {
                 var data = JSON.parse(event.target.result);
 
                 if (data && data.characters && typeof data.characters === 'object') {
+                    // O que se desenhou desde o último envio sai antes de o
+                    // ficheiro substituir tudo — depois já não existe.
+                    despacharDesenhos();
                     storedCharacters = data.characters; // Atualiza a memória global
                     normalizarTelas();
                     miniaturasDeOutroProjecto();
@@ -6910,6 +7092,14 @@ function importProjectJSON() {
                     // que lá não há. Nesse caso abre o primeiro cartaz dele.
                     if (!eCartaz(cartazAtual) || !storedCharacters[cartazAtual]) cartazAtual = listaDeCartazes()[0];
                     var abrir = (modoCartaz && !storedCharacters[currentChar]) ? cartazAtual : currentChar;
+                    // O formato do alfabeto (ficheiros 1.3). Muda a folha sem
+                    // passar pelo aviso nem contar como troca de formato: é o
+                    // formato em que o alfabeto já estava, não uma escolha nova.
+                    // Os ficheiros anteriores abrem na folha escolhida, como antes.
+                    if (data.artboard === 0 || data.artboard === 1 || data.artboard === 2) {
+                        formatoAlfabeto = { idx: data.artboard, landscape: data.landscape === true };
+                        if (!modoCartaz) usarFormato(formatoAlfabeto);
+                    }
                     if (modoCartaz) {
                         cartazAtual = abrir;
                         usarFormato(formatoDoCartaz(abrir));
@@ -6950,6 +7140,15 @@ function nomeParaFicheiro(nome) {
     t = t.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
     return t || 'Poster';
 }
+
+// O lado de uma célula da grelha nos SVG exportados (letra, alfabeto e ZIP),
+// em px — que o Illustrator lê como pt. A 30 a folha tem a medida do papel:
+// F1 690 × 990 pt (≈ 24 × 35 cm), F2 990 × 1380, F3 1380 × 1980 (≈ 49 × 70 cm),
+// as mesmas das legendas dos formatos. O alfabeto inteiro em F3 (36 letras e
+// números) fica com 8700 × 12300 pt, dentro do limite de 16383 pt do
+// Illustrator, com as peças dentro da folha — a 50 passava para 14500 × 20500
+// e ele cortava o resto sem avisar. O quadrado 02 (2×2 células) sai com 60 × 60 pt.
+var ESCALA_EXPORTACAO = 30;
 
 function exportCharacterSVG(charToExport) {
     acoes.expLetra++;
@@ -7013,7 +7212,7 @@ function exportCharacterSVG(charToExport) {
     }
 
     // Tamanho grande para garantir qualidade
-    var exportScale = 50;
+    var exportScale = ESCALA_EXPORTACAO;
     var bbW = (maxX - minX) * exportScale;
     var bbH = (maxY - minY) * exportScale;
 
@@ -7096,6 +7295,29 @@ function exportCharacterSVG(charToExport) {
     }, 0);
 }
 
+// A caixa que um conjunto de peças ocupa, em unidades da grelha (o lado de
+// uma célula vale 1), com a rotação de cada peça. É a mesma conta que o
+// exportCharacterSVG faz para encostar a folha ao desenho.
+function caixaDasPecas(objs) {
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (var k = 0; k < objs.length; k++) {
+        var o = objs[k], dims = getModuleDims(o.type);
+        var offX = (dims.len - 1) * 0.5, offY = (dims.wid - 1) * 0.5;
+        var hw = dims.len / 2, hh = dims.wid / 2;
+        var cantos = [[offX - hw, offY - hh], [offX + hw, offY - hh], [offX + hw, offY + hh], [offX - hw, offY + hh]];
+        for (var c = 0; c < 4; c++) {
+            var lx = cantos[c][0], ly = cantos[c][1], rx = lx, ry = ly;
+            if (o.rot === 1) { rx = -ly; ry = lx; }
+            else if (o.rot === 2) { rx = -lx; ry = -ly; }
+            else if (o.rot === 3) { rx = ly; ry = -lx; }
+            var gx = o.x + 0.5 + rx, gy = o.y + 0.5 + ry;
+            if (gx < minX) minX = gx; if (gx > maxX) maxX = gx;
+            if (gy < minY) minY = gy; if (gy > maxY) maxY = gy;
+        }
+    }
+    return { minX: minX, maxX: maxX, minY: minY, maxY: maxY };
+}
+
 function exportAlphabetSVG() {
     acoes.expAlfabeto++;
     // 1. Atualiza a memória com o que está no ecrã neste momento
@@ -7117,13 +7339,28 @@ function exportAlphabetSVG() {
     }
 
     // 3. Configurações da Grelha do Mega SVG
-    var exportScale = 50;
+    var exportScale = ESCALA_EXPORTACAO;
     var cols = 6; // 6 letras por linha
     var rows = Math.ceil(lettersToExport.length / cols);
 
-    // Estimativa de um espaço seguro por letra (ex: 20x20 módulos)
-    var cellW = 20 * exportScale;
-    var cellH = 20 * exportScale;
+    // A moldura de cada letra é a folha do alfabeto (F1, F2 ou F3, ao alto ou
+    // deitada), e cada letra fica no sítio em que foi desenhada nela — a
+    // linha de base e as alturas continuam a bater de letra para letra. Era
+    // uma caixa fixa de 20×20 módulos à volta do centro da grelha; a folha tem
+    // 23×33 (F1) ou mais, e as letras invadiam as vizinhas. Se alguma peça
+    // tiver ficado fora da folha, a moldura alarga-se para a incluir.
+    var fa = formatoDoAlfabeto();
+    var folha = dimensoesDaFolha(fa.idx, fa.landscape);
+    var inicioX = GRID_CX - Math.floor(folha.w / 2);   // como o artOffsetX
+    var inicioY = GRID_CY - Math.floor(folha.h / 2);
+    var moldura = { minX: inicioX, maxX: inicioX + folha.w, minY: inicioY, maxY: inicioY + folha.h };
+    for (var b = 0; b < lettersToExport.length; b++) {
+        var cx = caixaDasPecas(lettersToExport[b].objs);
+        moldura.minX = Math.min(moldura.minX, cx.minX); moldura.maxX = Math.max(moldura.maxX, cx.maxX);
+        moldura.minY = Math.min(moldura.minY, cx.minY); moldura.maxY = Math.max(moldura.maxY, cx.maxY);
+    }
+    var cellW = (moldura.maxX - moldura.minX) * exportScale;
+    var cellH = (moldura.maxY - moldura.minY) * exportScale;
     var padding = 2 * exportScale;
 
     var totalW = cols * (cellW + padding) + padding;
@@ -7149,20 +7386,16 @@ function exportAlphabetSVG() {
         svgStr += '  <g transform="translate(' + cellX + ' ' + cellY + ')">\n';
 
         // Colocar uma etiqueta subtil no topo da célula para o autor saber que letra é
-        svgStr += '    <text x="0" y="-10" font-family="sans-serif" font-size="24" fill="#999999">' + item.char + '</text>\n';
+        svgStr += '    <text x="0" y="-5" font-family="sans-serif" font-size="12" fill="#999999">' + item.char + '</text>\n';
 
         var objs = item.objs;
         for (var k = 0; k < objs.length; k++) {
             var o = objs[k];
             var dims = getModuleDims(o.type);
 
-            // Relativo ao centro da grelha global do P5 (GRID_CX/CY)
-            var localX = (o.x - GRID_CX + 10) * exportScale; // +10 para empurrar para o meio da célula
-            var localY = (o.y - GRID_CY + 10) * exportScale;
-
-            // Ajuste do pivô visual
-            var svgPivotX = localX + (exportScale / 2);
-            var svgPivotY = localY + (exportScale / 2);
+            // Centro da célula pivô, em relação ao canto da moldura comum
+            var svgPivotX = (o.x + 0.5 - moldura.minX) * exportScale;
+            var svgPivotY = (o.y + 0.5 - moldura.minY) * exportScale;
 
             var drawW = dims.len * exportScale;
             var drawH = dims.wid * exportScale;
@@ -7264,7 +7497,7 @@ function exportAlphabetZIP() {
                 }
             }
 
-            var exportScale = 50;
+            var exportScale = ESCALA_EXPORTACAO;
             var bbW = (maxX - minX) * exportScale;
             var bbH = (maxY - minY) * exportScale;
 
@@ -7397,6 +7630,11 @@ var LIMIAR_DO_ARRASTO = 10;     // px: abaixo disto um toque é um toque, não u
 var DURACAO_TOQUE_LONGO = 500;  // ms: fixar a letra de referência
 var ALPHA_FANTASMA_TOQUE = 70;  // o módulo a ser arrastado: mais claro do que o fantasma do rato (127)
 var ALPHA_RECUSA_TOQUE = 170;   // o mesmo, quando ali não cabe
+// No Dot os módulos já são cinzento claro e, com os alfas de cima, o fantasma
+// quase desaparecia na folha. Estes deixam-no visível e ainda mais claro do
+// que um módulo pousado; o do toque continua mais claro do que o do rato.
+var ALPHA_FANTASMA_DOT = 150;
+var ALPHA_FANTASMA_TOQUE_DOT = 110;
 
 var toque = {
     ativo: false,          // há um dedo ou caneta em baixo
@@ -8253,8 +8491,10 @@ var CODIGOS_COORTE = {
     //  código de acesso                   grupo                 material
     'pragmatipo-teste':        { coorte: 'TESTE',    material: 'nenhum'  },
     'pragmatipo-angelo':       { coorte: 'Angelo',   material: 'nenhum'  },
+    'pragmatipo-claude':       { coorte: 'Claude',   material: 'nenhum'  },
 
-    'pragmatipo-16et':         { coorte: '16ET',     material: ''        },
+    'pragmatipo-16et202611':   { coorte: '16ET',     material: 'tipos'   },
+    'pragmatipo-fmad202611':   { coorte: 'FMAD',     material: 'tipos'   },
     'pragmatipo-esmad':        { coorte: 'ESMAD',    material: ''        },
     'pragmatipo-diadaesmad':   { coorte: 'ESMAD',    material: ''        },
 
@@ -8276,6 +8516,13 @@ function resolverCodigo(codigo) {
 // Enquanto estiver vazio, as respostas ficam só guardadas no browser.
 var ENDPOINT_RESPOSTAS = 'https://script.google.com/macros/s/AKfycbwl4nbi9HfWLvnrH8WcJJBSTWoq0ts-g_vbhTl-bGi8XnelVowcRfzgnpajpqgeusynrQ/exec';
 
+// A página de consulta (consulta.html) abre a ferramenta para ver projectos
+// reconstruídos a partir da folha Desenhos: sem portão, sem sessão, sem envio,
+// e sem ler nem gravar o trabalho guardado neste browser — no localhost a
+// consulta e a ferramenta partilham a memória do browser.
+var MODO_CONSULTA = !!window.PRAGMATIPO_CONSULTA;
+if (MODO_CONSULTA) ENDPOINT_RESPOSTAS = '';
+
 // Endereço de contacto. Aparece no texto do RGPD e no ecrã do código, para
 // quem chegue sem ele. Num sítio só, para não divergirem.
 var EMAIL_CONTACTO = 'adg@esmad.ipp.pt';
@@ -8285,7 +8532,12 @@ var EMAIL_CONTACTO = 'adg@esmad.ipp.pt';
 // Muda sempre que o texto do RGPD mudar — é o que permite dizer, na tese, ao
 // que cada participante consentiu. O endereço de contacto faz parte do texto:
 // estando errado, o direito à eliminação não era exercível.
-var VERSAO_CONSENTIMENTO = '2026-10-02';
+var VERSAO_CONSENTIMENTO = '2026-10-19';
+
+// A partir desta versão o consentimento inclui os desenhos (ver DESENHOS). Quem
+// aceitou uma anterior leu que as letras nunca eram enviadas: os desenhos dessa
+// pessoa não saem, mesmo com a ferramenta nova.
+var VERSAO_CONSENTIMENTO_DESENHOS = '2026-10-19';
 
 // --- VERSÃO DA FERRAMENTA ---
 // Vai em cada registo enviado (inscrição, sessão, letras, módulos, avaliação),
@@ -8304,7 +8556,7 @@ var CONSENTIMENTOS = [
     { id: 'rgpd', obrigatorio: true,
       texto: 'I agree that the information I provide here may be processed for this phd research, under the terms described above.' },
     { id: 'obra', obrigatorio: true,
-      texto: 'I agree that the letterforms I produce with this tool may be reproduced and discussed in the thesis and in related academic publications.' }
+      texto: 'I agree that the letters, numbers and posters I make with this tool may be reproduced and discussed anonymously in the thesis, in related academic publications, in exhibitions and on the Pragmatipo website.' }
 ];
 
 var PERGUNTAS = [
@@ -8353,8 +8605,12 @@ var TEXTO_RGPD =
     'No name, e-mail or any other direct identifier is asked for, and your answers are stored under an anonymous code. ' +
     'Alongside your answers, the research also records how the tool is used: how often you come back, how long you work, ' +
     'which letters and modules you build, how you rotate and arrange them, which working mode you choose, whether you ' +
-    'draw with a mouse, a finger or a pen, and which commands you reach for. Nothing you type into the tool itself is recorded, and the letterforms themselves are never sent. ' +
-    'You can ask for your data to be deleted at any time by sending that code to ' + EMAIL_CONTACTO + '.';
+    'draw with a mouse, a finger or a pen, which commands you reach for, and the size of your screen and the language of your browser. ' +
+    'It also records what you build — your letters, numbers and posters, module by module — so that they can be studied, ' +
+    'and shown anonymously in the thesis, in exhibitions and on the Pragmatipo website. ' +
+    'Text you type while drawing, such as poster names, is not recorded. ' +
+    'You can ask for your data to be deleted at any time by sending that code to ' + EMAIL_CONTACTO + '; ' +
+    'work that has already been printed or shown cannot be withdrawn from those copies.';
 
 // --- ESTADO ----------------------------------------------------------------
 
@@ -8381,11 +8637,46 @@ function novoIdParticipante() {
 // fraca, uma resposta perdida é um participante perdido — por isso o que não
 // sai fica em fila e volta a ser tentado na visita seguinte.
 
+// Devolve se ficou mesmo gravado (com o localStorage cheio, não fica).
 function enfileirarResposta(resposta) {
+    return enfileirarVarias([resposta]);
+}
+
+// Tudo ou nada, numa escrita só: uma parte de um envio de desenhos sem as
+// outras deixava o desenho incompleto na folha.
+function enfileirarVarias(respostas) {
+    if (MODO_CONSULTA) return false;   // a fila é a da ferramenta verdadeira (mesma origem)
     var fila = [];
     try { fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]'); } catch (e) {}
-    fila.push(resposta);
-    try { localStorage.setItem(CHAVE_POR_ENVIAR, JSON.stringify(fila)); } catch (e) {}
+    for (var i = 0; i < respostas.length; i++) fila.push(respostas[i]);
+    try { localStorage.setItem(CHAVE_POR_ENVIAR, JSON.stringify(fila)); return true; } catch (e) { return false; }
+}
+
+// Os desenhos só saem para um Apps Script que os conheça. Um anterior a
+// 2026-10-19 escreve-os na folha Letras e toma a linha de Letras da mesma
+// sessão por duplicada — perdia-se. Pergunta-se a versão uma vez por visita
+// (o GET não escreve nada na folha); até haver resposta, ficam na fila.
+var VERSAO_APPS_SCRIPT_DESENHOS = '2026-10-19';
+var appsScriptAceitaDesenhos = null;   // null: ainda não se sabe
+var aVerificarAppsScript = false;
+
+function verificarAppsScript() {
+    if (!ENDPOINT_RESPOSTAS || appsScriptAceitaDesenhos !== null || aVerificarAppsScript) return;
+    aVerificarAppsScript = true;
+    fetch(ENDPOINT_RESPOSTAS, { method: 'GET', mode: 'cors' })
+        .then(function (r) { return r.text(); })
+        .then(function (texto) {
+            var m = /Vers\u00e3o (\d{4}-\d{2}-\d{2})|Versao (\d{4}-\d{2}-\d{2})|Versão (\d{4}-\d{2}-\d{2})/.exec(texto || '');
+            var v = m ? (m[1] || m[2] || m[3]) : '';
+            appsScriptAceitaDesenhos = !!v && v >= VERSAO_APPS_SCRIPT_DESENHOS;
+            if (appsScriptAceitaDesenhos) escoarFila();
+        })
+        .catch(function () { })          // sem rede: tenta-se na próxima vez
+        .then(function () { aVerificarAppsScript = false; });
+}
+
+function podeSair(r) {
+    return !r || r.tipo !== 'desenhos' || appsScriptAceitaDesenhos === true;
 }
 
 // Tira UM registo da fila, comparando-o por inteiro. Relê antes de escrever
@@ -8402,11 +8693,19 @@ function removerDaFila(registo) {
 }
 
 var envioEmCurso = false;   // sem isto, duas chamadas seguidas enviavam o mesmo
+var escoarDeNovo = false;   // pedido com um envio a meio: corre quando ele acabar
 
 function escoarFila() {
-    if (!ENDPOINT_RESPOSTAS || envioEmCurso) return;
+    if (!ENDPOINT_RESPOSTAS) return;
+    // O que entrar na fila durante um envio (a inscrição de quem se separa de
+    // um par, o desenho de partida dele) sai logo a seguir, e não só na
+    // próxima vez que alguém chamar isto — que pode não haver.
+    if (envioEmCurso) { escoarDeNovo = true; return; }
+    escoarDeNovo = false;
     var fila = [];
     try { fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]'); } catch (e) { return; }
+    if (fila.some(function (r) { return r && r.tipo === 'desenhos'; })) verificarAppsScript();
+    fila = fila.filter(podeSair);
     if (fila.length === 0) return;
 
     // A fila NÃO se esvazia aqui. Cada registo só sai depois de a entrega estar
@@ -8442,10 +8741,18 @@ function escoarFila() {
             var d = null;
             try { d = JSON.parse(texto); } catch (e) {}
             if (!d || !d.ok) throw new Error('resposta inesperada');
+            // Um desenho só sai da fila confirmado pela folha Desenhos — um
+            // Apps Script antigo responde ok sem a dizer.
+            if (r.tipo === 'desenhos' && d.folha !== 'Desenhos') throw new Error('Apps Script antigo');
             removerDaFila(r);            // chegou: agora sim, sai da fila
         })
         .catch(function () { })          // falhou: fica onde está, tenta-se depois
-        .then(function () { if (--porResolver === 0) envioEmCurso = false; });
+        .then(function () {
+            if (--porResolver === 0) {
+                envioEmCurso = false;
+                if (escoarDeNovo) escoarFila();   // só um pedido novo volta a correr: uma falha não entra em ciclo
+            }
+        });
     });
 }
 
@@ -8465,7 +8772,7 @@ function construirPortao() {
         'width': '100%', 'height': '100%', 'z-index': '2147483000',
         'background': 'rgba(0,0,0,0.55)', 'display': 'flex',
         'align-items': 'center', 'justify-content': 'center',
-        'overflow': 'auto', 'padding': '24px'
+        'overflow': 'auto', 'padding': '24px', 'box-sizing': 'border-box'
     });
 
     var caixa = document.createElement('div');
@@ -8571,14 +8878,118 @@ function passoCodigo(caixa) {
 
 // --- PASSO 2: CONSENTIMENTOS E QUESTIONÁRIO -------------------------------
 
-function passoFormulario(caixa, grupo) {
-    titulo(caixa, 'Before you start', 'A few questions for the research behind this tool');
+// `par` (opcional): { importadoDe, aoCancelar, consentimentoDoPar, papel } — a
+// inscrição de quem se separa do código de um par que se inscreveu como uma
+// pessoa só (o recurso, para quem escolheu Alone e afinal trabalhou a dois). A
+// coorte e o material vêm do par; o resto responde-se por si.
+//
+// Sem `par`, o formulário pergunta se se trabalha sozinho ou a dois. A dois,
+// são duas colunas — quem fica com este computador e o colega, que continua
+// noutro —, cada uma com as suas respostas e os seus consentimentos (ver
+// concluirPortaoPar).
+function passoFormulario(caixa, grupo, par) {
+    titulo(caixa, 'Before you start', par
+        ? 'Starting as yourself, from the project you shared'
+        : 'A few questions for the research behind this tool');
+
+    if (par) {
+        var notaPar = document.createElement('div');
+        notaPar.textContent = 'You worked on this project with someone else (participant ' + par.importadoDe + '). ' +
+            'Answer for yourself: you will get your own code, and the drawings come with you. ' +
+            'The code ' + par.importadoDe + ' keeps the work you did together.';
+        estilo(notaPar, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#0a0',
+                          'line-height': '1.55', 'margin': '0 0 18px', 'padding': '10px 12px',
+                          'background': '#f2fff2', 'border': '0.75px solid #b8e0b8', 'border-radius': '6px' });
+        caixa.appendChild(notaPar);
+    }
 
     var intro = document.createElement('div');
     intro.textContent = TEXTO_RGPD;
     estilo(intro, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
                     'line-height': '1.55', 'margin': '0 0 22px' });
     caixa.appendChild(intro);
+
+    var emPar = false, notaDoPar = null;
+    if (!par) {
+        var pergunta = document.createElement('div');
+        pergunta.textContent = 'Are you working alone or in a pair?';
+        estilo(pergunta, { 'font': '700 11px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555', 'margin': '0 0 6px' });
+        caixa.appendChild(pergunta);
+        caixa.appendChild(segmentado(['Alone', 'In a pair'], 0, function (i) { mudarModo(i === 1); }));
+        notaDoPar = document.createElement('div');
+        notaDoPar.textContent = 'Two people, one computer: each of you answers for yourself and gets your own code. ' +
+            'What you make here together is kept under a shared pair code; afterwards each of you can continue alone ' +
+            '\u2014 one on this computer, the other by importing the project file on their own.';
+        estilo(notaDoPar, { 'display': 'none', 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#0a0',
+                            'line-height': '1.55', 'margin': '0 0 18px', 'padding': '10px 12px',
+                            'background': '#f2fff2', 'border': '0.75px solid #b8e0b8', 'border-radius': '6px' });
+        caixa.appendChild(notaDoPar);
+    }
+
+    var colunas = document.createElement('div');
+    estilo(colunas, { 'display': 'flex', 'flex-wrap': 'wrap', 'gap': '0 32px', 'align-items': 'flex-start' });
+    caixa.appendChild(colunas);
+    var colA = colunaDoQuestionario('');
+    colunas.appendChild(colA.el);
+    var colB = null;
+
+    function mudarModo(dois) {
+        emPar = dois;
+        colA.rotular(dois ? 'You \u2014 on this computer' : '');
+        if (dois && !colB) {
+            colB = colunaDoQuestionario('Your partner \u2014 continues on their own computer');
+            colunas.appendChild(colB.el);
+        }
+        if (colB) estilo(colB.el, { 'display': dois ? 'block' : 'none' });
+        estilo(caixa, { 'max-width': dois ? '940px' : '520px' });
+        estilo(notaDoPar, { 'display': dois ? 'block' : 'none' });
+        if (msg) { msg.remove(); msg = null; }
+    }
+
+    var msg = null;
+    var b = botao('Start drawing');
+    caixa.appendChild(b);
+
+    b.addEventListener('click', function () {
+        var a = colA.ler();
+        var bb = emPar ? colB.ler() : null;
+        var partes = [];
+        if (a.faltam.length) partes.push((emPar ? 'you: ' : '') + a.faltam.join(', '));
+        if (bb && bb.faltam.length) partes.push('your partner: ' + bb.faltam.join(', '));
+        if (partes.length) {
+            if (msg) msg.remove();
+            msg = erro(caixa, (emPar ? 'Still missing \u2014 ' : 'Still missing: ') + partes.join('; '));
+            caixa.insertBefore(msg, b);   // junto ao botão, e à vista
+            if (msg.scrollIntoView) msg.scrollIntoView({ block: 'nearest' });
+            return;
+        }
+        if (par) fecharSessaoDoPar();
+        if (emPar) concluirPortaoPar(grupo, a.respostas, bb.respostas);
+        else concluirPortao(grupo, a.respostas, par);
+    });
+
+    if (par && par.aoCancelar) {
+        var cancelar = document.createElement('a');
+        cancelar.href = '#';
+        cancelar.textContent = 'Cancel';
+        estilo(cancelar, { 'display': 'block', 'text-align': 'center', 'margin': '14px 0 0',
+                           'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif',
+                           'color': '#888', 'text-decoration': 'underline', 'cursor': 'pointer' });
+        cancelar.addEventListener('click', function (ev) { ev.preventDefault(); par.aoCancelar(); });
+        caixa.appendChild(cancelar);
+    }
+}
+
+// As perguntas e os consentimentos de UMA pessoa. Devolve o elemento e um
+// ler() com as respostas e o que falta.
+function colunaDoQuestionario(rotulo) {
+    var col = document.createElement('div');
+    estilo(col, { 'flex': '1 1 300px', 'min-width': '0' });
+    var cab = document.createElement('div');
+    estilo(cab, { 'font': '700 13px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#111', 'margin': '0 0 14px' });
+    col.appendChild(cab);
+    function rotular(texto) { cab.textContent = texto || ''; estilo(cab, { 'display': texto ? 'block' : 'none' }); }
+    rotular(rotulo);
 
     // -- perguntas
     var campos = {};
@@ -8587,13 +8998,13 @@ function passoFormulario(caixa, grupo) {
         lbl.textContent = p.label + (p.obrigatoria ? '' : ' (optional)');
         estilo(lbl, { 'display': 'block', 'font': '700 11px \'Marist Variable\', Helvetica, Arial, sans-serif',
                       'color': '#555', 'margin': '0 0 6px' });
-        caixa.appendChild(lbl);
+        col.appendChild(lbl);
 
         var el;
         if (p.tipo === 'escolha') {
             el = document.createElement('select');
             var vazio = document.createElement('option');
-            vazio.value = ''; vazio.textContent = '—';
+            vazio.value = ''; vazio.textContent = '\u2014';
             el.appendChild(vazio);
             p.opcoes.forEach(function (o) {
                 var op = document.createElement('option');
@@ -8609,7 +9020,7 @@ function passoFormulario(caixa, grupo) {
         }
         estilo(el, campoBase());
         estilo(el, { 'margin': '0 0 16px' });
-        caixa.appendChild(el);
+        col.appendChild(el);
         campos[p.id] = el;
     });
 
@@ -8627,46 +9038,308 @@ function passoFormulario(caixa, grupo) {
         var txt = document.createElement('span');
         txt.textContent = c.texto;
         linha.appendChild(chk); linha.appendChild(txt);
-        caixa.appendChild(linha);
+        col.appendChild(linha);
         caixasConsent[c.id] = chk;
     });
 
-    var msg = null;
-    var b = botao('Start drawing');
-    caixa.appendChild(b);
-
-    b.addEventListener('click', function () {
-        var respostas = {}, faltam = [];
-        PERGUNTAS.forEach(function (p) {
-            var v = (campos[p.id].value || '').trim();
-            if (p.obrigatoria && !v) faltam.push(p.label);
-            if (p.tipo === 'numero' && v) {
-                var n = parseInt(v, 10);
-                if (isNaN(n) || (p.min != null && n < p.min) || (p.max != null && n > p.max)) faltam.push(p.label);
-            }
-            respostas[p.id] = v;
-        });
-        var faltaConsentir = false;
-        CONSENTIMENTOS.forEach(function (c) {
-            if (c.obrigatorio && !caixasConsent[c.id].checked) faltaConsentir = true;
-            respostas['consent_' + c.id] = !!caixasConsent[c.id].checked;
-        });
-        // Uma menção só, por muitas caixas que faltem assinalar.
-        if (faltaConsentir) faltam.push('the agreements above');
-        if (faltam.length) {
-            if (msg) msg.remove();
-            msg = erro(caixa, 'Still missing: ' + faltam.join(', '));
-            return;
+    return {
+        el: col,
+        rotular: rotular,
+        ler: function () {
+            var respostas = {}, faltam = [];
+            PERGUNTAS.forEach(function (p) {
+                var v = (campos[p.id].value || '').trim();
+                if (p.obrigatoria && !v) faltam.push(p.label);
+                if (p.tipo === 'numero' && v) {
+                    var n = parseInt(v, 10);
+                    if (isNaN(n) || (p.min != null && n < p.min) || (p.max != null && n > p.max)) faltam.push(p.label);
+                }
+                respostas[p.id] = v;
+            });
+            var faltaConsentir = false;
+            CONSENTIMENTOS.forEach(function (c) {
+                if (c.obrigatorio && !caixasConsent[c.id].checked) faltaConsentir = true;
+                respostas['consent_' + c.id] = !!caixasConsent[c.id].checked;
+            });
+            // Uma menção só, por muitas caixas que faltem assinalar.
+            if (faltaConsentir) faltam.push('the agreements');
+            return { respostas: respostas, faltam: faltam };
         }
-        concluirPortao(grupo, respostas);
+    };
+}
+
+// Duas ou mais opções lado a lado, uma escolhida — como os da barra da ferramenta.
+function segmentado(opcoes, inicial, aoMudar) {
+    var el = document.createElement('div');
+    estilo(el, { 'display': 'flex', 'gap': '4px', 'padding': '4px', 'margin': '0 0 16px',
+                 'background': '#f4f4f4', 'border-radius': '8px' });
+    var botoes = opcoes.map(function (texto, i) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = texto;
+        b.addEventListener('click', function () { marcar(i); aoMudar(i); });
+        el.appendChild(b);
+        return b;
     });
+    function marcar(i) {
+        botoes.forEach(function (b, j) {
+            estilo(b, { 'flex': '1 1 0', 'padding': '9px', 'cursor': 'pointer', 'border-radius': '6px',
+                        'font': (j === i ? '700' : '400') + ' 12px \'Marist Variable\', Helvetica, Arial, sans-serif',
+                        'color': j === i ? '#0a0' : '#777', 'background': j === i ? '#fff' : 'transparent',
+                        'border': j === i ? '0.75px solid #e6e6e6' : '0.75px solid transparent' });
+        });
+    }
+    marcar(inicial);
+    return el;
+}
+
+// A inscrição de um par: três códigos. O do par (o participante deste browser)
+// fica com o que se fizer aqui a dois; cada pessoa tem o seu, com as suas
+// respostas e os seus consentimentos, e continua com ele depois — uma neste
+// computador (continuarSozinho), a outra ao importar o projecto no dela
+// (escolherMembro). Três linhas na folha das inscrições: a do par
+// (inscricao = 'par', sem respostas) e uma por pessoa (inscricao = 'membro').
+function concluirPortaoPar(grupo, respostasA, respostasB) {
+    var quando = new Date().toISOString();
+    var idPar = novoIdParticipante(), idA = novoIdParticipante(), idB = novoIdParticipante();
+    var membros = [{ id: idA, papel: 'computador' }, { id: idB, papel: 'colega' }];
+    participante = { id: idPar, coorte: grupo.coorte, material: grupo.material, quando: quando,
+                     versaoConsentimento: VERSAO_CONSENTIMENTO, membros: membros };
+    function base(id) {
+        return { participante: id, coorte: grupo.coorte, material: grupo.material, quando: quando,
+                 versaoConsentimento: VERSAO_CONSENTIMENTO, versaoFerramenta: VERSAO_FERRAMENTA,
+                 ecra: window.innerWidth + 'x' + window.innerHeight, idioma: navigator.language || '' };
+    }
+    var rA = base(idA), rB = base(idB), rPar = base(idPar);
+    for (var k in respostasA) rA[k] = respostasA[k];
+    for (var j in respostasB) rB[j] = respostasB[j];
+    rA.inscricao = 'membro'; rA.par = idPar; rA.papel = 'computador';
+    rB.inscricao = 'membro'; rB.par = idPar; rB.papel = 'colega';
+    rPar.inscricao = 'par'; rPar.membros = idA + ' ' + idB;
+
+    enfileirarVarias([rA, rB, rPar]);   // guardar antes de enviar, sempre
+    escoarFila();
+    try { localStorage.setItem(CHAVE_PARTICIPANTE, JSON.stringify(participante)); } catch (e) {}
+    abrirPortao();
+}
+
+// --- SEPARAR DO PAR ---------------------------------------------------------
+// Duas pessoas num computador ficam com um código só. Depois, cada uma pode
+// passar a ter o seu: quem fica com o computador pelo botão do manual (Your
+// data), quem leva o projecto ao importá-lo noutro computador. O código do par
+// fica só com o trabalho feito em conjunto; os novos guardam de onde vieram
+// (importadoDe), na inscrição e nos desenhos.
+
+// Quem começa do zero no que é da pessoa (sessões, colocações acumuladas,
+// primeira letra, avaliação): esses valores eram do par e ficam com ele. O
+// desenho continua, e sai no primeiro envio como ponto de partida (ver
+// iniciarSessao).
+function recomecarDaPessoa() {
+    usosAcumulados = {}; usosPorLetra = {}; primeiroCaractere = null;
+    avaliacaoVistaNestaSessao = false;
+    try {
+        localStorage.setItem(CHAVE_N_SESSOES, '0');
+        localStorage.setItem(CHAVE_USOS, '{}');
+        localStorage.setItem(CHAVE_USOS_LETRA, '{}');
+        localStorage.removeItem(CHAVE_PRIMEIRO);
+        localStorage.removeItem(CHAVE_AVALIACAO);
+        localStorage.setItem(CHAVE_DESENHO_DO_PAR, participante.id);
+    } catch (e) {}
+}
+
+// Este browser passa a ser uma das pessoas de um par inscrito a dois. Sem
+// questionário: cada uma respondeu ao seu na inscrição. A sessão do par fecha
+// aqui, com o desenho de agora.
+function tornarMembro(par, membro) {
+    fecharSessaoDoPar();
+    participante = { id: membro.id, coorte: par.coorte || '', material: par.material || '',
+                     quando: par.quando || new Date().toISOString(),
+                     versaoConsentimento: par.versaoConsentimento || '',
+                     importadoDe: par.id, consentimentoDoPar: par.versaoConsentimento || '',
+                     papel: membro.papel, membros: par.membros };
+    recomecarDaPessoa();
+    try { localStorage.setItem(CHAVE_PARTICIPANTE, JSON.stringify(participante)); } catch (e) {}
+    abrirPortao();
+}
+
+// O botão do manual num par inscrito a dois: quem se inscreveu neste
+// computador continua aqui, sozinho.
+function continuarSozinho() {
+    if (!participante || !participante.membros || participante.importadoDe) return;
+    showShortcutsModal = false;
+    portaoAberto = false;   // a ferramenta não responde por trás da escolha
+    var ov = construirPortao();
+    escolherMembro({ participante: participante }, function () {}, ov.firstChild, {
+        titulo: 'Continue alone on this computer',
+        sub: 'Who stays on this computer? What you made together stays under the pair code ' + participante.id +
+             '. The other person continues on their own computer by importing the project file \u2014 ' +
+             'save it for them first (Export \u203a Save project (JSON)).',
+        semJuntos: true,
+        meu: 'This computer is mine',
+        naoMeu: 'This computer isn\'t mine',
+        aoVoltar: function () { if (overlayPortao) { overlayPortao.remove(); overlayPortao = null; } portaoAberto = true; }
+    });
+}
+
+// Quem é, de um par inscrito a dois — ao importar o projecto dele, ou no
+// "Continue alone" do manual. Os botões dizem de quem era o computador (o dono
+// é quem se inscreveu na coluna da esquerda). `opcoes`: { titulo, sub,
+// semJuntos, antes, aoVoltar, meu, naoMeu }.
+function escolherMembro(e, continuar, caixa, opcoes) {
+    opcoes = opcoes || {};
+    var p = e.participante;
+    var doPar = !p.importadoDe;   // o ficheiro é do par; senão, de uma das pessoas, já sozinha
+    var par = { id: p.importadoDe || p.id, coorte: p.coorte, material: p.material, quando: p.quando,
+                versaoConsentimento: p.consentimentoDoPar || p.versaoConsentimento, membros: p.membros };
+    titulo(caixa, opcoes.titulo || 'This project was made by a pair', opcoes.sub || 'Who are you?');
+    p.membros.forEach(function (m) {
+        var b = botao(m.papel === 'computador'
+            ? (opcoes.meu || 'The computer was mine')
+            : (opcoes.naoMeu || 'The computer wasn\'t mine'));
+        b.addEventListener('click', function () {
+            if (opcoes.antes) opcoes.antes();
+            if (m.id === p.id) continuar();   // o ficheiro já é desta pessoa
+            else tornarMembro(par, m);
+        });
+        caixa.appendChild(b);
+    });
+    if (doPar && !opcoes.semJuntos) {
+        var junto = botao('We are still working together');
+        junto.addEventListener('click', function () { if (opcoes.antes) opcoes.antes(); continuar(); });
+        caixa.appendChild(junto);
+    }
+    var voltar = document.createElement('a');
+    voltar.href = '#';
+    voltar.textContent = 'Back';
+    estilo(voltar, { 'display': 'block', 'text-align': 'center', 'margin': '14px 0 0',
+                     'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif',
+                     'color': '#888', 'text-decoration': 'underline', 'cursor': 'pointer' });
+    voltar.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        if (opcoes.aoVoltar) opcoes.aoVoltar(); else passoCodigo(caixa);
+    });
+    caixa.appendChild(voltar);
+}
+
+// O botão do manual, para quem se inscreveu como uma pessoa só e afinal
+// trabalhou a dois (o recurso: questionário depois).
+function pedirParaDividir() {
+    if (!participante || participante.importadoDe || participante.membros) return;
+    var codigoDoPar = participante.id;
+    var consentimentoDoPar = participante.versaoConsentimento || '';
+    var ok = perguntar('Start as yourself?\n\n' +
+        'You will answer a few questions and get your own participant code. The drawings stay here. ' +
+        'The code ' + codigoDoPar + ' keeps the work you did together.\n\n' +
+        'If your partner is taking the project home, save it for them first (Export \u203a Save project (JSON)).\n\n' +
+        'Do this only if you worked on this project with someone else.');
+    if (!ok) return;
+    showShortcutsModal = false;
+    // Enquanto o formulário está aberto, a ferramenta não responde (sem isto,
+    // escrever nas respostas disparava os atalhos de teclado por trás).
+    portaoAberto = false;
+    abrirInscricaoDoPar({ coorte: participante.coorte || '', material: participante.material || '' }, codigoDoPar,
+        function () { if (overlayPortao) { overlayPortao.remove(); overlayPortao = null; } portaoAberto = true; },
+        consentimentoDoPar, 'computador');
+}
+
+// O formulário do portão, por cima da ferramenta, já sem o passo do código.
+// `consentimentoDoPar`: a versão que o par aceitou. O desenho de partida é do
+// par — só sai se o par também tiver aceitado que os desenhos são recolhidos.
+function abrirInscricaoDoPar(grupo, importadoDe, aoCancelar, consentimentoDoPar, papel) {
+    if (overlayPortao) { overlayPortao.remove(); overlayPortao = null; }
+    var ov = construirPortao();
+    passoFormulario(ov.firstChild, grupo, { importadoDe: importadoDe, aoCancelar: aoCancelar,
+                                           consentimentoDoPar: consentimentoDoPar || '', papel: papel || '' });
+}
+
+// Fecha a sessão deste código sem desenhos: o que está no ecrã veio de um
+// ficheiro de outra pessoa, não foi desenhado aqui. (O que se desenhou antes de
+// importar já saiu, no início da importação.)
+function fecharSessaoSemDesenhos() {
+    if (!sessao) return;
+    if (sessao.desenhou) {
+        copiarEntradaParaSessao();
+        sessao.desenhos = [];
+        despacharSessao(sessao);
+    }
+    try { localStorage.removeItem(CHAVE_SESSAO); } catch (e) {}
+    sessao = null;
+}
+
+// A sessão do par fecha aqui, com o desenho de agora — a partir do próximo
+// gesto o trabalho já é da pessoa nova.
+function fecharSessaoDoPar() {
+    if (!sessao) return;
+    if (sessao.desenhou) {
+        copiarEntradaParaSessao();
+        if (podeRecolherDesenhos()) sessao.desenhos = linhasDeDesenho();
+        despacharSessao(sessao);
+    }
+    try { localStorage.removeItem(CHAVE_SESSAO); } catch (e) {}
+    sessao = null;
+}
+
+// Ao importar no portão um projecto com identidade: é da própria pessoa, ou
+// foi feito a dois? Em vez do OK/Cancelar, as duas respostas por extenso.
+function escolherDonoDoProjecto(e, continuar) {
+    var caixa = overlayPortao && overlayPortao.firstChild;
+    if (caixa && e.participante.membros && e.participante.membros.length) { escolherMembro(e, continuar, caixa); return; }
+    if (!caixa) { if (perguntar('This file belongs to participant ' + e.participante.id + '.\n\nContinue as that participant on this computer?')) continuar(); return; }
+    var id = e.participante.id;
+    // Um ficheiro guardado por quem JÁ se separou traz o código dessa pessoa,
+    // não o do par: quem era a outra metade liga-se ao par, nunca a ela.
+    var doPar = e.participante.importadoDe || '';
+    var codigoDoPar = doPar || id;
+    titulo(caixa, 'This project was saved by ' + id, doPar
+        ? id + ' already has their own code, separate from the pair ' + doPar + '.'
+        : 'Did you work on it alone, or with someone else?');
+
+    var b1 = botao('It is mine \u2014 continue as ' + id);
+    b1.addEventListener('click', continuar);
+    caixa.appendChild(b1);
+
+    var b2 = botao(doPar ? 'I was the other person in pair ' + doPar + ' \u2014 start as myself'
+                         : 'Start as myself \u2014 we worked in a pair');
+    b2.addEventListener('click', function () {
+        abrirInscricaoDoPar({ coorte: e.participante.coorte || '', material: e.participante.material || '' }, codigoDoPar,
+            function () { var c = overlayPortao && overlayPortao.firstChild; if (c) passoCodigo(c); },
+            // O consentimento do PAR: num ficheiro de quem já se separou, é o
+            // que essa pessoa trouxe do par; senão, o do próprio ficheiro.
+            doPar ? (e.participante.consentimentoDoPar || '') : (e.participante.versaoConsentimento || ''),
+            'colega');
+    });
+    caixa.appendChild(b2);
+
+    var voltar = document.createElement('a');
+    voltar.href = '#';
+    voltar.textContent = 'Back';
+    estilo(voltar, { 'display': 'block', 'text-align': 'center', 'margin': '14px 0 0',
+                     'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif',
+                     'color': '#888', 'text-decoration': 'underline', 'cursor': 'pointer' });
+    voltar.addEventListener('click', function (ev) { ev.preventDefault(); passoCodigo(caixa); });
+
+    var nota = document.createElement('div');
+    nota.textContent = 'If you shared a computer, each of you starts as yourself: you answer the questions for yourself, ' +
+                       'get your own code, and the drawings come with you.';
+    estilo(nota, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#888',
+                   'line-height': '1.5', 'margin': '12px 0 0' });
+    caixa.appendChild(nota);
+    caixa.appendChild(voltar);
 }
 
 // --- CONCLUSÃO -------------------------------------------------------------
 
-function concluirPortao(grupo, respostas) {
+function concluirPortao(grupo, respostas, par) {
+    // A versão do consentimento fica com o participante (e viaja no ficheiro do
+    // projecto): é ela que diz se os desenhos desta pessoa podem sair.
     participante = { id: novoIdParticipante(), coorte: grupo.coorte,
-                     material: grupo.material, quando: new Date().toISOString() };
+                     material: grupo.material, quando: new Date().toISOString(),
+                     versaoConsentimento: VERSAO_CONSENTIMENTO };
+    if (par && par.importadoDe) {
+        participante.importadoDe = par.importadoDe;
+        participante.consentimentoDoPar = par.consentimentoDoPar || '';
+        participante.papel = par.papel || '';
+    }
 
     var registo = {
         participante: participante.id,
@@ -8679,6 +9352,14 @@ function concluirPortao(grupo, respostas) {
         idioma: navigator.language || ''
     };
     for (var k in respostas) registo[k] = respostas[k];
+    // Quem se separa de um par fica ligado a ele como as pessoas de um par
+    // inscrito a dois: inscricao 'membro', o código do par e o papel.
+    if (participante.importadoDe) {
+        registo.inscricao = 'membro';
+        registo.par = participante.importadoDe;
+        registo.papel = participante.papel || '';
+        recomecarDaPessoa();
+    }
 
     enfileirarResposta(registo);   // guardar antes de enviar, sempre
     escoarFila();
@@ -8697,6 +9378,7 @@ function abrirPortao() {
 
 // Chamado no setup(). Quem já respondeu não volta a ser interrogado.
 function iniciarPortao() {
+    if (MODO_CONSULTA) { portaoAberto = true; mostrarAvisoDeConsulta(); return; }
     try {
         var guardado = JSON.parse(localStorage.getItem(CHAVE_PARTICIPANTE) || 'null');
         if (guardado && guardado.id) {
@@ -8846,6 +9528,12 @@ function realinharContagens() {
     baseSessao = copiaContagem(t.porModulo);
     ultimaLetra = copiaContagem(t.porLetra);
     baseLetra = copiaContagem(t.porLetra);
+    // Os desenhos NÃO se realinham: a diferença para o último envio sai no
+    // próximo, marcada como importação (ver DESENHOS). Assim a folha Desenhos
+    // continua a ter o que a ferramenta tem.
+    importacaoPendente = true;
+    origemImportacao = 'importacao';
+    codigoImportacao = '';
 }
 
 function guardarSessao() {
@@ -8853,7 +9541,7 @@ function guardarSessao() {
 }
 
 function iniciarSessao() {
-    if (!participante) return;
+    if (!participante || MODO_CONSULTA) return;
 
     // Sessão anterior que ficou por fechar: vai agora, com os últimos números
     // que chegaram a ser gravados.
@@ -8887,6 +9575,11 @@ function iniciarSessao() {
     ultimaContagem = copiaContagem(inicial.porModulo);
     baseLetra = copiaContagem(inicial.porLetra);
     ultimaLetra = copiaContagem(inicial.porLetra);
+    baseDesenho = fotografiaDosDesenhos();
+    ultimoEnvioDesenhos = Date.now();
+    importacaoPendente = false;
+    escolhaPendente = false;
+    aSair = false;
 
     sessao = {
         tipo: 'sessao',
@@ -8902,7 +9595,27 @@ function iniciarSessao() {
         fim: null, segundos: 0,
         desenhou: false, letras: 0, numeros: 0, cartaz: 0, cartazes: 0, modulos: 0
     };
+    // Quem acabou de se separar de um par: o desenho que trouxe sai já, todo,
+    // como ponto de partida (origem 'do-par'), para a folha Desenhos desta
+    // pessoa se ler sozinha. Sem número de sessão — ainda não desenhou nada.
+    var doPar = '';
+    try { doPar = localStorage.getItem(CHAVE_DESENHO_DO_PAR) || ''; } catch (e) {}
+    if (doPar && doPar === participante.id && participante.importadoDe) {
+        // Só se o par tinha aceitado a recolha dos desenhos (e esta pessoa
+        // também). Senão, parte daqui sem enviar o que era do par. A marca sai
+        // sempre: numa visita seguinte, o desenho já seria trabalho desta pessoa.
+        var parAceitou = String(participante.consentimentoDoPar || '') >= VERSAO_CONSENTIMENTO_DESENHOS;
+        if (parAceitou && podeRecolherDesenhos()) {
+            baseDesenho = {};
+            sessao.desenhos = linhasDeDesenho();
+            if (sessao.desenhos.length) enfileirarDesenhos(sessao, 'do-par', participante.importadoDe);
+        }
+        try { localStorage.removeItem(CHAVE_DESENHO_DO_PAR); } catch (e) {}
+        baseDesenho = fotografiaDosDesenhos();
+    }
+
     escoarFila();
+    if (podeRecolherDesenhos()) verificarAppsScript();   // cedo: uma sessão curta também tem de poder mandar os desenhos ao fechar
 }
 
 // Os ponteiros passam para a sessão também fora das mudanças de trabalho: um
@@ -8914,6 +9627,22 @@ function copiarEntradaParaSessao() {
     sessao.ptrToque = acoes.ptrToque;
     sessao.ptrCaneta = acoes.ptrCaneta;
     sessao.entrada = tipoDeEntrada(acoes);
+    // O mesmo para o que muda sem mudar o trabalho — exportar (o ficheiro que
+    // se guarda para o colega, por exemplo), pré-visualizar, desfazer, recusas,
+    // andar entre letras —: se for a última coisa antes de fechar, conta.
+    sessao.recusas = acoes.recusas;
+    sessao.recusasCartaz = acoes.recusasCartaz;
+    sessao.undos = acoes.undos;
+    sessao.preview = acoes.preview;
+    sessao.expLetra = acoes.expLetra;
+    sessao.expAlfabeto = acoes.expAlfabeto;
+    sessao.expZip = acoes.expZip;
+    sessao.expProjeto = acoes.expProjeto;
+    sessao.trocasDeModo = acoes.trocasDeModo;
+    sessao.trocasDeCaractere = acoes.trocasDeCaractere;
+    sessao.revisitas = acoes.revisitas;
+    sessao.trocasDeFormato = acoes.trocasDeFormato;
+    sessao.trocasDeOrientacao = acoes.trocasDeOrientacao;
 }
 
 // 'rato', 'toque' ou 'caneta' quando só se usou um; 'misto' quando mais de um.
@@ -9110,6 +9839,22 @@ function registarActividade() {
 
     sessao.linhas = linhasPorCaractere(t);
     sessao.modulosDetalhe = linhasPorModulo(t);
+    // A forma do que mudou (ver DESENHOS). Vai saindo a meio da sessão: de
+    // INTERVALO_DESENHOS em INTERVALO_DESENHOS, ou já, se o que está por enviar
+    // for grande (passados 20 s do último envio); e já, marcado, se foi um
+    // projecto importado.
+    if (podeRecolherDesenhos() && !escolhaPendente) {
+        if (importacaoPendente) {
+            importacaoPendente = false;
+            despacharDesenhos(origemImportacao, origemImportacao === 'importacao-alheia' ? codigoImportacao : '');
+        }
+        sessao.desenhos = linhasDeDesenho();
+        var porEnviar = sessao.desenhos.length ? JSON.stringify(sessao.desenhos).length : 0;
+        var desde = Date.now() - ultimoEnvioDesenhos;
+        if (porEnviar && (desde >= INTERVALO_DESENHOS || (porEnviar > BYTES_POR_PARTE && desde >= 20000))) {
+            despacharDesenhos();
+        }
+    }
     // Uma coluna por módulo: mod_00 … mod_21, na ordem dos ficheiros. São
     // inseridas por esta ordem de propósito — percorrer o objeto directamente
     // não servia, porque o JavaScript promove chaves como "10" a índices e
@@ -9193,7 +9938,7 @@ function despacharSessao(s) {
     var linhas = s.linhas || [];
     var detalhe = s.modulosDetalhe || [];
     var resumo = {};
-    for (var k in s) if (k !== 'linhas' && k !== 'modulosDetalhe') resumo[k] = s[k];
+    for (var k in s) if (k !== 'linhas' && k !== 'modulosDetalhe' && k !== 'desenhos' && k !== 'envioDesenhos') resumo[k] = s[k];
     enfileirarResposta(resumo);
     if (detalhe.length) {
         enfileirarResposta({
@@ -9217,12 +9962,205 @@ function despacharSessao(s) {
             linhas: linhas
         });
     }
+    enfileirarDesenhos(s);   // o que mudou desde o último envio a meio da sessão
+}
+
+// --- DESENHOS ---------------------------------------------------------------
+// A forma do que se constrói, para a folha Desenhos: cada peça de cada letra,
+// número e cartaz. Só de quem aceitou o consentimento que o diz (ver
+// VERSAO_CONSENTIMENTO_DESENHOS).
+//
+// Vai o que MUDOU: uma linha por tela cuja forma mudou desde o último envio.
+// Por ordem, as linhas dão a evolução; a última de cada tela é o desenho final.
+// Sai a meio da sessão — de INTERVALO_DESENHOS em INTERVALO_DESENHOS e quando
+// o separador sai de vista — e o resto no fim. Ao fechar o separador só o
+// sendBeacon sai, e o browser não deixa passar mais de uns 64 KB de uma vez:
+// deixar tudo para o fim punha em risco os desenhos da última oficina, que
+// não tem visita seguinte para os mandar.
+var INTERVALO_DESENHOS = 120000;   // ms entre envios a meio da sessão
+var PECAS_POR_LINHA = 2500;        // uma célula do Sheets leva até 50 000 caracteres
+// Os beacons do fecho partilham uns 64 KB com a sessão, as letras e os módulos:
+// as partes são pequenas, e um envio grande sai antes do intervalo (ver
+// registarActividade), enquanto a página ainda pode usar um fetch normal.
+var BYTES_POR_PARTE = 15000;
+var baseDesenho = {};              // a forma de cada tela no último envio
+var ultimoEnvioDesenhos = 0;
+// Depois de importar um projecto, o próximo envio leva a diferença marcada
+// como vinda do ficheiro (origem), para não passar por desenho da sessão.
+var importacaoPendente = false;
+var origemImportacao = 'importacao';
+var codigoImportacao = '';          // de quem era o ficheiro, numa importacao-alheia
+// Verdadeiro enquanto alguém escolhe quem é, depois de importar o projecto de
+// um par: os desenhos não saem (o ecrã tem o trabalho do par, não o deste código).
+var escolhaPendente = false;
+// Guarda o id de quem se separou de um par até o desenho de partida sair.
+var CHAVE_DESENHO_DO_PAR = 'pragmatipo-desenho-do-par';
+
+function podeRecolherDesenhos() {
+    return !!(participante && participante.versaoConsentimento &&
+              String(participante.versaoConsentimento) >= VERSAO_CONSENTIMENTO_DESENHOS);
+}
+
+function folhaDaTela(c) {
+    return eCartaz(c) ? formatoDoCartaz(c) : formatoDoAlfabeto();
+}
+
+// As peças de uma tela: [ficheiro do módulo, x, y, rotação], com x e y em
+// quadrículas a contar do canto superior esquerdo da folha dela. Ordenadas,
+// para a mesma forma dar sempre o mesmo texto: desfazer e refazer, ou mover e
+// voltar, mudam a ordem no array sem mudar o desenho.
+function pecasDaTela(c, f) {
+    var objs = (c === currentChar) ? placedObjects
+             : (storedCharacters[c] ? storedCharacters[c].objects : []);
+    if (!objs || !objs.length) return [];
+    var folha = dimensoesDaFolha(f.idx, f.landscape);
+    var x0 = GRID_CX - Math.floor(folha.w / 2);   // como o artOffsetX
+    var y0 = GRID_CY - Math.floor(folha.h / 2);
+    var p = objs.map(function (o) { return [o.type, o.x - x0, o.y - y0, ((o.rot % 4) + 4) % 4]; });
+    p.sort(function (a, b) { return (a[2] - b[2]) || (a[1] - b[1]) || (a[0] - b[0]) || (a[3] - b[3]); });
+    return p;
+}
+
+// O que identifica a forma de uma tela: a folha e as peças (a mesma letra
+// noutra folha fica noutro sítio dela). Vazia, não tem forma.
+function formaDaTela(f, pecas) {
+    return pecas.length ? f.idx + (f.landscape ? 'L' : 'P') + JSON.stringify(pecas) : '';
+}
+
+function fotografiaDosDesenhos() {
+    var foto = {};
+    var telas = listaDeTelas();
+    for (var i = 0; i < telas.length; i++) {
+        var f = folhaDaTela(telas[i]);
+        var forma = formaDaTela(f, pecasDaTela(telas[i], f));
+        if (forma) foto[telas[i]] = forma;
+    }
+    return foto;
+}
+
+// Uma linha por tela cuja forma mudou desde o último envio — as esvaziadas e
+// os cartazes apagados incluídos, com 0 peças. Uma tela enorme parte-se em
+// pedaços (pedaco 1 de pedacos), que se juntam por ordem.
+function linhasDeDesenho() {
+    var linhas = [];
+    var telas = listaDeTelas().slice();
+    var vistas = {};
+    for (var i = 0; i < telas.length; i++) vistas[telas[i]] = true;
+    for (var b in baseDesenho) if (!vistas[b]) telas.push(b);
+    for (var j = 0; j < telas.length; j++) {
+        var c = telas[j];
+        var f = folhaDaTela(c);
+        var pecas = pecasDaTela(c, f);
+        if (formaDaTela(f, pecas) === (baseDesenho[c] || '')) continue;
+        var pedacos = Math.max(1, Math.ceil(pecas.length / PECAS_POR_LINHA));
+        for (var k = 0; k < pedacos; k++) {
+            linhas.push({
+                caractere: c,
+                tipoCaractere: eCartaz(c) ? 'cartaz' : (c >= '0' && c <= '9') ? 'numero' : 'letra',
+                folha: 'F' + (f.idx + 1),
+                orientacao: f.landscape ? 'landscape' : 'portrait',
+                total: pecas.length,
+                pedaco: k + 1,
+                pedacos: pedacos,
+                desenho: JSON.stringify(pecas.slice(k * PECAS_POR_LINHA, (k + 1) * PECAS_POR_LINHA))
+            });
+        }
+    }
+    return linhas;
+}
+
+// Põe na fila as linhas de desenho que a sessão tiver por enviar, em partes
+// pequenas. Cada envio tem um lote com uma parte aleatória: duas cópias da
+// mesma sessão (dois separadores, ou o que ficou por fechar despachado por
+// outro) nunca dão a mesma chave, e um reenvio da fila leva a mesma. Tudo ou
+// nada: se a fila não gravar (localStorage cheio), nada avança e as mesmas
+// linhas tentam-se no envio seguinte.
+function enfileirarDesenhos(s, origem, importadoDe) {
+    var linhas = s.desenhos || [];
+    if (!linhas.length) return false;
+    var envio = (s.envioDesenhos || 0) + 1;
+    var lote = s.sessaoId + '#' + envio + '-' + novoIdParticipante().slice(1, 6);
+    var partes = [], atual = [], tamanho = 0;
+    for (var i = 0; i < linhas.length; i++) {
+        var t = JSON.stringify(linhas[i]).length + 1;
+        if (atual.length && tamanho + t > BYTES_POR_PARTE) { partes.push(atual); atual = []; tamanho = 0; }
+        atual.push(linhas[i]);
+        tamanho += t;
+    }
+    if (atual.length) partes.push(atual);
+    var registos = partes.map(function (parte, p) {
+        return {
+            tipo: 'desenhos',
+            sessaoId: s.sessaoId,
+            lote: lote,
+            parteId: lote + '.' + (p + 1),
+            envio: envio,
+            parte: p + 1,
+            partes: partes.length,
+            origem: origem || '',
+            importadoDe: importadoDe || '',
+            participante: s.participante,
+            coorte: s.coorte,
+            numero: s.numero,
+            versaoFerramenta: s.versaoFerramenta || '',
+            quando: s.fim || new Date().toISOString(),
+            linhas: parte
+        };
+    });
+    if (!enfileirarVarias(registos)) return false;
+    s.envioDesenhos = envio;
+    s.desenhos = [];
+    // A sessão que está aberta passa a comparar com o que acabou de sair.
+    if (s === sessao) {
+        baseDesenho = fotografiaDosDesenhos();
+        ultimoEnvioDesenhos = Date.now();
+    }
+    return true;
+}
+
+// Um envio a meio da sessão: o que mudou desde o anterior.
+function despacharDesenhos(origem, importadoDe) {
+    if (aSair || escolhaPendente || !sessao || !sessao.desenhou || !podeRecolherDesenhos()) return false;
+    sessao.desenhos = linhasDeDesenho();
+    if (!enfileirarDesenhos(sessao, origem, importadoDe)) return false;
+    guardarSessao();
+    escoarFila();
+    return true;
+}
+
+// Sair de vista (outro separador, minimizar, o iPad a bloquear) é a última
+// ocasião para um envio normal; ao fechar já só sobra o sendBeacon.
+document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') despacharDesenhos();
+});
+
+// Na consulta, uma nota fixa: o que se abre aqui não é de quem está a ver.
+function mostrarAvisoDeConsulta() {
+    var nota = document.createElement('div');
+    nota.textContent = 'Consultation mode — nothing is saved or sent';
+    estilo(nota, {
+        'position': 'fixed', 'left': '12px', 'bottom': '12px', 'z-index': '2147483000',
+        'background': 'rgba(30,30,30,0.85)', 'color': '#fff', 'padding': '6px 10px',
+        'border-radius': '6px', 'font': '400 12px Helvetica, Arial, sans-serif',
+        'pointer-events': 'none'
+    });
+    document.body.appendChild(nota);
 }
 
 // pagehide dispara onde o unload já não é de fiar (Safari, iOS, bfcache).
+// A sessão fecha no pagehide. Ao sair por um link ou ao recarregar, a
+// visibilitychange vem DEPOIS dele: sem esta marca, voltava a pôr na fila os
+// mesmos desenhos (com outra chave) e a ressuscitar a sessão fechada.
+var aSair = false;
+window.addEventListener('pageshow', function (ev) { if (ev.persisted) aSair = false; });
+
 window.addEventListener('pagehide', function () {
+    aSair = true;
     if (!sessao || !sessao.desenhou) return;
     copiarEntradaParaSessao();   // os toques depois da última mudança também contam
+    // O desenho de agora, não o do último tique (até um segundo mais velho).
+    if (podeRecolherDesenhos() && !escolhaPendente) sessao.desenhos = linhasDeDesenho();
+    else if (escolhaPendente) sessao.desenhos = [];
 
     // Grava primeiro na fila — localStorage é síncrono e sobrevive ao fecho.
     // Só depois se tenta entregar. Se a entrega falhar, fica para a visita
@@ -9232,19 +10170,25 @@ window.addEventListener('pagehide', function () {
 
     if (!ENDPOINT_RESPOSTAS) return;
 
-    // O fetch não sobrevive ao unload; o sendBeacon foi feito para isto.
+    // O fetch não sobrevive ao unload; o sendBeacon foi feito para isto. Os
+    // beacons de uma página partilham uns 64 KB: primeiro a sessão, as letras e
+    // os módulos, só depois os desenhos (e só se o Apps Script os conhecer).
+    //
+    // A fila NÃO se esvazia aqui: um beacon aceite pelo browser não quer dizer
+    // que a folha o escreveu (numa oficina, com toda a gente a sair ao mesmo
+    // tempo, o Apps Script pode desistir). Na visita seguinte vai tudo outra
+    // vez, e o Apps Script responde "duplicado" ao que já tinha — a mesma
+    // regra do resto da fila.
     var fila = [];
     try { fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]'); } catch (e) { return; }
-    var porEnviar = [];
-    for (var i = 0; i < fila.length; i++) {
-        var entregue = false;
+    var ordem = fila.filter(function (r) { return !r || r.tipo !== 'desenhos'; })
+                    .concat(fila.filter(function (r) { return r && r.tipo === 'desenhos' && podeSair(r); }));
+    for (var i = 0; i < ordem.length; i++) {
         try {
-            var corpo = new Blob([JSON.stringify(fila[i])], { type: 'text/plain;charset=utf-8' });
-            entregue = navigator.sendBeacon(ENDPOINT_RESPOSTAS, corpo);
-        } catch (e) { entregue = false; }
-        if (!entregue) porEnviar.push(fila[i]);   // demasiado grande, ou recusado
+            var corpo = new Blob([JSON.stringify(ordem[i])], { type: 'text/plain;charset=utf-8' });
+            navigator.sendBeacon(ENDPOINT_RESPOSTAS, corpo);
+        } catch (e) { }
     }
-    try { localStorage.setItem(CHAVE_POR_ENVIAR, JSON.stringify(porEnviar)); } catch (e) {}
 });
 
 // ===========================================================================
@@ -9367,7 +10311,7 @@ function mostrarAvaliacao(aoSair) {
                  'height': '100%', 'z-index': '2147483000',
                  'background': 'rgba(0,0,0,0.55)', 'display': 'flex',
                  'align-items': 'center', 'justify-content': 'center',
-                 'overflow': 'auto', 'padding': '24px' });
+                 'overflow': 'auto', 'padding': '24px', 'box-sizing': 'border-box' });
 
     var caixa = document.createElement('div');
     estilo(caixa, { 'width': '100%', 'max-width': '480px', 'background': '#fff',
@@ -9381,44 +10325,31 @@ function mostrarAvaliacao(aoSair) {
     // Contada a partir da lista: acrescentar perguntas não deixa a legenda a mentir.
     var numeros = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six'];
     var quantas = numeros[PERGUNTAS_SAIDA.length] || 'A few';
-    titulo(caixa, 'How did it go?',
-           quantas + ' quick questions — they help the research more than you think');
 
-    var respostas = {};
-    PERGUNTAS_SAIDA.forEach(function (p) {
-        if (p.tipo === 'escala') {
-            escalaDeCinco(caixa, p, function (v) { respostas[p.id] = v; });
-        } else {
-            var lbl = document.createElement('div');
-            lbl.textContent = p.label;
-            estilo(lbl, { 'font': '700 11px \'Marist Variable\', Helvetica, Arial, sans-serif',
-                          'color': '#555', 'margin': '0 0 8px' });
-            caixa.appendChild(lbl);
-            var ta = document.createElement('textarea');
-            ta.rows = 3;
-            estilo(ta, campoBase());
-            estilo(ta, { 'resize': 'vertical', 'margin': '0 0 4px',
-                         'font': '400 13px \'Marist Variable\', Helvetica, Arial, sans-serif' });
-            caixa.appendChild(ta);
-            respostas['_campo_' + p.id] = ta;
-        }
-    });
+    // Num par a trabalhar no mesmo computador, cada pessoa responde à vez e
+    // sem ver a resposta da outra: primeiro quem é dono do computador, depois,
+    // num formulário novo, o colega. Lado a lado, uma podia responder pelas
+    // duas, ou a primeira resposta condicionar a segunda. Cada resposta fica com
+    // o código da pessoa; quando depois cada uma continuar sozinha, a pergunta
+    // volta — e as duas comparam-se.
+    var emPar = !!(participante && participante.membros && !participante.importadoDe);
+    var ordem = emPar ? participante.membros.slice().sort(function (a, b) {
+        return (a.papel === 'computador' ? 0 : 1) - (b.papel === 'computador' ? 0 : 1);
+    }) : [null];
 
-    var b = botao('Send');
-    caixa.appendChild(b);
-
-    var depois = document.createElement('div');
-    depois.textContent = 'Not now';
-    estilo(depois, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#999',
-                     'text-align': 'center', 'margin': '14px 0 0', 'cursor': 'pointer' });
-    caixa.appendChild(depois);
-
-    b.addEventListener('click', function () {
+    // `contexto`: 'par' (respondida no computador do par) ou 'sozinho'. A chave
+    // avaliacaoId deixa a mesma pessoa ter as duas.
+    function registoDe(membro, respostas) {
+        var id = membro ? membro.id : (participante ? participante.id : null);
+        var contexto = membro ? 'par' : 'sozinho';
         var registo = {
             tipo: 'avaliacao',
             versaoFerramenta: VERSAO_FERRAMENTA,
-            participante: participante ? participante.id : null,
+            participante: id,
             coorte: participante ? participante.coorte : null,
+            contexto: contexto,
+            avaliacaoId: id + '#' + contexto,
+            par: membro ? participante.id : (participante && participante.importadoDe) || '',
             sessao: sessao ? sessao.numero : null,
             quando: new Date().toISOString(),
             minutos: sessao ? Math.round((Date.now() - Date.parse(sessao.inicio)) / 60000) : null,
@@ -9433,14 +10364,73 @@ function mostrarAvaliacao(aoSair) {
                 ? (respostas[p.id] || '')
                 : (respostas['_campo_' + p.id].value || '').trim();
         });
-        enfileirarResposta(registo);
-        escoarFila();
-        try { localStorage.setItem(CHAVE_AVALIACAO, '1'); } catch (e) {}
-        mostrarAgradecimento(caixa);
-    });
+        return registo;
+    }
 
-    // Adiar não é recusar: volta a aparecer numa sessão seguinte.
-    depois.addEventListener('click', fecharAvaliacao);
+    // As perguntas de UMA pessoa, num formulário novo.
+    function passo(i) {
+        var membro = ordem[i];
+        titulo(caixa, 'How did it go?', !emPar
+            ? quantas + ' quick questions \u2014 they help the research more than you think'
+            : (i === 0 ? 'First, the person whose computer this is \u2014 ' + quantas.toLowerCase() + ' quick questions'
+                       : 'Now your partner, on your own \u2014 ' + quantas.toLowerCase() + ' quick questions'));
+
+        var respostas = {};
+        PERGUNTAS_SAIDA.forEach(function (p) {
+            if (p.tipo === 'escala') {
+                escalaDeCinco(caixa, p, function (v) { respostas[p.id] = v; });
+            } else {
+                var lbl = document.createElement('div');
+                lbl.textContent = p.label;
+                estilo(lbl, { 'font': '700 11px \'Marist Variable\', Helvetica, Arial, sans-serif',
+                              'color': '#555', 'margin': '0 0 8px' });
+                caixa.appendChild(lbl);
+                var ta = document.createElement('textarea');
+                ta.rows = 3;
+                estilo(ta, campoBase());
+                estilo(ta, { 'resize': 'vertical', 'margin': '0 0 4px',
+                             'font': '400 13px \'Marist Variable\', Helvetica, Arial, sans-serif' });
+                caixa.appendChild(ta);
+                respostas['_campo_' + p.id] = ta;
+            }
+        });
+
+        var b = botao('Send');
+        caixa.appendChild(b);
+
+        // Adiar não é recusar: sem resposta nenhuma, volta noutra sessão. O
+        // colega pode saltar a dele — a primeira já ficou.
+        var depois = document.createElement('div');
+        depois.textContent = i === 0 ? 'Not now' : 'Skip';
+        estilo(depois, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#999',
+                         'text-align': 'center', 'margin': '14px 0 0', 'cursor': 'pointer' });
+        caixa.appendChild(depois);
+
+        b.addEventListener('click', function () {
+            enfileirarResposta(registoDe(membro, respostas));
+            escoarFila();
+            if (i === 0) { try { localStorage.setItem(CHAVE_AVALIACAO, '1'); } catch (e) {} }
+            if (i + 1 < ordem.length) passarAoColega(i + 1);
+            else mostrarAgradecimento(caixa);
+        });
+        depois.addEventListener('click', i === 0 ? fecharAvaliacao : function () { mostrarAgradecimento(caixa); });
+    }
+
+    // Entre as duas: o computador passa de mão, e a resposta anterior já não
+    // está à vista.
+    function passarAoColega(i) {
+        titulo(caixa, 'Thank you', 'Now pass the computer to your partner');
+        var nota = document.createElement('div');
+        nota.textContent = 'Your partner answers the same questions on their own. The answers you just gave are not shown.';
+        estilo(nota, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
+                       'line-height': '1.55', 'margin': '0 0 6px' });
+        caixa.appendChild(nota);
+        var comecar = botao('I am the partner \u2014 start');
+        comecar.addEventListener('click', function () { passo(i); });
+        caixa.appendChild(comecar);
+    }
+
+    passo(0);
 }
 
 function fecharAvaliacao() {
@@ -9453,12 +10443,14 @@ function fecharAvaliacao() {
 // código dele — e é o código que lhe permite pedir a eliminação dos dados
 // mais tarde, por isso não se mostra em passagem nem se fecha sozinho.
 function mostrarAgradecimento(caixa) {
+    estilo(caixa, { 'max-width': '480px' });
     titulo(caixa, 'Thank you', 'That is more useful to the research than it looks');
 
     var p = document.createElement('div');
-    p.textContent = 'Your answers go into a doctoral study on modular letterpress ' +
-                    'type systems. Nothing you drew has been sent anywhere — only ' +
-                    'the answers and a count of what you made.';
+    p.textContent = 'Your answers go into a doctoral study on modular letterpress type systems. ' +
+                    (podeRecolherDesenhos()
+                        ? 'What you built — your letters, numbers and posters — is kept with them under the code below, and is only ever shown anonymously.'
+                        : 'Nothing you drew has been sent anywhere — only the answers and a count of what you made.');
     estilo(p, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
                 'line-height': '1.55', 'margin': '0 0 22px' });
     caixa.appendChild(p);
@@ -9470,7 +10462,12 @@ function mostrarAgradecimento(caixa) {
     caixa.appendChild(rotulo);
 
     var codigo = document.createElement('div');
-    codigo.textContent = participante ? participante.id : '—';
+    // Num par, o código para pedir que apaguem os dados é o de cada pessoa.
+    var ehPar = participante && participante.membros && !participante.importadoDe;
+    if (ehPar) rotulo.textContent = 'Your anonymous codes (one each)';
+    codigo.textContent = !participante ? '—'
+        : ehPar ? participante.membros.map(function (m) { return m.id; }).join('  \u00b7  ')
+        : participante.id;
     estilo(codigo, { 'font': '700 20px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#0a0',
                      'letter-spacing': '1px', 'text-align': 'center',
                      'background': '#f2fff2', 'border': '0.75px solid #0a0',
