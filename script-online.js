@@ -8917,7 +8917,8 @@ function passoFormulario(caixa, grupo, par) {
         caixa.appendChild(pergunta);
         caixa.appendChild(segmentado(['Alone', 'In a pair'], 0, function (i) { mudarModo(i === 1); }));
         notaDoPar = document.createElement('div');
-        notaDoPar.textContent = 'Two people, one computer: each of you answers for yourself and gets your own code. ' +
+        notaDoPar.textContent = 'Two people, one computer: each of you answers for yourself, one at a time \u2014 ' +
+            'first the person whose computer this is, then the other \u2014 and gets your own code. ' +
             'What you make here together is kept under a shared pair code; afterwards each of you can continue alone ' +
             '\u2014 one on this computer, the other by importing the project file on their own.';
         estilo(notaDoPar, { 'display': 'none', 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#0a0',
@@ -8926,23 +8927,18 @@ function passoFormulario(caixa, grupo, par) {
         caixa.appendChild(notaDoPar);
     }
 
-    var colunas = document.createElement('div');
-    estilo(colunas, { 'display': 'flex', 'flex-wrap': 'wrap', 'gap': '0 32px', 'align-items': 'flex-start' });
-    caixa.appendChild(colunas);
+    // Uma pessoa de cada vez: num par, primeiro quem é dono do computador; ao
+    // carregar em Next, o computador passa para o colega, que responde num
+    // formulário novo, sem ver as respostas anteriores (ver passoDoColega).
+    // Lado a lado, uma pessoa podia responder pelas duas.
     var colA = colunaDoQuestionario('');
-    colunas.appendChild(colA.el);
-    var colB = null;
+    caixa.appendChild(colA.el);
 
     function mudarModo(dois) {
         emPar = dois;
-        colA.rotular(dois ? 'You \u2014 on this computer' : '');
-        if (dois && !colB) {
-            colB = colunaDoQuestionario('Your partner \u2014 continues on their own computer');
-            colunas.appendChild(colB.el);
-        }
-        if (colB) estilo(colB.el, { 'display': dois ? 'block' : 'none' });
-        estilo(caixa, { 'max-width': dois ? '940px' : '520px' });
+        colA.rotular(dois ? 'You \u2014 this computer is yours' : '');
         estilo(notaDoPar, { 'display': dois ? 'block' : 'none' });
+        b.textContent = dois ? 'Next \u2014 your partner' : 'Start drawing';
         if (msg) { msg.remove(); msg = null; }
     }
 
@@ -8952,20 +8948,16 @@ function passoFormulario(caixa, grupo, par) {
 
     b.addEventListener('click', function () {
         var a = colA.ler();
-        var bb = emPar ? colB.ler() : null;
-        var partes = [];
-        if (a.faltam.length) partes.push((emPar ? 'you: ' : '') + a.faltam.join(', '));
-        if (bb && bb.faltam.length) partes.push('your partner: ' + bb.faltam.join(', '));
-        if (partes.length) {
+        if (a.faltam.length) {
             if (msg) msg.remove();
-            msg = erro(caixa, (emPar ? 'Still missing \u2014 ' : 'Still missing: ') + partes.join('; '));
+            msg = erro(caixa, 'Still missing: ' + a.faltam.join(', '));
             caixa.insertBefore(msg, b);   // junto ao botão, e à vista
             if (msg.scrollIntoView) msg.scrollIntoView({ block: 'nearest' });
             return;
         }
+        if (emPar) { passoDoColega(caixa, grupo, a.respostas); return; }
         if (par) fecharSessaoDoPar();
-        if (emPar) concluirPortaoPar(grupo, a.respostas, bb.respostas);
-        else concluirPortao(grupo, a.respostas, par);
+        concluirPortao(grupo, a.respostas, par);
     });
 
     if (par && par.aoCancelar) {
@@ -8978,6 +8970,45 @@ function passoFormulario(caixa, grupo, par) {
         cancelar.addEventListener('click', function (ev) { ev.preventDefault(); par.aoCancelar(); });
         caixa.appendChild(cancelar);
     }
+}
+
+// Num par: o computador passa para o colega, que lê o texto do consentimento e
+// responde por si, num formulário novo. Só no fim é que a inscrição dos dois
+// fica feita — desistir a meio não grava nada.
+function passoDoColega(caixa, grupo, respostasA) {
+    titulo(caixa, 'Thank you', 'Now pass the computer to your partner');
+    var nota = document.createElement('div');
+    nota.textContent = 'Your partner answers the same questions on their own. The answers you just gave are not shown.';
+    estilo(nota, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
+                   'line-height': '1.55', 'margin': '0 0 6px' });
+    caixa.appendChild(nota);
+    var comecar = botao('I am the partner \u2014 start');
+    caixa.appendChild(comecar);
+    comecar.addEventListener('click', function () {
+        titulo(caixa, 'Before you start', 'Your turn \u2014 answer for yourself');
+        var intro = document.createElement('div');
+        intro.textContent = TEXTO_RGPD;
+        estilo(intro, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
+                        'line-height': '1.55', 'margin': '0 0 22px' });
+        caixa.appendChild(intro);
+        var colB = colunaDoQuestionario('You \u2014 this computer isn\'t yours');
+        caixa.appendChild(colB.el);
+        var msg = null;
+        var b = botao('Start drawing');
+        caixa.appendChild(b);
+        b.addEventListener('click', function () {
+            var r = colB.ler();
+            if (r.faltam.length) {
+                if (msg) msg.remove();
+                msg = erro(caixa, 'Still missing: ' + r.faltam.join(', '));
+                caixa.insertBefore(msg, b);
+                if (msg.scrollIntoView) msg.scrollIntoView({ block: 'nearest' });
+                return;
+            }
+            concluirPortaoPar(grupo, respostasA, r.respostas);
+        });
+        if (caixa.scrollTo) caixa.scrollTo(0, 0);
+    });
 }
 
 // As perguntas e os consentimentos de UMA pessoa. Devolve o elemento e um
@@ -9183,7 +9214,7 @@ function continuarSozinho() {
 
 // Quem é, de um par inscrito a dois — ao importar o projecto dele, ou no
 // "Continue alone" do manual. Os botões dizem de quem era o computador (o dono
-// é quem se inscreveu na coluna da esquerda). `opcoes`: { titulo, sub,
+// é quem respondeu primeiro na inscrição). `opcoes`: { titulo, sub,
 // semJuntos, antes, aoVoltar, meu, naoMeu }.
 function escolherMembro(e, continuar, caixa, opcoes) {
     opcoes = opcoes || {};
