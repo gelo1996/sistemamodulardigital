@@ -12,9 +12,7 @@ var BASE_PATH = IS_LOCAL
 var showShortcutsModal = false;
 var suppressDrawUntilRelease = false; // impede que o clique que fecha o modal desenhe no artboard
 var btnAtalhos = { x: 0, y: 0, w: 100, h: 30 };
-var btnLetterpress = { x: 0, y: 0, w: 100, h: 30 };
-var btnStencil = { x: 0, y: 0, w: 100, h: 30 };
-var btnFlip = { x: 0, y: 0, w: 30, h: 30 }; // <-- ADICIONAR AQUI
+var btnFlip = { x: 0, y: 0, w: 30, h: 30 }; // na barra de cima, a seguir à rotação
 var btnHome = { x: 0, y: 0, w: 30, h: 30 }; // Voltar a pragmatipo.pt
 var btnRodarEsq = { x: 0, y: 0, w: 26, h: 34 }; // seta anti-horária
 var btnRodarDir = { x: 0, y: 0, w: 26, h: 34 }; // seta horária
@@ -224,8 +222,6 @@ function preload() {
     toolIcons.exportarLetra = loadImage(BASE_PATH + 'exportar-letra.svg');
     toolIcons.exportarAlfabeto = loadImage(BASE_PATH + 'exportar-alfabeto.svg');
     toolIcons.exportarZip = loadImage(BASE_PATH + 'exportar-zip.svg');
-
-    toolIcons.atalhos = loadImage(BASE_PATH + 'atalhos.svg');
 
     toolIcons.rodarEsq = loadImage(BASE_PATH + 'arrow-counter-clockwise.svg');
     toolIcons.rodarDir = loadImage(BASE_PATH + 'arrow-clockwise.svg');
@@ -509,7 +505,13 @@ function createBlueVersion(img, texto) { return versaoColorida(img, texto, [0, 2
 function versaoColorida(img, texto, cor) {
     var w = img.width > 10 ? img.width : 100;
     var h = img.height > 10 ? img.height : 100;
-    var pg = createGraphics(w, h);
+    // A imagem do módulo já tem os píxeis do ecrã que o zoom pede; com a
+    // densidade do ecrã por cima, o realce ocupava quatro vezes mais memória
+    // num ecrã Retina sem se ver mais nítido. Nasce com 1×1 para a densidade
+    // baixar antes de a tela ter o tamanho a sério.
+    var pg = createGraphics(1, 1);
+    pg.pixelDensity(1);
+    pg.resizeCanvas(w, h);
     pg.image(img, 0, 0, w, h);
     pg.drawingContext.globalCompositeOperation = 'source-in';
     pg.background(cor[0], cor[1], cor[2]);
@@ -574,20 +576,46 @@ function pintarSVGNaTela(pg, texto) {
 // com 2/3 do tamanho, encostado ao canto da célula e desalinhado da grelha,
 // o de 2×1 com 1/3, e as curvas grandes vazias. Aqui cada um é pintado de
 // novo a partir do texto do SVG, com a largura e a altura escritas nele, o
-// que dá o mesmo em todos os browsers — no Chrome, a mesma imagem de antes.
-// Fica a medida que o browser deu (não pesa mais na memória), só com a
-// proporção do viewBox garantida. Nenhum ficheiro da pasta data muda.
+// que dá o mesmo em todos os browsers. Nenhum ficheiro da pasta data muda.
+//
+// A medida que o browser dá é sempre a mesma, 150 px, seja o módulo de 2×2 ou
+// de 12×12 quadrículas: o 13 (o ficheiro 11) ficava com 12 px por quadrícula
+// e, desenhado com 30 ou 60, pixelizado. Por isso cada módulo é pintado com
+// tantos píxeis por quadrícula quantos o zoom pede (tileSize × densidade do
+// ecrã), em degraus, e volta a ser pintado quando o zoom muda de degrau. O
+// degrau mais alto fica um pouco abaixo do zoom máximo num ecrã Retina
+// (60 × 2): a diferença não se vê, e mais do que isso pesava na memória do iPad.
+var RESOLUCOES_MODULO = [32, 48, 64, 96];   // píxeis do ecrã por quadrícula
+var UNIDADES_POR_QUADRICULA = 50;           // nos viewBox dos SVG de data/
+
+function resolucaoParaOZoom() {
+    // A faixa da palavra desenha os módulos maiores do que a tela, quando o
+    // zoom está baixo (até 26 px por quadrícula).
+    var porQuadricula = showWordPreview ? Math.max(tileSize, 26 * globalScale) : tileSize;
+    var precisa = porQuadricula * pixelDensity();
+    for (var i = 0; i < RESOLUCOES_MODULO.length; i++) {
+        if (RESOLUCOES_MODULO[i] >= precisa) return RESOLUCOES_MODULO[i];
+    }
+    return RESOLUCOES_MODULO[RESOLUCOES_MODULO.length - 1];
+}
+
 function viewBoxDoSVG(texto) {
     var m = texto.match(/viewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/);
     return m ? { w: parseFloat(m[1]), h: parseFloat(m[2]) } : null;
 }
 
-function repintarSVG(pImg, texto, depois) {
+// `porQuadricula` (opcional): os píxeis por quadrícula dos módulos. Sem ele
+// (o ícone), fica a medida que o browser deu, com a proporção do viewBox.
+function repintarSVG(pImg, texto, depois, porQuadricula) {
     if (!pImg || !pImg.canvas || !texto) return false;
     var vb = viewBoxDoSVG(texto);
     if (!vb || !(vb.w > 0 && vb.h > 0)) return false;
     var w = pImg.width, h = pImg.height;
-    if (!(w > 1 && h > 1)) { w = vb.w; h = vb.h; }
+    if (porQuadricula) {
+        w = Math.max(1, Math.round(vb.w / UNIDADES_POR_QUADRICULA * porQuadricula));
+        h = Math.max(1, Math.round(vb.h / UNIDADES_POR_QUADRICULA * porQuadricula));
+    }
+    else if (!(w > 1 && h > 1)) { w = vb.w; h = vb.h; }
     else if (Math.abs(w / h - vb.w / vb.h) > 0.01) w = Math.max(1, Math.round(h * vb.w / vb.h));
     // Só a raiz <svg> leva o tamanho; o resto do desenho fica igual.
     var comTamanho = texto.replace(/<svg\b([^>]*)>/, function (tag, atributos) {
@@ -601,6 +629,9 @@ function repintarSVG(pImg, texto, depois) {
         pImg.height = pImg.canvas.height = h;
         pImg.drawingContext.drawImage(im, 0, 0, w, h);
         pImg.modified = true;
+        // A cópia que o p5 guarda para o tint() ficava com o tamanho antigo,
+        // às vezes o de alta resolução; ele faz outra quando precisar.
+        if (pImg.tintCanvas) { pImg.tintCanvas.width = 0; pImg.tintCanvas.height = 0; pImg.tintCanvas = null; }
         URL.revokeObjectURL(url);
         if (depois) depois(true);
     };
@@ -609,19 +640,31 @@ function repintarSVG(pImg, texto, depois) {
     return true;
 }
 
-function repintarSVGsSemTamanho() {
-    var conjuntos = [
-        { imgs: modulesFill, textos: moduleSVGStringsFill, vermelhos: redModulesFill, azuis: blueModulesFill },
-        { imgs: modulesDotted, textos: moduleSVGStringsDotted, vermelhos: redModulesDotted, azuis: blueModulesDotted }
-    ];
+// Com que degrau está pintado cada conjunto, e se está a ser pintado agora.
+var resolucaoPintada = { fill: 0, dot: 0 };
+var aPintar = { fill: false, dot: false };
+var zoomVisto = 0, zoomMudouEm = 0;
+
+function conjuntoDeModulos(nome) {
+    return nome === 'dot'
+        ? { imgs: modulesDotted, textos: moduleSVGStringsDotted, vermelhos: redModulesDotted, azuis: blueModulesDotted }
+        : { imgs: modulesFill, textos: moduleSVGStringsFill, vermelhos: redModulesFill, azuis: blueModulesFill };
+}
+
+function pintarConjunto(nome, porQuadricula, depois) {
+    var c = conjuntoDeModulos(nome);
+    aPintar[nome] = true;
+    resolucaoPintada[nome] = porQuadricula;
     var pendentes = 0;
-    function acabou() { if (--pendentes === 0) miniaturasDeOutroProjecto(); }
-    conjuntos.forEach(function (c) {
-        for (var i = 0; i < c.imgs.length; i++) (function (i) {
-            var linhas = c.textos[i];
-            var texto = (linhas && linhas.join) ? linhas.join('\n') : '';
-            pendentes++;
-            var ok = repintarSVG(c.imgs[i], texto, function (pintou) {
+    function acabou() { if (--pendentes === 0) { aPintar[nome] = false; if (depois) depois(); } }
+    for (var i = 0; i < c.imgs.length; i++) (function (i) {
+        var linhas = c.textos[i];
+        var texto = (linhas && linhas.join) ? linhas.join('\n') : '';
+        pendentes++;
+        var ok = repintarSVG(c.imgs[i], texto, function (pintou) {
+            // Com o finally, um realce que falhe não deixa o conjunto preso
+            // a «a pintar» até se recarregar a página.
+            try {
                 if (pintou) {
                     // Os fantasmas vermelho e azul saem desta imagem: refazem-se.
                     var r = c.vermelhos[i], a = c.azuis[i];
@@ -630,11 +673,45 @@ function repintarSVGsSemTamanho() {
                     if (r) libertarGraphics(r);
                     if (a) libertarGraphics(a);
                 }
+            } finally {
                 acabou();
-            });
-            if (!ok) pendentes--;
-        })(i);
+            }
+        }, porQuadricula);
+        if (!ok) pendentes--;
+    })(i);
+    if (pendentes === 0) { aPintar[nome] = false; if (depois) depois(); }
+}
+
+// Cada conjunto segue o zoom enquanto está a ser usado. O Fill segue-o também
+// no estilo Dot quando há letra de referência, que se desenha com ele. Fora
+// disso desce ao degrau mais baixo, para não ficarem dois conjuntos inteiros
+// em alta resolução sem necessidade.
+function resolucaoDesejada(nome) {
+    var emUso = (nome === 'dot') ? modules === modulesDotted : modules === modulesFill;
+    if (emUso || (nome === 'fill' && letraReferencia)) return resolucaoParaOZoom();
+    return RESOLUCOES_MODULO[0];
+}
+
+// Corre a cada frame. Só volta a pintar quando o zoom está parado há 300 ms:
+// a meio de um gesto de dois dedos ou de um arrasto do slider passava por
+// todos os degraus. Trocar de estilo, ligar a referência ou abrir a faixa da
+// palavra não mexem no zoom, e pintam logo.
+function acompanharResolucaoDosModulos() {
+    if (!resolucaoPintada.fill) return;   // antes da primeira pintura, nada
+    if (tileSize !== zoomVisto) { zoomVisto = tileSize; zoomMudouEm = Date.now(); return; }
+    if (isDraggingSlider || toque.gesto || Date.now() - zoomMudouEm < 300) return;
+    ['fill', 'dot'].forEach(function (n) {
+        var r = resolucaoDesejada(n);
+        if (!aPintar[n] && resolucaoPintada[n] !== r) pintarConjunto(n, r);
     });
+}
+
+function repintarSVGsSemTamanho() {
+    var r = resolucaoParaOZoom();
+    var faltam = 2;
+    function acabou() { if (--faltam === 0) miniaturasDeOutroProjecto(); }
+    pintarConjunto('fill', r, acabou);
+    pintarConjunto('dot', r, acabou);
     // O único ícone da barra sem tamanho no ficheiro.
     var icone = toolIcons.exportarAlfabeto;
     if (icone && window.fetch) {
@@ -669,7 +746,7 @@ function calculateLayout() {
     var tBoxSize = 34 * globalScale;
     var toolGapX = 45 * globalScale;
     var toolStartX = 30 * globalScale;
-    var ty = 35 * globalScale;
+    var ty = LINHA_FERRAMENTAS * globalScale;
 
     // Matemática base do nosso Novo Slider JS
     var sliderBoxW = (4 * toolGapX) + tBoxSize;
@@ -779,6 +856,7 @@ function draw() {
 
     verificarAutosave();
     verificarAvaliacao();
+    acompanharResolucaoDosModulos();
     desenharAvisoRecuperado();
 }
 
@@ -980,7 +1058,7 @@ function mousePressed(evento) {
 
         if (mouseY < topBarHeight) {
             // Detetar Clique no Novo Slider JS
-            if (mouseX > uiSlider.x - 15 && mouseX < uiSlider.x + uiSlider.w + 15 && mouseY > uiSlider.y - 15 && mouseY < uiSlider.y + 15) {
+            if (mouseX > uiSlider.x - 15 && mouseX < uiSlider.x + uiSlider.w + 15 && mouseY > uiSlider.y - 17 * globalScale && mouseY < uiSlider.y + 17 * globalScale) {
                 isDraggingSlider = true;
                 updateSliderFromMouse();
                 return;
@@ -988,24 +1066,16 @@ function mousePressed(evento) {
             checkTopBarClick();
         }
         else if (mouseX < sidebarWidth) {
-            if (mouseX > btnLetterpress.x - btnLetterpress.w / 2 && mouseX < btnLetterpress.x + btnLetterpress.w / 2 && mouseY > btnLetterpress.y - btnLetterpress.h / 2 && mouseY < btnLetterpress.y + btnLetterpress.h / 2) {
-                definirModo(false);
-                return;
-            }
-            if (mouseX > btnStencil.x - btnStencil.w / 2 && mouseX < btnStencil.x + btnStencil.w / 2 && mouseY > btnStencil.y - btnStencil.h / 2 && mouseY < btnStencil.y + btnStencil.h / 2) {
-                definirModo(true);
-                return;
-            }
             if (mouseX > btnAtalhos.x - btnAtalhos.w / 2 && mouseX < btnAtalhos.x + btnAtalhos.w / 2 && mouseY > btnAtalhos.y - btnAtalhos.h / 2 && mouseY < btnAtalhos.y + btnAtalhos.h / 2) {
                 abrirManual();
                 return;
             }
-            if (!isOverlapMode && mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2) {
-                flipCompositionHorizontal();
-                return;
-            }
             if (mouseX > btnHome.x - btnHome.w / 2 && mouseX < btnHome.x + btnHome.w / 2 && mouseY > btnHome.y - btnHome.h / 2 && mouseY < btnHome.y + btnHome.h / 2) {
-                goToSite();
+                // No toque só ao levantar, e sem arrasto: o botão ocupa a largura
+                // da barra, encostado ao fundo, e um dedo a rolar a lista ou um
+                // gesto vindo de baixo fechava a sessão sem querer.
+                if (toque.ativo) toque.sair = true;
+                else goToSite();
                 return;
             }
             var sm = getSeletorModo();
@@ -3581,8 +3651,18 @@ function initAllCharacters() {
     }
 }
 
-// Cabeçalho da barra lateral, onde vive o controlo de modo. Fica fora da zona
-// com scroll, para não subir com o alfabeto.
+// As três linhas da barra de cima, de cima para baixo: modos de trabalho,
+// ferramentas e módulos (o centro de cada uma, à escala 1). Num sítio só, para
+// o desenho e os cliques nunca divergirem.
+var LINHA_MODOS = 35, LINHA_FERRAMENTAS = 80, LINHA_MODULOS = 125;
+
+// Rodapé da barra lateral: dois botões de texto, um sobre o outro — Guide (o
+// manual) e pragmatipo.pt (o regresso ao site). Os modos e o Flip passaram
+// para a barra de cima.
+var ALTURA_RODAPE_LATERAL = 96;
+
+// Cabeçalho da barra lateral, onde vive o controlo Alphabet/Poster. Fica fora
+// da zona com scroll, para não subir com o alfabeto.
 var ALTURA_CABECALHO_MODO = 50;
 function getSeletorModo() {
     var g = (typeof globalScale !== 'undefined') ? globalScale : 1;
@@ -3740,6 +3820,7 @@ function renomearCartaz(k) {
     var e = storedCharacters[k];
     if (!e) return;
     var novo = pedirTexto('Name this poster:', nomeDoCartaz(k));
+    ultimaActividade = Date.now();   // escrever o nome não é estar parado: a avaliação não salta logo a seguir
     if (novo === null) return;                       // cancelou
     novo = novo.replace(/\s+/g, ' ').trim().slice(0, TAMANHO_NOME_CARTAZ);
     // Vazio, ou o nome por omissão, é voltar a não ter nome.
@@ -4034,6 +4115,7 @@ function drawThumbnail(char, x, y, size) {
     var thumbnailCenterX = thumbCenterX - (globalMidX * miniSize);
 
     push();
+    drawingContext.imageSmoothingQuality = 'high';   // reduções grandes: sem escada (o pop repõe)
     for (var k = 0; k < objs.length; k++) {
         var o = objs[k];
         var dims = getModuleDims(o.type);
@@ -4131,6 +4213,7 @@ function desenharMiniaturaCartaz(k, x, y, tam) {
             g.imageMode(CENTER);
         }
         g.clear();
+        g.drawingContext.imageSmoothingQuality = 'high';   // reduções grandes: sem escada
 
         var folha = dimensoesDaFolha(f.idx, f.landscape);
         var margem = 2;
@@ -4178,7 +4261,7 @@ function geometriaDosCartazes() {
     var g = globalScale;
     var gapY = 45 * g, largura = (2 * 45 * g) + 34 * g;
     var cx = 30 * g + 45 * g;
-    var bottomPanelH = 150 * g;
+    var bottomPanelH = ALTURA_RODAPE_LATERAL * g;
     var effectiveBottom = max(height, topBarHeight + bottomPanelH + 50 * g);
     var topo = getCharTop();
     var fundo = effectiveBottom - bottomPanelH;
@@ -4324,7 +4407,7 @@ function desenharListaDeCartazes() {
         text('+ New artboard', b.x, b.y);
         textStyle(NORMAL);
         pop();
-        if (sobreNovo) dica = { texto: 'Add a poster in the format of this one', y: b.y };
+        if (sobreNovo) dica = { texto: 'Add a poster in the frame of this one', y: b.y };
     }
 
     // Duplicar, mudar o nome, apagar — sempre sobre o cartaz aberto.
@@ -4406,10 +4489,10 @@ function checkTopBarClick() {
     var tBoxSize = 34 * globalScale;
     var toolGapX = 45 * globalScale;
     var toolStartX = 30 * globalScale;
-    var ty = 35 * globalScale;
-    var my = 80 * globalScale;
+    var ty = LINHA_FERRAMENTAS * globalScale;
+    var my = LINHA_MODULOS * globalScale;
 
-    // 1. Clique Linha 1: Ferramentas
+    // 1. Clique Linha 2: Ferramentas
     for (var i = 0; i < 12; i++) {
         var tx = toolStartX + (i * toolGapX);
         if (mouseX > tx - tBoxSize / 2 && mouseX < tx + tBoxSize / 2 && mouseY > ty - tBoxSize / 2 && mouseY < ty + tBoxSize / 2) {
@@ -4442,11 +4525,12 @@ function checkTopBarClick() {
         }
     }
 
-    // 1b. Setas de rotação (dentro da caixa do ângulo)
+    // 1b. Setas de rotação (dentro da caixa do ângulo) e o Flip, a seguir a ela
     if (dentroDe(btnRodarEsq)) { rodarPelasSetas(-1); return; }
     if (dentroDe(btnRodarDir)) { rodarPelasSetas(1); return; }
+    if (dentroDe(btnFlip)) { flipCompositionHorizontal(); return; }   // a função recusa no Free e sem tela
 
-    // 2. Clique Linha 2: Módulos
+    // 2. Clique Linha 3: Módulos
     var ordemMods = ordemDosModulos();
     for (var pos = 0; pos < ordemMods.length; pos++) {
         var i = ordemMods[pos];
@@ -4456,33 +4540,38 @@ function checkTopBarClick() {
         }
     }
 
-    // --- 3. CLIQUE LINHA 3: SEGMENTED CONTROLS ---
-    var ly = 125 * globalScale;
+    // --- 3. CLIQUE LINHA 1: MODOS DE TRABALHO (SEGMENTED CONTROLS) ---
+    var ly = LINHA_MODOS * globalScale;
     var styleBtnW = (3 * toolGapX) + tBoxSize;
     var styleBtnH = 34 * globalScale;
 
     var cxs = [
         toolStartX + (1.5 * toolGapX),
         toolStartX + (5.5 * toolGapX),
-        toolStartX + (9.5 * toolGapX),
-        toolStartX + (13.5 * toolGapX)
+        toolStartX + (9.5 * toolGapX)
     ];
+    // A folha: F1 · F2 · F3 ‖ ao alto · deitada, um controlo só (drawControloDaFolha).
+    var folhaW = (4 * toolGapX) + tBoxSize;
+    var cxFolha = toolStartX + (14 * toolGapX);
 
     if (mouseY > ly - styleBtnH / 2 && mouseY < ly + styleBtnH / 2) {
-        // Tema [FILL | DOTTED]
+        // Modo [LETTERPRESS | FREE]
         if (mouseX > cxs[0] - styleBtnW / 2 && mouseX < cxs[0] + styleBtnW / 2) {
-            setVisualTheme(mouseX < cxs[0] ? 'fill' : 'dotted'); return;
+            definirModo(mouseX >= cxs[0]); return;   // metade direita = livre
+        }
+        // Tema [FILL | DOTTED]
+        if (mouseX > cxs[1] - styleBtnW / 2 && mouseX < cxs[1] + styleBtnW / 2) {
+            setVisualTheme(mouseX < cxs[1] ? 'fill' : 'dotted'); return;
         }
         // Grelha [LINES | DOTS]
-        if (mouseX > cxs[1] - styleBtnW / 2 && mouseX < cxs[1] + styleBtnW / 2) {
-            currentGridStyle = mouseX < cxs[1] ? 'lines' : 'dots'; return;
-        }
-        // Artboard [F1 | F2 | F3]
         if (mouseX > cxs[2] - styleBtnW / 2 && mouseX < cxs[2] + styleBtnW / 2) {
-            var startX = cxs[2] - styleBtnW / 2;
-            var segW = styleBtnW / 3;
-            var novoIdx = (mouseX < startX + segW) ? 0
-                        : (mouseX < startX + 2 * segW) ? 1 : 2;
+            currentGridStyle = mouseX < cxs[2] ? 'lines' : 'dots'; return;
+        }
+        // Folha [F1 | F2 | F3 ‖ AO ALTO | DEITADA]
+        var seg = (mouseX > cxFolha - folhaW / 2 && mouseX < cxFolha + folhaW / 2)
+                ? segmentoDaFolha(cxFolha, folhaW) : -1;
+        if (seg >= 0 && seg < 3) {
+            var novoIdx = seg;
             var idxAnterior = currentArtboardIdx;
             // Só conta quando a folha mudou mesmo: carregar no formato que já
             // estava escolhido, ou recusar o aviso, não é uma troca. E só no
@@ -4495,9 +4584,8 @@ function checkTopBarClick() {
             }
             return;
         }
-        // Orientação [PORTRAIT | LANDSCAPE]
-        if (mouseX > cxs[3] - styleBtnW / 2 && mouseX < cxs[3] + styleBtnW / 2) {
-            var novaOrient = mouseX >= cxs[3];
+        if (seg >= 3) {
+            var novaOrient = (seg === 4);
             var orientAnterior = isLandscape;
             if (aplicarMudancaDeFolha(function () { isLandscape = novaOrient; },
                                       function () { isLandscape = orientAnterior; })
@@ -4536,7 +4624,7 @@ function checkSidebarClick() {
     var charStartX = 30 * globalScale;
     var charGapY = 45 * globalScale;
     var cSize = 34 * globalScale;
-    var bottomPanelH = 150 * globalScale;
+    var bottomPanelH = ALTURA_RODAPE_LATERAL * globalScale;
 
     // A mesma matemática de segurança
     var minSafeHeight = topBarHeight + bottomPanelH + (50 * globalScale);
@@ -4604,10 +4692,10 @@ function drawUI() {
     var tBoxSize = 34 * globalScale;
     var toolGapX = 45 * globalScale;
     var toolStartX = 30 * globalScale;
-    var ty = 35 * globalScale;
-    var my = 80 * globalScale;
+    var ty = LINHA_FERRAMENTAS * globalScale;
+    var my = LINHA_MODULOS * globalScale;
 
-    // --- LINHA 1: FERRAMENTAS ---
+    // --- LINHA 2: FERRAMENTAS ---
     var toolsList = [
         { img: toolIcons.mover, active: selectedModule == -2, color: [0, 200, 0], tip: "Move / Select" },
         { img: toolIcons.limpar, active: selectedModule == -1, color: [255, 50, 50], tip: "Eraser" },
@@ -4642,13 +4730,13 @@ function drawUI() {
         }
     }
 
-    // --- SLIDER E ROTAÇÃO (LINHA 1) ---
+    // --- SLIDER, ROTAÇÃO E FLIP (LINHA 2) ---
     var sliderBoxCX = toolStartX + (14 * toolGapX);
     var sliderBoxW = (4 * toolGapX) + tBoxSize;
 
     // Hover calculado antes de desenhar a caixa, para ela poder reagir
     // como os restantes botões da barra (235 em hover, 249 normal).
-    var isHoverSlider = !showShortcutsModal && (mouseX > uiSlider.x - 10 && mouseX < uiSlider.x + uiSlider.w + 10 && mouseY > ty - 15 && mouseY < ty + 15);
+    var isHoverSlider = !showShortcutsModal && (mouseX > uiSlider.x - 10 && mouseX < uiSlider.x + uiSlider.w + 10 && mouseY > ty - 17 * globalScale && mouseY < ty + 17 * globalScale);
 
     fill(isHoverSlider || isDraggingSlider ? 235 : 249); stroke(238); strokeWeight(0.75);
     rect(sliderBoxCX, ty, sliderBoxW, tBoxSize, 6 * globalScale);
@@ -4741,7 +4829,26 @@ function drawUI() {
     if (sobreEsq) { activeTooltip = "Rotate left"; tooltipX = btnRodarEsq.x; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
     if (sobreDir) { activeTooltip = "Rotate right"; tooltipX = btnRodarDir.x; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
 
-    // --- LINHA 2: MÓDULOS ---
+    // FLIP, logo a seguir à rotação: também vira a composição. Só no modo
+    // Letterpress — no Free fica esbatido, como as guias no cartaz.
+    btnFlip.w = tBoxSize; btnFlip.h = tBoxSize;
+    btnFlip.x = toolStartX + (20 * toolGapX); btnFlip.y = ty;
+    var flipDesativado = isOverlapMode || telaPorEscolher;   // sem tela à vista, virava uma letra escondida
+    var isFlipH = !flipDesativado && !showShortcutsModal && dentroDe(btnFlip);
+    push();
+    fill(flipDesativado ? 252 : (isFlipH ? 235 : 249)); stroke(flipDesativado ? 246 : 238); strokeWeight(0.75);
+    rect(btnFlip.x, btnFlip.y, btnFlip.w, btnFlip.h, 6 * globalScale);
+    noStroke(); fill(flipDesativado ? 200 : (isFlipH ? 40 : 80));
+    textAlign(CENTER, CENTER); textSize(10.5 * globalScale); textStyle(BOLD);
+    text("Flip", btnFlip.x, btnFlip.y);
+    pop();
+    if (isFlipH) { activeTooltip = "Flip Horizontal Composition"; tooltipX = btnFlip.x; tooltipY = ty + tBoxSize / 2 + 15 * globalScale; }
+
+    // --- LINHA 3: MÓDULOS ---
+    // Com zoom alto, a imagem do módulo tem mais de mil píxeis e aqui fica com
+    // 30: a suavização normal deixava os arcos em escada.
+    var qualidadeAntes = drawingContext.imageSmoothingQuality;
+    drawingContext.imageSmoothingQuality = 'high';
     var ordemMods = ordemDosModulos();
     for (var pos = 0; pos < ordemMods.length; pos++) {
         var i = ordemMods[pos];
@@ -4756,34 +4863,41 @@ function drawUI() {
         // telemóvel deixava os módulos da paleta com 2 px.
         if (modules[i]) image(modules[i], mx, my, (dims.len / maxD) * (tBoxSize - 10 * globalScale), (dims.wid / maxD) * (tBoxSize - 10 * globalScale));
     }
+    drawingContext.imageSmoothingQuality = qualidadeAntes;
 
-    // --- LINHA 3: SEGMENTED CONTROLS ---
-    var ly = 125 * globalScale;
+    // --- LINHA 1: MODOS DE TRABALHO (SEGMENTED CONTROLS) ---
+    var ly = LINHA_MODOS * globalScale;
     var styleBtnW = (3 * toolGapX) + tBoxSize;
     var styleBtnH = 34 * globalScale;
 
-    var cx1 = toolStartX + (1.5 * toolGapX);
-    var cx2 = toolStartX + (5.5 * toolGapX);
-    var cx3 = toolStartX + (9.5 * toolGapX);
-    var cx4 = toolStartX + (13.5 * toolGapX);
+    var cx0 = toolStartX + (1.5 * toolGapX);
+    var cx1 = toolStartX + (5.5 * toolGapX);
+    var cx2 = toolStartX + (9.5 * toolGapX);
+    // A folha (formato e orientação) ocupa cinco colunas, a começar onde
+    // começava o F1/F2/F3.
+    var folhaW = (4 * toolGapX) + tBoxSize;
+    var cxFolha = toolStartX + (14 * toolGapX);
 
+    drawSegmentedControl(cx0, ly, styleBtnW, styleBtnH, ["Letterpress", "Free"], isOverlapMode ? 1 : 0);
     drawSegmentedControl(cx1, ly, styleBtnW, styleBtnH, ["Fill", "Dot"], currentVisualTheme === 'fill' ? 0 : 1);
     drawSegmentedControl(cx2, ly, styleBtnW, styleBtnH, ["Line grid", "Dot grid"], currentGridStyle === 'lines' ? 0 : 1);
-    drawSegmentedControl(cx3, ly, styleBtnW, styleBtnH, ["F1", "F2", "F3"], currentArtboardIdx);
-    drawSegmentedControl(cx4, ly, styleBtnW, styleBtnH, ["Portrait", "Landscape"], isLandscape ? 1 : 0);
+    drawControloDaFolha(cxFolha, ly, folhaW, styleBtnH);
 
     if (mouseY > ly - styleBtnH / 2 && mouseY < ly + styleBtnH / 2 && !showShortcutsModal) {
-        if (mouseX > cx3 - styleBtnW / 2 && mouseX < cx3 + styleBtnW / 2) {
-            var segW = styleBtnW / 3;
-            var startX = cx3 - styleBtnW / 2;
-            // No cartaz, o formato muda só o cartaz aberto — convém dizê-lo.
-            var soEste = modoCartaz ? ' — this poster only' : '';
-            if (mouseX < startX + segW) { activeTooltip = "Format 1 (690 \u00d7 990 px)" + soEste; tooltipX = startX + segW / 2; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
-            else if (mouseX < startX + 2 * segW) { activeTooltip = "Format 2 (990 \u00d7 1380 px)" + soEste; tooltipX = startX + 1.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
-            else { activeTooltip = "Format 3 (1380 \u00d7 1980 px)" + soEste; tooltipX = startX + 2.5 * segW; tooltipY = ly + styleBtnH / 2 + 15 * globalScale; }
+        if (mouseX > cx0 - styleBtnW / 2 && mouseX < cx0 + styleBtnW / 2) {
+            activeTooltip = mouseX < cx0 ? "Letterpress mode — modules cannot overlap" : "Free mode — modules can overlap";
+            tooltipX = mouseX < cx0 ? cx0 - styleBtnW / 4 : cx0 + styleBtnW / 4;
+            tooltipY = ly + styleBtnH / 2 + 15 * globalScale;
         }
-        if (modoCartaz && mouseX > cx4 - styleBtnW / 2 && mouseX < cx4 + styleBtnW / 2) {
-            activeTooltip = "Orientation of this poster only"; tooltipX = cx4; tooltipY = ly + styleBtnH / 2 + 15 * globalScale;
+        if (mouseX > cxFolha - folhaW / 2 && mouseX < cxFolha + folhaW / 2) {
+            var seg = segmentoDaFolha(cxFolha, folhaW);
+            var segW = folhaW / SEGMENTOS_DA_FOLHA;
+            // No cartaz, a folha muda só o cartaz aberto — convém dizê-lo.
+            var soEste = modoCartaz ? ' — this poster only' : '';
+            activeTooltip = ["Frame 1 (690 × 990 px / ≈ 25 × 35 cm)", "Frame 2 (990 × 1380 px / ≈ 35 × 50 cm)",
+                             "Frame 3 (1380 × 1980 px / ≈ 50 × 70 cm)", "Portrait", "Landscape"][seg] + soEste;
+            tooltipX = cxFolha - folhaW / 2 + (seg + 0.5) * segW;
+            tooltipY = ly + styleBtnH / 2 + 15 * globalScale;
         }
     }
 
@@ -4796,8 +4910,9 @@ function drawUI() {
     // mínimo em vez de colarem aos módulos.
     var larguraMenu = LARGURA_BOTAO_MENU * globalScale;
     var fimDaPaleta = toolStartX + (modules.length - 1) * toolGapX + tBoxSize / 2;
-    var fimDaLinha1 = toolStartX + (18 * toolGapX) + ((2 * toolGapX) + tBoxSize) / 2;
-    var limiteEsquerdo = max(fimDaPaleta, fimDaLinha1) + 11 * globalScale;
+    var fimDasFerramentas = btnFlip.x + tBoxSize / 2;
+    var fimDosModos = cxFolha + folhaW / 2;
+    var limiteEsquerdo = max(fimDaPaleta, fimDasFerramentas, fimDosModos) + 11 * globalScale;
 
     var esquerdaBotoes = max(width - 35 * globalScale + tBoxSize / 2 - larguraMenu, limiteEsquerdo);
     var bordaDir = esquerdaBotoes + larguraMenu;
@@ -4806,11 +4921,11 @@ function drawUI() {
     // não leva a seta de menu, porque não abre menu, executa. Leva no mesmo
     // sítio um sinal de importar, para os três ficarem equilibrados.
     btnClear.w = larguraMenu; btnClear.h = tBoxSize;
-    btnClear.x = bordaDir - larguraMenu / 2; btnClear.y = ty;
+    btnClear.x = bordaDir - larguraMenu / 2; btnClear.y = LINHA_MODOS * globalScale;
     btnExport.w = larguraMenu; btnExport.h = tBoxSize;
-    btnExport.x = bordaDir - larguraMenu / 2; btnExport.y = my;
+    btnExport.x = bordaDir - larguraMenu / 2; btnExport.y = LINHA_FERRAMENTAS * globalScale;
     btnImport.w = larguraMenu; btnImport.h = tBoxSize;
-    btnImport.x = bordaDir - larguraMenu / 2; btnImport.y = 125 * globalScale;
+    btnImport.x = bordaDir - larguraMenu / 2; btnImport.y = LINHA_MODULOS * globalScale;
 
     desenharBotaoMenu(btnClear, 'Clear', menuDeQuem === 'clear', true, 'seta');
     desenharBotaoMenu(btnExport, 'Export', menuDeQuem === 'export', false, 'seta');
@@ -4818,7 +4933,7 @@ function drawUI() {
 
     // --- BARRA LATERAL (ALFABETO EM SCROLL) ---
     fill(249); noStroke(); rectMode(CORNER); rect(0, topBarHeight, sidebarWidth, height - topBarHeight);
-    var charGapY = 45 * globalScale; var cSize = 34 * globalScale; var bottomPanelH = 150 * globalScale;
+    var charGapY = 45 * globalScale; var cSize = 34 * globalScale; var bottomPanelH = ALTURA_RODAPE_LATERAL * globalScale;
     var minSafeHeight = topBarHeight + bottomPanelH + (50 * globalScale);
     var effectiveBottom = max(height, minSafeHeight);
 
@@ -4913,63 +5028,33 @@ function drawUI() {
     fill(249); noStroke(); rectMode(CORNER); rect(0, effectiveBottom - bottomPanelH, sidebarWidth, bottomPanelH);
     stroke(238); strokeWeight(0.75); line(0, effectiveBottom - bottomPanelH, sidebarWidth, effectiveBottom - bottomPanelH);
 
-    var btnW_largo = (2 * toolGapX) + cSize; var btnH = 34 * globalScale; var btnX_centro = toolStartX + toolGapX;
+    // Dois botões de texto da largura da lista, um sobre o outro: o guia em
+    // cima e o regresso ao site em baixo. Com a forma do Preview word.
+    var btnH = 34 * globalScale;
+    var btnW = (2 * toolGapX) + cSize;
+    btnAtalhos.w = btnW; btnAtalhos.h = btnH; btnAtalhos.x = toolStartX + toolGapX; btnAtalhos.y = effectiveBottom - 68 * globalScale;
+    btnHome.w = btnW; btnHome.h = btnH; btnHome.x = toolStartX + toolGapX; btnHome.y = effectiveBottom - 25 * globalScale;
 
-    // Posicionamento
-    btnLetterpress.x = btnX_centro; btnLetterpress.y = effectiveBottom - 114 * globalScale; btnLetterpress.w = btnW_largo; btnLetterpress.h = btnH;
-    btnStencil.x = btnX_centro; btnStencil.y = effectiveBottom - 71 * globalScale; btnStencil.w = btnW_largo; btnStencil.h = btnH;
-    btnAtalhos.w = btnH; btnAtalhos.h = btnH; btnAtalhos.x = toolStartX; btnAtalhos.y = effectiveBottom - 25 * globalScale;
-    btnFlip.w = btnH; btnFlip.h = btnH; btnFlip.x = toolStartX + toolGapX; btnFlip.y = effectiveBottom - 25 * globalScale;
-    btnHome.w = btnH; btnHome.h = btnH; btnHome.x = toolStartX + 2 * toolGapX; btnHome.y = effectiveBottom - 25 * globalScale;
-
-    textSize(9.5 * globalScale); textStyle(BOLD); rectMode(CENTER);
-
-    var isOffH = (mouseX > btnLetterpress.x - btnLetterpress.w / 2 && mouseX < btnLetterpress.x + btnLetterpress.w / 2 && mouseY > btnLetterpress.y - btnLetterpress.h / 2 && mouseY < btnLetterpress.y + btnLetterpress.h / 2);
-    fill(!isOverlapMode ? [0, 200, 0, 30] : (isOffH ? 235 : 249)); stroke(!isOverlapMode ? [0, 200, 0] : 238); strokeWeight(0.75);
-    rect(btnLetterpress.x, btnLetterpress.y, btnLetterpress.w, btnLetterpress.h, 6 * globalScale);
-    noStroke(); fill(!isOverlapMode ? [0, 200, 0] : 150); text("Letterpress mode", btnLetterpress.x, btnLetterpress.y);
-
-    var isOnH = (mouseX > btnStencil.x - btnStencil.w / 2 && mouseX < btnStencil.x + btnStencil.w / 2 && mouseY > btnStencil.y - btnStencil.h / 2 && mouseY < btnStencil.y + btnStencil.h / 2);
-    fill(isOverlapMode ? [0, 200, 0, 30] : (isOnH ? 235 : 249)); stroke(isOverlapMode ? [0, 200, 0] : 238); strokeWeight(0.75);
-    rect(btnStencil.x, btnStencil.y, btnStencil.w, btnStencil.h, 6 * globalScale);
-    noStroke(); fill(isOverlapMode ? [0, 200, 0] : 150); text("Free mode", btnStencil.x, btnStencil.y);
-
-    var isAtH = !showShortcutsModal && (mouseX > btnAtalhos.x - btnAtalhos.w / 2 && mouseX < btnAtalhos.x + btnAtalhos.w / 2 && mouseY > btnAtalhos.y - btnAtalhos.h / 2 && mouseY < btnAtalhos.y + btnAtalhos.h / 2);
-    fill(showShortcutsModal ? 220 : (isAtH ? 235 : 249)); stroke(showShortcutsModal ? [0, 200, 0] : 238); strokeWeight(0.75);
+    var isAtH = !showShortcutsModal && dentroDe(btnAtalhos);
+    var isHomeH = !showShortcutsModal && dentroDe(btnHome);
+    push();
+    rectMode(CENTER); textAlign(CENTER, CENTER); textSize(9.5 * globalScale); textStyle(BOLD); strokeWeight(0.75);
+    fill(showShortcutsModal ? [220, 255, 220] : (isAtH ? 235 : 249)); stroke(showShortcutsModal ? [0, 150, 0] : 238);
     rect(btnAtalhos.x, btnAtalhos.y, btnAtalhos.w, btnAtalhos.h, 6 * globalScale);
-    if (toolIcons.atalhos) { tint(isAtH ? 40 : 80); image(toolIcons.atalhos, btnAtalhos.x, btnAtalhos.y, 20 * globalScale, 20 * globalScale); noTint(); }
-
-    // BOTÃO FLIP (Espelhar)
-    var isFlipH = !isOverlapMode && !showShortcutsModal && (mouseX > btnFlip.x - btnFlip.w / 2 && mouseX < btnFlip.x + btnFlip.w / 2 && mouseY > btnFlip.y - btnFlip.h / 2 && mouseY < btnFlip.y + btnFlip.h / 2);
-    push();
-    if (isOverlapMode) { fill(249, 249, 249, 150); stroke(238, 150); } // CORRIGIDO AQUI
-    else { fill(isFlipH ? 235 : 249); stroke(238); }
-    strokeWeight(0.75); rect(btnFlip.x, btnFlip.y, btnFlip.w, btnFlip.h, 6 * globalScale);
-    noStroke(); fill(isOverlapMode ? 180 : 100); textAlign(CENTER, CENTER); textSize(9 * globalScale); textStyle(BOLD); text("FLIP", btnFlip.x, btnFlip.y);
-    pop();
-
-    // BOTÃO HOME (Voltar ao site) — seta desenhada à mão, sem SVG novo
-    var isHomeH = !showShortcutsModal && (mouseX > btnHome.x - btnHome.w / 2 && mouseX < btnHome.x + btnHome.w / 2 && mouseY > btnHome.y - btnHome.h / 2 && mouseY < btnHome.y + btnHome.h / 2);
-    push();
-    fill(isHomeH ? 235 : 249); stroke(238); strokeWeight(0.75);
+    noStroke(); fill(showShortcutsModal ? [0, 150, 0] : (isAtH ? 80 : 150));
+    text('Guide', btnAtalhos.x, btnAtalhos.y);
+    fill(isHomeH ? 235 : 249); stroke(238);
     rect(btnHome.x, btnHome.y, btnHome.w, btnHome.h, 6 * globalScale);
-    stroke(isHomeH ? 40 : 100); strokeWeight(0.75); noFill();
-    var aHalf = 5 * globalScale;
-    var aHead = 4 * globalScale;
-    line(btnHome.x + aHalf, btnHome.y, btnHome.x - aHalf, btnHome.y);
-    line(btnHome.x - aHalf, btnHome.y, btnHome.x - aHalf + aHead, btnHome.y - aHead);
-    line(btnHome.x - aHalf, btnHome.y, btnHome.x - aHalf + aHead, btnHome.y + aHead);
+    noStroke(); fill(isHomeH ? 80 : 150);
+    text('pragmatipo.pt', btnHome.x, btnHome.y);
     pop();
 
-    if (isOffH && isOverlapMode) { activeTooltip = "Activate"; tooltipX = sidebarWidth + 40 * globalScale; tooltipY = btnLetterpress.y; }
-    if (isOnH && !isOverlapMode) { activeTooltip = "Activate"; tooltipX = sidebarWidth + 40 * globalScale; tooltipY = btnStencil.y; }
-    if (isAtH) { activeTooltip = "Keyboard Shortcuts"; tooltipX = sidebarWidth + 70 * globalScale; tooltipY = btnAtalhos.y; }
-    if (isFlipH && !isOverlapMode) { activeTooltip = "Flip Horizontal Composition"; tooltipX = sidebarWidth + 70 * globalScale; tooltipY = btnFlip.y; }
-    if (isHomeH) { activeTooltip = "Back to pragmatipo.pt"; tooltipX = sidebarWidth + 70 * globalScale; tooltipY = btnHome.y; }
+    if (isAtH) { activeTooltip = "Guide & keyboard shortcuts"; tooltipX = sidebarWidth + 85 * globalScale; tooltipY = btnAtalhos.y; }
+    if (isHomeH) { activeTooltip = "Back to pragmatipo.pt"; tooltipX = sidebarWidth + 75 * globalScale; tooltipY = btnHome.y; }
 
     stroke(238); strokeWeight(0.75); line(sidebarWidth, topBarHeight, sidebarWidth, effectiveBottom);
 
-    if (activeTooltip && !showShortcutsModal) {
+    if (activeTooltip && !showShortcutsModal && pairaLivre()) {   // no toque, o ponteiro fica onde o dedo saiu
         push(); textSize(10 * globalScale); textStyle(NORMAL); var tw = textWidth(activeTooltip) + 16 * globalScale;
         tooltipX = constrain(tooltipX, tw / 2 + 10, width - tw / 2 - 10);
         rectMode(CENTER); fill(30, 230); noStroke(); rect(tooltipX, tooltipY, tw, 22 * globalScale, 4 * globalScale);
@@ -5005,12 +5090,14 @@ var MANUAL = [
     { t: 'cat', s: 'Working modes' },
 
     { t: 'h', s: 'Letterpress mode' },
+    { t: 'li', s: 'The first control of the top bar — Free mode is its other half' },
     { t: 'li', s: 'Simulates handling the movable-type version of the system: modules cannot overlap' },
 
     { t: 'h', s: 'Free mode' },
     { t: 'li', s: 'Simulates handling the stencil version of the system: modules can overlap' },
 
     { t: 'h', s: 'Flip' },
+    { t: 'li', s: 'In the tools row, right after the rotation arrows' },
     { t: 'li', s: 'Available in letterpress mode only. Mirrors the letters, preparing them for printing with movable type' },
     { t: 'li', s: 'Each module is swapped for its mirrored counterpart — the slanted ones come in pairs, so flipping turns one into the other' },
     { t: 'sc', k: 'H', s: 'Flip the entire composition' },
@@ -5111,16 +5198,17 @@ var MANUAL = [
     { t: 'li', s: 'Line grid: a grid closer to the stencil version of the system' },
     { t: 'li', s: 'Dot grid: a grid closer to the letterpress version of the system' },
 
-    { t: 'h', s: 'F1 / F2 / F3' },
+    { t: 'h', s: 'Frames: F1 / F2 / F3' },
     { t: 'li', s: 'F1: close to 25 \u00d7 35 cm \u2014 23 \u00d7 33 cells' },
     { t: 'li', s: 'F2: close to 35 \u00d7 50 cm \u2014 33 \u00d7 46 cells' },
     { t: 'li', s: 'F3: close to 50 \u00d7 70 cm \u2014 46 \u00d7 66 cells' },
-    { t: 'li', s: 'Modules always sit inside the sheet. Changing format or orientation deletes whatever would fall outside the new sheet, so it asks first and tells you which letters would lose modules' },
-    { t: 'li', s: 'With a poster open, the format and orientation belong to that poster alone: the alphabet and the other posters keep their own' },
+    { t: 'li', s: 'Modules always sit inside the sheet. Changing frame or orientation deletes whatever would fall outside the new sheet, so it asks first and tells you which letters would lose modules' },
+    { t: 'li', s: 'With a poster open, the frame and orientation belong to that poster alone: the alphabet and the other posters keep their own' },
 
     { t: 'h', s: 'Portrait / Landscape' },
-    { t: 'li', s: 'Portrait: vertical artboard' },
-    { t: 'li', s: 'Landscape: horizontal artboard' },
+    { t: 'li', s: 'The two sheet icons after F1 / F2 / F3, in the same control' },
+    { t: 'li', s: 'Portrait: the upright sheet — vertical artboard' },
+    { t: 'li', s: 'Landscape: the sheet lying down — horizontal artboard' },
 
     { t: 'h', s: 'Alphabet / Poster' },
     { t: 'li', s: 'Sits above the thumbnail list and chooses what you are drawing on' },
@@ -5131,9 +5219,9 @@ var MANUAL = [
 
     { t: 'h', s: 'Poster artboards' },
     { t: 'li', s: 'Click a poster in the side list to open it. Each one shows its whole sheet in miniature' },
-    { t: 'li', s: '+ New artboard adds a poster in the format of the one that is open, and opens it' },
+    { t: 'li', s: '+ New artboard adds a poster in the frame of the one that is open, and opens it' },
     { t: 'li', s: 'The three buttons below act on the open poster: duplicate it, rename it, delete it. Double-clicking a poster in the list also renames it' },
-    { t: 'li', s: 'Each poster has its own format and orientation, chosen with F1 / F2 / F3 and Portrait / Landscape while it is open' },
+    { t: 'li', s: 'Each poster has its own frame and orientation, chosen with F1 / F2 / F3 and the two sheet icons while it is open' },
     { t: 'li', s: 'Deleting asks first and cannot be undone. The last poster cannot be deleted — Clear poster empties it instead' },
 
     { t: 'h', s: '36 side thumbnails' },
@@ -5179,7 +5267,11 @@ var MANUAL = [
     { t: 'li', s: 'It comes back on its own next time you open the tool, with a short note saying so' },
     { t: 'li', s: 'It is a safety net, not an archive: it lives in this browser only, and clearing the browser data erases it. To keep work for good, or to move it elsewhere, save the project as JSON' },
 
+    { t: 'h', s: 'Guide' },
+    { t: 'li', s: 'The Guide button at the bottom of the side bar opens this guide. Esc, or a click outside it, closes it' },
+
     { t: 'h', s: 'Back to pragmatipo.pt' },
+    { t: 'li', s: 'The pragmatipo.pt button, below Guide' },
     { t: 'li', s: 'Leaves the tool and returns to the site. If there is work that has never been saved to a file, it asks first' },
 
     { t: 'cat', s: 'Clearing' },
@@ -7651,6 +7743,7 @@ var toque = {
     ignorarFim: false,     // o fim do gesto não é um "largar o rato"
     fim: 0,                // quando acabou o último toque
     importar: false,       // abrir o Import no fim deste toque
+    sair: false,           // ir para o pragmatipo.pt no fim deste toque, se não houve arrasto
     esperou: false,        // a espera do dedo já passou neste toque (ver aoAcabarToque)
     id: null,              // o identificador do toque que manda (a caneta, se pousou)
     restoDaMao: false,     // o dono levantou e ficaram outros dedos: ignoram-se até saírem
@@ -7689,7 +7782,8 @@ function eRatoDeCompatibilidade(ev) {
 
 function fundoDaListaLateral() {
     var g = globalScale;
-    return max(height, topBarHeight + 150 * g + 50 * g) - 150 * g;
+    var rodape = ALTURA_RODAPE_LATERAL * g;
+    return max(height, topBarHeight + rodape + 50 * g) - rodape;
 }
 
 // Onde caiu o toque, em coordenadas do canvas (que ocupa a janela toda).
@@ -7764,6 +7858,7 @@ function iniciarToque(t) {
     toque.ignorarFim = false;
     toque.aguardarLevantar = false;
     toque.importar = false;
+    toque.sair = false;
     toque.aLevantar = false;
     toque.celulaFantasma = null;
     toqueLevantado = false;
@@ -8029,9 +8124,11 @@ function acabarDono(e, t) {
             mousePressed(null);
         }
         if (toque.importar && dentroDe(btnImport)) importProjectJSON();
+        if (toque.sair && !toque.moveu && dentroDe(btnHome)) goToSite();
     }
     toque.adiar = false;
     toque.importar = false;
+    toque.sair = false;
     porPressao(false);
     // Cancelado pelo sistema (gesto do iPad, rejeição da palma): larga-se na
     // mesma, para o "rato" não ficar em baixo a pintar sozinho.
@@ -8274,6 +8371,61 @@ function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
     textStyle(NORMAL);
 }
 
+// A FOLHA NUM CONTROLO SÓ: formato e orientação são a mesma coisa — a folha
+// em que se desenha. Cinco segmentos, F1 · F2 · F3 ‖ ao alto · deitada, com
+// uma escolha de cada lado do separador. Os cliques usam segmentoDaFolha.
+var SEGMENTOS_DA_FOLHA = 5;
+
+function segmentoDaFolha(cx, w) {
+    return constrain(Math.floor((mouseX - (cx - w / 2)) / (w / SEGMENTOS_DA_FOLHA)), 0, SEGMENTOS_DA_FOLHA - 1);
+}
+
+function drawControloDaFolha(cx, cy, w, h) {
+    var segW = w / SEGMENTOS_DA_FOLHA;
+    var startX = cx - w / 2;
+    fill(249); stroke(238); strokeWeight(0.75);
+    rect(cx, cy, w, h, 6 * globalScale);
+
+    var sobre = !showShortcutsModal && mouseY > cy - h / 2 && mouseY < cy + h / 2 &&
+                mouseX > startX && mouseX < startX + w ? segmentoDaFolha(cx, w) : -1;
+    for (var i = 0; i < SEGMENTOS_DA_FOLHA; i++) {
+        var segCX = startX + (i * segW) + (segW / 2);
+        var escolhido = (i < 3) ? (i === currentArtboardIdx) : (i === 3 ? !isLandscape : isLandscape);
+        if (escolhido) {
+            fill(255); stroke(238); strokeWeight(0.75);
+            rect(segCX, cy, segW - 4 * globalScale, h - 4 * globalScale, 4 * globalScale);
+        } else if (i === sobre) {
+            fill(235); noStroke();
+            rect(segCX, cy, segW - 4 * globalScale, h - 4 * globalScale, 4 * globalScale);
+        }
+        // Entre o formato e a orientação, o separador vai de ponta a ponta.
+        if (i > 0) {
+            stroke(i === 3 ? 225 : 238); strokeWeight(0.75);
+            var meia = (i === 3) ? h / 2 - 3 * globalScale : h / 3;
+            line(startX + i * segW, cy - meia, startX + i * segW, cy + meia);
+        }
+        if (i < 3) {
+            noStroke(); fill(escolhido ? color(0, 200, 0) : color(120));
+            textStyle(escolhido ? BOLD : NORMAL); textSize(10.5 * globalScale);
+            text('F' + (i + 1), segCX, cy);
+        } else {
+            // A folha desenhada, ao alto ou deitada, na proporção das folhas
+            // (cerca de 0,7), com o cinzento dos ícones da barra; escolhida,
+            // fica verde como uma ferramenta activa. O traço tem a mesma tinta
+            // que o deles: os Phosphor têm 16 em 256 a 20 px (1,25 px), mas são
+            // imagens ampliadas e a suavização dá-lhes uns 0,4 px a mais.
+            // Medido a 0,48 e a 1 de escala, num ecrã Retina.
+            var curto = 10.5 * globalScale, longo = 15 * globalScale;
+            noFill(); strokeJoin(ROUND);
+            stroke(escolhido ? color(0, 200, 0) : (i === sobre ? color(40) : color(80)));
+            strokeWeight(globalScale + 0.4);
+            rect(segCX, cy, i === 3 ? curto : longo, i === 3 ? longo : curto, 1.5 * globalScale);
+            strokeJoin(MITER);
+        }
+    }
+    textStyle(NORMAL);
+}
+
 // --- DIÁLOGOS NATIVOS (alert / confirm) ---
 // Os diálogos do browser roubam o foco e engolem o mouseup: quando se fecham,
 // o p5 continua a achar que o botão do rato está premido e o handleInteraction()
@@ -8330,7 +8482,7 @@ window.addEventListener('beforeunload', function (e) {
 function goToSite() {
     // Carregar em voltar ao site é a declaração mais clara de "terminei" que
     // esta ferramenta recebe. Aproveita-se, antes de a pessoa desaparecer.
-    if (podePerguntarAvaliacao() && (sessao.letras + sessao.numeros) >= 1) { mostrarAvaliacao(true); return; }
+    if (podePerguntarAvaliacao() && trabalhoParaAvaliar(1)) { mostrarAvaliacao(true); return; }
     sairMesmo();
 }
 
@@ -8344,6 +8496,7 @@ function sairMesmo() {
 }
 
 function flipCompositionHorizontal() {
+    if (telaPorEscolher) return;   // o que está em placedObjects não se vê (também para o H)
     if (placedObjects.length === 0) return;
     if (isOverlapMode) return; // Bloqueio de segurança (Só funciona em Letterpress)
 
@@ -8469,7 +8622,7 @@ function updateSliderFromMouse() {
 // Cada código determina duas colunas nos dados, e é decidido no momento em que o
 // entregas a alguém:
 //
-//   coorte    — o grupo. Ex.: 'ESMAD', '16ET'.
+//   coorte    — o grupo. Ex.: 'FMAD', '16ET'.
 //   material  — com que sistema FÍSICO essa pessoa trabalha na oficina.
 //               'tipos'  = tipos móveis
 //               'stencil'
@@ -8494,13 +8647,7 @@ var CODIGOS_COORTE = {
     'pragmatipo-claude':       { coorte: 'Claude',   material: 'nenhum'  },
 
     'pragmatipo-16et202611':   { coorte: '16ET',     material: 'tipos'   },
-    'pragmatipo-fmad202611':   { coorte: 'FMAD',     material: 'tipos'   },
-    'pragmatipo-esmad':        { coorte: 'ESMAD',    material: ''        },
-    'pragmatipo-diadaesmad':   { coorte: 'ESMAD',    material: ''        },
-
-    'pragmatipo-esmad-tipos':   { coorte: 'ESMAD',   material: 'tipos'   },
-    'pragmatipo-esmad-stencil': { coorte: 'ESMAD',   material: 'stencil' },
-    'pragmatipo-esmad-ambos':   { coorte: 'ESMAD',   material: 'ambos'   }
+    'pragmatipo-fmad202611':   { coorte: 'FMAD',     material: 'tipos'   }
 };
 
 // Aceita também a forma antiga, só com o nome do grupo — rede de segurança para
@@ -10234,7 +10381,8 @@ window.addEventListener('pagehide', function () {
 
 // --- O QUE VAIS QUERER EDITAR ---------------------------------------------
 
-var AVALIACAO_MIN_LETRAS = 2;            // trabalho mínimo para valer a pena perguntar
+var AVALIACAO_MIN_LETRAS = 2;            // trabalho mínimo: letras, números ou cartazes com desenho
+var AVALIACAO_MIN_PECAS_CARTAZ = 15;     // ou um cartaz só, com estas peças (somadas, se houver vários)
 var AVALIACAO_MIN_SEGUNDOS = 180;        // e tempo mínimo na sessão
 var AVALIACAO_PARADO_SEGUNDOS = 45;      // quanto tempo sem mexer conta como "parou"
 
@@ -10275,12 +10423,19 @@ function podePerguntarAvaliacao() {
     return !jaAvaliou();
 }
 
+// Trabalho suficiente para perguntar, o mesmo nos dois modos: um cartaz com
+// desenho conta como uma letra. Um cartaz sozinho também chega, se já tiver
+// peças a sério — um exercício de cartaz pode ser feito todo num só.
+function trabalhoParaAvaliar(minimo) {
+    if ((sessao.letras + sessao.numeros + sessao.cartazes) >= minimo) return true;
+    return sessao.cartaz >= AVALIACAO_MIN_PECAS_CARTAZ;
+}
+
 // Corre a cada segundo. Espera por trabalho suficiente e por uma pausa.
 function verificarAvaliacao() {
     if (frameCount % 60 !== 0) return;
     if (!podePerguntarAvaliacao()) return;
-    // Conta letras e números: quem só desenhou dígitos trabalhou na mesma.
-    if ((sessao.letras + sessao.numeros) < AVALIACAO_MIN_LETRAS) return;
+    if (!trabalhoParaAvaliar(AVALIACAO_MIN_LETRAS)) return;
     var decorridos = (Date.now() - Date.parse(sessao.inicio)) / 1000;
     if (decorridos < AVALIACAO_MIN_SEGUNDOS) return;
     if ((Date.now() - ultimaActividade) / 1000 < AVALIACAO_PARADO_SEGUNDOS) return;
