@@ -323,8 +323,8 @@ function aplicarMudancaDeFolha(mudar, repor) {
     if (fora.modulos > 0 && !jaAvisouDaFolha[contexto]) {
         var quais = modoCartaz ? '"' + nomeDoCartaz(currentChar) + '"' : fora.chars.join(', ');
         var msg = 'This sheet is smaller. ' + fora.modulos +
-                  (fora.modulos === 1 ? ' module falls' : ' modules fall') +
-                  ' outside it and will be deleted, in: ' + quais +
+                  (fora.modulos === 1 ? ' module that falls' : ' modules that fall') +
+                  ' outside will be deleted, in: ' + quais +
                   (modoCartaz ? '.\n\nThey can be recovered with undo.\n\n'
                               : '.\n\nEach letter can be recovered one at a time with undo.\n\n') +
                   'This is only asked once — after this, changing sheet trims straight away.\n\nContinue?';
@@ -484,7 +484,7 @@ function mostrarAvisoTelemovel() {
         'box-sizing': 'border-box', 'color': '#111',
         'font': '400 15px \'Marist Variable\', Helvetica, Arial, sans-serif', 'line-height': '1.45'
     });
-    titulo(caixa, 'Pragmatipo', 'Made for a computer or a tablet');
+    titulo(caixa, 'Pragmatipo', 'Designed for a computer or a tablet');
     var p = document.createElement('div');
     p.textContent = 'On a phone the screen is too small to draw with the modules. ' +
                     'Please open pragmatipo.pt/play on a computer or a tablet.';
@@ -3296,8 +3296,8 @@ function drawGrid() {
             baseline: [0, 200, 150], descender: [220, 150, 80], left: [255, 150, 0], right: [255, 150, 0]
         };
         var labels = {
-            ascender: "ASCENDER", capHeight: "CAP HEIGHT", xHeight: "X-HEIGHT",
-            baseline: "BASELINE", descender: "DESCENDER", left: "LEFT", right: "RIGHT"
+            ascender: "Ascender", capHeight: "Cap height", xHeight: "X-height",
+            baseline: "Baseline", descender: "Descender", left: "Left", right: "Right"
         };
 
         for (var keyY in guidesY) {
@@ -4308,7 +4308,7 @@ function dicaDaAccao(id, geo) {
     if (telaPorEscolher) return 'Open a poster first';
     if (id === 'duplicar') return 'Duplicate this poster';
     if (id === 'renomear') return 'Rename this poster';
-    return geo.total > 1 ? 'Delete this poster' : 'The only poster cannot be deleted';
+    return geo.total > 1 ? 'Delete this poster' : 'You need at least one poster';
 }
 
 // Os mesmos SVG da barra de ferramentas (copy, pencil e o lixo do Clear
@@ -5018,7 +5018,7 @@ function drawUI() {
     }
     textStyle(NORMAL); pop();
     if (sobrePreview) {
-        activeTooltip = "See your letters composed together";
+        activeTooltip = "See your letters together";
         tooltipX = sidebarWidth + 80 * globalScale; tooltipY = btnPreview.y;
     }
 
@@ -5068,7 +5068,7 @@ var MANUAL = [
     { t: 'cat', s: 'Touch & pen', tactil: true },
 
     { t: 'h', s: 'Drawing', tactil: true },
-    { t: 'li', s: 'Pick a module at the top, then touch the artboard: the module follows your finger or pen in light grey, and is placed when you lift. One placement per touch (with its mirrored copies, if symmetry is on)', tactil: true },
+    { t: 'li', s: 'Pick a module at the top, then touch the artboard: the module follows your finger or pen in light grey, and is placed when you lift. One placement per touch', tactil: true },
     { t: 'li', s: 'Red means it does not fit there. To place nothing, slide off onto the side list or one of the bars before lifting', tactil: true },
     { t: 'li', s: 'The eraser, Move / select and the Hand work as with the mouse: the eraser erases as you drag', tactil: true },
 
@@ -5090,7 +5090,7 @@ var MANUAL = [
     { t: 'cat', s: 'Working modes' },
 
     { t: 'h', s: 'Letterpress mode' },
-    { t: 'li', s: 'The first control of the top bar — Free mode is its other half' },
+    { t: 'li', s: 'The first control of the top bar' },
     { t: 'li', s: 'Simulates handling the movable-type version of the system: modules cannot overlap' },
 
     { t: 'h', s: 'Free mode' },
@@ -5099,7 +5099,7 @@ var MANUAL = [
     { t: 'h', s: 'Flip' },
     { t: 'li', s: 'In the tools row, right after the rotation arrows' },
     { t: 'li', s: 'Available in letterpress mode only. Mirrors the letters, preparing them for printing with movable type' },
-    { t: 'li', s: 'Each module is swapped for its mirrored counterpart — the slanted ones come in pairs, so flipping turns one into the other' },
+    { t: 'li', s: 'Each module is swapped for its mirrored counterpart' },
     { t: 'sc', k: 'H', s: 'Flip the entire composition' },
 
     { t: 'cat', s: 'Tools' },
@@ -5182,7 +5182,7 @@ var MANUAL = [
 
     { t: 'h', s: 'Reference ruler' },
     { t: 'li', s: 'The small box in the bottom-right corner shows the letter you are drawing at a reduced size' },
-    { t: 'li', s: 'It is there to show how the drawing holds up small — something the magnified grid hides. It appears on its own once the artboard has modules' },
+    { t: 'li', s: 'It is there to show how the drawing holds up small. It appears on its own once the artboard has modules' },
 
     { t: 'h', s: 'Module count' },
     { t: 'li', s: 'Above the reference ruler, it counts the modules on the artboard you are on' },
@@ -5230,7 +5230,7 @@ var MANUAL = [
 
     { t: 'h', s: 'Preview word' },
     { t: 'li', s: 'Sits at the end of the thumbnail list. Opens a strip at the bottom of the screen where the letters you have drawn are set side by side' },
-    { t: 'li', s: 'Type any letters in the box to compose them; the ones you have not drawn yet are skipped' },
+    { t: 'li', s: 'Type any letters in the box to see them together; the ones you have not drawn yet are skipped' },
     { t: 'li', s: 'The strip is not a dialog: the whole tool stays live above it, so editing a letter reshapes the word as you go. The letter you are editing is highlighted in the composition' },
     { t: 'sc', k: 'Arrow keys', s: 'Adjust the spacing between letters (pointer over the strip)' },
     { t: 'sc', k: 'Esc', s: 'Close the strip' },
@@ -5271,8 +5271,7 @@ var MANUAL = [
     { t: 'li', s: 'The Guide button at the bottom of the side bar opens this guide. Esc, or a click outside it, closes it' },
 
     { t: 'h', s: 'Back to pragmatipo.pt' },
-    { t: 'li', s: 'The pragmatipo.pt button, below Guide' },
-    { t: 'li', s: 'Leaves the tool and returns to the site. If there is work that has never been saved to a file, it asks first' },
+    { t: 'li', s: 'The pragmatipo.pt button, below Guide, lets you leave the tool and return to the site. Your work stays in this browser; only if it cannot be kept there does it first ask whether you are sure' },
 
     { t: 'cat', s: 'Clearing' },
 
@@ -5295,15 +5294,18 @@ var MANUAL = [
     { t: 'cat', s: 'Your data', participante: true },
 
     { t: 'h', participante: true, s: 'Your participant code' },
-    { t: 'li', participante: true, s: function () {
-        if (participante.membros && !participante.importadoDe) {
-            var dono = participante.membros.filter(function (m) { return m.papel === 'computador'; })[0] || participante.membros[0];
-            var colega = participante.membros.filter(function (m) { return m !== dono; })[0];
-            return participante.id + ' \u2014 your pair code: what you make together on this computer is stored under it. ' +
-                   'Your own codes: ' + dono.id + ' (registered on this computer)' + (colega ? ' and ' + colega.id + ' (partner)' : '') +
-                   '. Write them down: each person\'s code is the only way to ask for their data to be deleted';
-        }
-        return participante.id + ' \u2014 the anonymous code your answers and your work are stored under. Write it down: it is the only way to ask for them to be deleted';
+    // Num par, os três códigos em tópicos separados (pedido do Ângelo): o do
+    // par e o de cada pessoa, pela ordem da inscrição.
+    { t: 'li', participante: true, mostrar: emParNoGuia, s: function () {
+        return participante.id + ' \u2014 your pair code: what you make together on this computer is stored under it';
+    } },
+    { t: 'li', participante: true, mostrar: emParNoGuia, s: function () { return linhaDoMembro(membroDoPar(0)); } },
+    { t: 'li', participante: true, mostrar: function () { return emParNoGuia() && !!membroDoPar(1); },
+      s: function () { return linhaDoMembro(membroDoPar(1)); } },
+    { t: 'li', participante: true, mostrar: emParNoGuia,
+      s: 'Write them down: each person\'s code is the only way to ask for their data to be deleted' },
+    { t: 'li', participante: true, mostrar: function () { return !emParNoGuia(); }, s: function () {
+        return codigoComAlcunha(participante) + ' \u2014 the anonymous code your answers and your work are stored under. Write it down: it is the only way to ask for them to be deleted';
     } },
     { t: 'li', participante: true, s: function () { return 'To ask, send the code to ' + EMAIL_CONTACTO + '. Work that has already been printed or shown cannot be withdrawn from those copies'; } },
     // Para quem desenhou a dois num computador: passa a ter o seu código, e o
@@ -6950,8 +6952,7 @@ function adotarIdentidade(data) {
         // Ficheiro antigo, sem identidade. Quem está preso no portão precisa
         // de saber porque é que não passou.
         if (!portaoAberto) {
-            avisar("This file has no participant code — it was saved before that existed. " +
-                   "You will need the access code to continue.");
+            avisar("This file has no participant code. Enter the access code to continue.");
         }
         return;
     }
@@ -7006,10 +7007,10 @@ function adotarIdentidade(data) {
     }
 
     var texto = participante
-        ? 'This file belongs to participant ' + e.participante.id +
+        ? 'This file belongs to ' + quemE(e.participante) +
           '.\n\nContinue as that participant? Your current code (' + participante.id +
           ') will be replaced on this computer.\n\nChoose Cancel to keep only the drawings.'
-        : 'This file belongs to participant ' + e.participante.id +
+        : 'This file belongs to ' + quemE(e.participante) +
           '.\n\nContinue as that participant on this computer?';
     if (!perguntar(texto)) {
         // Fica só com os desenhos de outra pessoa: o envio da importação diz
@@ -7547,7 +7548,7 @@ function exportAlphabetZIP() {
     acoes.expZip++;
     // 1. Verifica se a biblioteca JSZip foi bem carregada no HTML
     if (typeof JSZip === 'undefined') {
-        avisar("Error: To export as ZIP, you need to add the JSZip link to your index.html file.");
+        avisar("The ZIP export could not start. Check your internet connection and reload the page.");
         return;
     }
 
@@ -8525,13 +8526,10 @@ function flipCompositionHorizontal() {
         var o = placedObjects[k];
         var esp = ESPELHO_MODULO[o.type];
 
-        // Peça sem espelho no sistema: não há nada que a substitua, e virar a
-        // composição à mesma dava uma forma errada. Diz-se qual é e pára.
-        if (!esp) {
-            avisar('Module ' + etiquetaDoModulo(o.type) + ' has no mirrored counterpart ' +
-                   'in the system, so this composition cannot be flipped.');
-            return;
-        }
+        // Os 22 módulos têm todos espelho (ESPELHO_MODULO). Só um ficheiro
+        // estragado traria uma peça sem ele: aí não se vira nada, em silêncio,
+        // em vez de dar uma forma errada.
+        if (!esp) return;
 
         var rotM = ((esp.rotBase - o.rot) % 4 + 4) % 4;
         var caixaOrig = caixaDaPeca(o.type, o.rot, o.x, o.y);
@@ -8679,7 +8677,7 @@ var EMAIL_CONTACTO = 'adg@esmad.ipp.pt';
 // Muda sempre que o texto do RGPD mudar — é o que permite dizer, na tese, ao
 // que cada participante consentiu. O endereço de contacto faz parte do texto:
 // estando errado, o direito à eliminação não era exercível.
-var VERSAO_CONSENTIMENTO = '2026-10-19';
+var VERSAO_CONSENTIMENTO = '2026-10-30';
 
 // A partir desta versão o consentimento inclui os desenhos (ver DESENHOS). Quem
 // aceitou uma anterior leu que as letras nunca eram enviadas: os desenhos dessa
@@ -8719,7 +8717,7 @@ var PERGUNTAS = [
       opcoes: ['Female', 'Male', 'Other', 'Prefer not to say'] },
     { id: 'grau', tipo: 'escolha', obrigatoria: true,
       label: 'Level of study',
-      opcoes: ['Secondary school', 'Vocational course',
+      opcoes: ['Below bachelor level',
                'Bachelor — 1st year', 'Bachelor — 2nd year', 'Bachelor — 3rd year',
                'Master — 1st year', 'Master — 2nd year', 'PhD',
                'Not studying right now'] },
@@ -8739,10 +8737,10 @@ var PERGUNTAS = [
       label: 'Have you designed type before?',
       opcoes: ['Never', 'Once or twice', 'Several times', 'Regularly'] },
     { id: 'letterpress', tipo: 'escolha', obrigatoria: true,
-      label: 'Have you worked with movable type (letterpress)?',
+      label: 'Have you ever worked with movable type?',
       opcoes: ['Never', 'Once or twice', 'Several times', 'Regularly'] },
     { id: 'stencil', tipo: 'escolha', obrigatoria: true,
-      label: 'Have you used stencils to draw letters?',
+      label: 'Have you ever used stencils to draw letters?',
       opcoes: ['Never', 'Once or twice', 'Several times', 'Regularly'] }
 ];
 
@@ -8756,7 +8754,7 @@ var TEXTO_RGPD =
     'It also records what you build — your letters, numbers and posters, module by module — so that they can be studied, ' +
     'and shown anonymously in the thesis, in exhibitions and on the Pragmatipo website. ' +
     'Text you type while drawing, such as poster names, is not recorded. ' +
-    'You can ask for your data to be deleted at any time by sending that code to ' + EMAIL_CONTACTO + '; ' +
+    'You can ask for your data to be deleted at any time by sending your code to ' + EMAIL_CONTACTO + '; ' +
     'work that has already been printed or shown cannot be withdrawn from those copies.';
 
 // --- ESTADO ----------------------------------------------------------------
@@ -8970,7 +8968,7 @@ function erro(caixa, msg) {
 // --- PASSO 1: CÓDIGO DE COORTE --------------------------------------------
 
 function passoCodigo(caixa) {
-    titulo(caixa, 'Pragmatipo', 'Enter the code you were given');
+    titulo(caixa, 'Pragmatipo', 'Enter the code shared with you');
 
     var inp = document.createElement('input');
     inp.type = 'text'; inp.setAttribute('autocomplete', 'off');
@@ -8988,7 +8986,7 @@ function passoCodigo(caixa) {
                     'margin': '16px 0 0', 'text-align': 'center', 'line-height': '1.5' });
     ajuda.appendChild(document.createTextNode('No code? Get in touch: '));
     var lnk = document.createElement('a');
-    lnk.href = 'mailto:' + EMAIL_CONTACTO + '?subject=' + encodeURIComponent('Pragmatipo — access code');
+    lnk.href = 'mailto:' + EMAIL_CONTACTO + '?subject=' + encodeURIComponent('Pragmatipo — access code request');
     lnk.textContent = EMAIL_CONTACTO;
     estilo(lnk, { 'color': '#0a0', 'text-decoration': 'underline' });
     ajuda.appendChild(lnk);
@@ -9031,9 +9029,12 @@ function passoCodigo(caixa) {
 // coorte e o material vêm do par; o resto responde-se por si.
 //
 // Sem `par`, o formulário pergunta se se trabalha sozinho ou a dois. A dois,
-// são duas colunas — quem fica com este computador e o colega, que continua
-// noutro —, cada uma com as suas respostas e os seus consentimentos (ver
-// concluirPortaoPar).
+// cada pessoa responde à vez, com as suas respostas e os seus consentimentos
+// (ver concluirPortaoPar).
+//
+// Toda a gente escreve uma alcunha: é por ela que o software diz quem é quem
+// (num par, as duas logo aqui, pela ordem em que vão responder). Fica fora das
+// respostas — só neste browser e no ficheiro do projecto, nunca na folha.
 function passoFormulario(caixa, grupo, par) {
     titulo(caixa, 'Before you start', par
         ? 'Starting as yourself, from the project you shared'
@@ -9041,7 +9042,7 @@ function passoFormulario(caixa, grupo, par) {
 
     if (par) {
         var notaPar = document.createElement('div');
-        notaPar.textContent = 'You worked on this project with someone else (participant ' + par.importadoDe + '). ' +
+        notaPar.textContent = 'You worked on this project with someone else. ' +
             'Answer for yourself: you will get your own code, and the drawings come with you. ' +
             'The code ' + par.importadoDe + ' keeps the work you did together.';
         estilo(notaPar, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#0a0',
@@ -9064,29 +9065,39 @@ function passoFormulario(caixa, grupo, par) {
         caixa.appendChild(pergunta);
         caixa.appendChild(segmentado(['Alone', 'In a pair'], 0, function (i) { mudarModo(i === 1); }));
         notaDoPar = document.createElement('div');
-        notaDoPar.textContent = 'Two people, one computer: each of you answers for yourself, one at a time \u2014 ' +
-            'first the person whose computer this is, then the other \u2014 and gets your own code. ' +
-            'What you make here together is kept under a shared pair code; afterwards each of you can continue alone ' +
-            '\u2014 one on this computer, the other by importing the project file on their own.';
+        notaDoPar.textContent = 'Two people, one computer: each of you answers this form for yourself, one at a time. ' +
+            'You get three codes \u2014 one for the pair, which keeps what you make together here, and one for each of you. ' +
+            'Afterwards, each of you can also continue alone: one on this computer, the other on another computer, ' +
+            'by importing the project file.';
         estilo(notaDoPar, { 'display': 'none', 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#0a0',
                             'line-height': '1.55', 'margin': '0 0 18px', 'padding': '10px 12px',
                             'background': '#f2fff2', 'border': '0.75px solid #b8e0b8', 'border-radius': '6px' });
         caixa.appendChild(notaDoPar);
     }
 
-    // Uma pessoa de cada vez: num par, primeiro quem é dono do computador; ao
-    // carregar em Next, o computador passa para o colega, que responde num
-    // formulário novo, sem ver as respostas anteriores (ver passoDoColega).
-    // Lado a lado, uma pessoa podia responder pelas duas.
+    var alcunhas = blocoDeAlcunhas(rotularPelaAlcunha);
+    caixa.appendChild(alcunhas.el);
+
+    // Uma pessoa de cada vez: num par, primeiro a primeira alcunha; ao carregar
+    // em Next, o computador passa para a segunda, que responde num formulário
+    // novo, sem ver as respostas anteriores (ver passoDoColega). Lado a lado,
+    // uma pessoa podia responder pelas duas.
     var colA = colunaDoQuestionario('');
     caixa.appendChild(colA.el);
 
     function mudarModo(dois) {
         emPar = dois;
-        colA.rotular(dois ? 'You \u2014 this computer is yours' : '');
+        alcunhas.modo(dois);
         estilo(notaDoPar, { 'display': dois ? 'block' : 'none' });
-        b.textContent = dois ? 'Next \u2014 your partner' : 'Start drawing';
+        rotularPelaAlcunha();
         if (msg) { msg.remove(); msg = null; }
+    }
+
+    // Num par, as respostas de cima ficam com o nome de quem as dá, e o botão
+    // diz a quem passa o computador.
+    function rotularPelaAlcunha() {
+        colA.rotular(emPar ? alcunhas.a() : '');
+        b.textContent = !emPar ? 'Start drawing' : alcunhas.b() ? 'Next \u2014 ' + alcunhas.b() : 'Next';
     }
 
     var msg = null;
@@ -9095,16 +9106,17 @@ function passoFormulario(caixa, grupo, par) {
 
     b.addEventListener('click', function () {
         var a = colA.ler();
-        if (a.faltam.length) {
+        var faltam = alcunhas.faltam().concat(a.faltam);
+        if (faltam.length) {
             if (msg) msg.remove();
-            msg = erro(caixa, 'Still missing: ' + a.faltam.join(', '));
+            msg = erro(caixa, 'Still missing: ' + faltam.join(', '));
             caixa.insertBefore(msg, b);   // junto ao botão, e à vista
             if (msg.scrollIntoView) msg.scrollIntoView({ block: 'nearest' });
             return;
         }
-        if (emPar) { passoDoColega(caixa, grupo, a.respostas); return; }
+        if (emPar) { passoDoColega(caixa, grupo, a.respostas, alcunhas.a(), alcunhas.b()); return; }
         if (par) fecharSessaoDoPar();
-        concluirPortao(grupo, a.respostas, par);
+        concluirPortao(grupo, a.respostas, par, alcunhas.a());
     });
 
     if (par && par.aoCancelar) {
@@ -9119,26 +9131,22 @@ function passoFormulario(caixa, grupo, par) {
     }
 }
 
-// Num par: o computador passa para o colega, que lê o texto do consentimento e
-// responde por si, num formulário novo. Só no fim é que a inscrição dos dois
-// fica feita — desistir a meio não grava nada.
-function passoDoColega(caixa, grupo, respostasA) {
-    titulo(caixa, 'Thank you', 'Now pass the computer to your partner');
-    var nota = document.createElement('div');
-    nota.textContent = 'Your partner answers the same questions on their own. The answers you just gave are not shown.';
-    estilo(nota, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
-                   'line-height': '1.55', 'margin': '0 0 6px' });
-    caixa.appendChild(nota);
-    var comecar = botao('I am the partner \u2014 start');
+// Num par: o computador passa para a segunda pessoa, que lê o texto do
+// consentimento e responde por si, num formulário novo. Só no fim é que a
+// inscrição dos dois fica feita — desistir a meio não grava nada.
+function passoDoColega(caixa, grupo, respostasA, alcunhaA, alcunhaB) {
+    // Sem falar a nenhuma das duas: o ecrã é de passagem.
+    titulo(caixa, alcunhaB + '\'s turn', 'The same questions, now for ' + alcunhaB);
+    var comecar = botao('Start');
     caixa.appendChild(comecar);
     comecar.addEventListener('click', function () {
-        titulo(caixa, 'Before you start', 'Your turn \u2014 answer for yourself');
+        titulo(caixa, 'Before you start', 'Now, ' + alcunhaB);
         var intro = document.createElement('div');
         intro.textContent = TEXTO_RGPD;
         estilo(intro, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
                         'line-height': '1.55', 'margin': '0 0 22px' });
         caixa.appendChild(intro);
-        var colB = colunaDoQuestionario('You \u2014 this computer isn\'t yours');
+        var colB = colunaDoQuestionario(alcunhaB);
         caixa.appendChild(colB.el);
         var msg = null;
         var b = botao('Start drawing');
@@ -9152,11 +9160,94 @@ function passoDoColega(caixa, grupo, respostasA) {
                 if (msg.scrollIntoView) msg.scrollIntoView({ block: 'nearest' });
                 return;
             }
-            concluirPortaoPar(grupo, respostasA, r.respostas);
+            concluirPortaoPar(grupo, respostasA, r.respostas, alcunhaA, alcunhaB);
         });
         if (caixa.scrollTo) caixa.scrollTo(0, 0);
     });
 }
+
+// A alcunha de quem responde, ou as duas de um par, pela ordem em que vão
+// responder. `aoMudar` corre a cada tecla (o formulário põe-nas nos rótulos).
+var ALCUNHA_MAX = 24;
+function blocoDeAlcunhas(aoMudar) {
+    var el = document.createElement('div');
+    estilo(el, { 'margin': '0 0 18px' });
+    var lbl = document.createElement('label');
+    estilo(lbl, { 'display': 'block', 'font': '700 11px \'Marist Variable\', Helvetica, Arial, sans-serif',
+                  'color': '#555', 'margin': '0 0 6px' });
+    el.appendChild(lbl);
+    var linha = document.createElement('div');
+    estilo(linha, { 'display': 'flex', 'gap': '10px' });
+    el.appendChild(linha);
+    function campo() {
+        var inp = document.createElement('input');
+        inp.type = 'text'; inp.maxLength = ALCUNHA_MAX;
+        inp.setAttribute('autocomplete', 'off');
+        estilo(inp, campoBase());
+        estilo(inp, { 'flex': '1 1 0', 'min-width': '0' });
+        inp.addEventListener('input', function () { if (aoMudar) aoMudar(); });
+        linha.appendChild(inp);
+        return inp;
+    }
+    var a = campo(), b = campo();
+    var nota = document.createElement('div');
+    estilo(nota, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#888',
+                   'line-height': '1.5', 'margin': '6px 0 0' });
+    el.appendChild(nota);
+
+    var dois = false;
+    function modo(d) {
+        dois = d;
+        lbl.textContent = d ? 'Your nicknames' : 'Your nickname';
+        a.setAttribute('placeholder', d ? 'Answers first' : 'Nickname');
+        b.setAttribute('placeholder', 'Answers second');
+        estilo(b, { 'display': d ? 'block' : 'none' });
+        nota.textContent = d
+            ? 'So the tool can tell you apart. They stay on this computer and in your project file, and are not sent to the research.'
+            : 'So the tool can call you by it. It stays on this computer and in your project file, and is not sent to the research.';
+    }
+    modo(false);
+
+    function ler(inp) { return (inp.value || '').replace(/\s+/g, ' ').trim().slice(0, ALCUNHA_MAX); }
+    return {
+        el: el,
+        modo: modo,
+        a: function () { return ler(a); },
+        b: function () { return dois ? ler(b) : ''; },
+        faltam: function () {
+            if (!dois) return ler(a) ? [] : ['your nickname'];
+            if (!ler(a) || !ler(b)) return ['your nicknames'];
+            if (ler(a).toLowerCase() === ler(b).toLowerCase()) return ['two different nicknames'];
+            return [];
+        }
+    };
+}
+
+// Como o software chama cada pessoa: pela alcunha. Quem se inscreveu antes de
+// haver alcunhas fica com o código e, se foi num par, com a ordem em que
+// respondeu (o papel; no recurso de quem se inscreveu sozinho, o papel diz
+// outra coisa, por isso aí não entra).
+function nomeDe(m) {
+    if (!m) return '';
+    if (m.alcunha) return m.alcunha;
+    var inscritoEmPar = m.papel && (!m.importadoDe || m.membros);
+    return m.id + (!inscritoEmPar ? '' : m.papel === 'computador' ? ' (signed up first)' : ' (signed up second)');
+}
+function quemE(p) { return p.alcunha ? p.alcunha + ' (' + p.id + ')' : 'participant ' + p.id; }
+
+// Para o Guide (Your data): este browser é ainda o de um par que trabalha
+// junto? E as pessoas dele, pela ordem da inscrição (0 respondeu primeiro).
+function emParNoGuia() { return !!(participante && participante.membros && !participante.importadoDe); }
+function membroDoPar(i) {
+    return participante.membros.slice().sort(function (a, b) {
+        return (a.papel === 'computador' ? 0 : 1) - (b.papel === 'computador' ? 0 : 1);
+    })[i];
+}
+function linhaDoMembro(m) {
+    return m.id + ' \u2014 ' + (m.alcunha ? m.alcunha + '\'s own code'
+        : 'own code of the person who signed up ' + (m.papel === 'computador' ? 'first' : 'second'));
+}
+function codigoComAlcunha(p) { return p.alcunha ? p.id + ' (' + p.alcunha + ')' : nomeDe(p); }
 
 // As perguntas e os consentimentos de UMA pessoa. Devolve o elemento e um
 // ler() com as respostas e o que falta.
@@ -9277,10 +9368,15 @@ function segmentado(opcoes, inicial, aoMudar) {
 // computador (continuarSozinho), a outra ao importar o projecto no dela
 // (escolherMembro). Três linhas na folha das inscrições: a do par
 // (inscricao = 'par', sem respostas) e uma por pessoa (inscricao = 'membro').
-function concluirPortaoPar(grupo, respostasA, respostasB) {
+//
+// As alcunhas ficam com os membros, neste browser e no ficheiro do projecto;
+// as linhas da folha não as levam. O papel diz só a ordem: 'computador' é
+// quem respondeu primeiro, 'colega' quem respondeu depois.
+function concluirPortaoPar(grupo, respostasA, respostasB, alcunhaA, alcunhaB) {
     var quando = new Date().toISOString();
     var idPar = novoIdParticipante(), idA = novoIdParticipante(), idB = novoIdParticipante();
-    var membros = [{ id: idA, papel: 'computador' }, { id: idB, papel: 'colega' }];
+    var membros = [{ id: idA, papel: 'computador', alcunha: alcunhaA || '' },
+                   { id: idB, papel: 'colega', alcunha: alcunhaB || '' }];
     participante = { id: idPar, coorte: grupo.coorte, material: grupo.material, quando: quando,
                      versaoConsentimento: VERSAO_CONSENTIMENTO, membros: membros };
     function base(id) {
@@ -9334,7 +9430,7 @@ function tornarMembro(par, membro) {
                      quando: par.quando || new Date().toISOString(),
                      versaoConsentimento: par.versaoConsentimento || '',
                      importadoDe: par.id, consentimentoDoPar: par.versaoConsentimento || '',
-                     papel: membro.papel, membros: par.membros };
+                     papel: membro.papel, membros: par.membros, alcunha: membro.alcunha || '' };
     recomecarDaPessoa();
     try { localStorage.setItem(CHAVE_PARTICIPANTE, JSON.stringify(participante)); } catch (e) {}
     abrirPortao();
@@ -9350,19 +9446,18 @@ function continuarSozinho() {
     escolherMembro({ participante: participante }, function () {}, ov.firstChild, {
         titulo: 'Continue alone on this computer',
         sub: 'Who stays on this computer? What you made together stays under the pair code ' + participante.id +
-             '. The other person continues on their own computer by importing the project file \u2014 ' +
-             'save it for them first (Export \u203a Save project (JSON)).',
+             '. The other can continue on another computer by importing the project file \u2014 ' +
+             'save it first (Export \u203a Save project (JSON)).',
         semJuntos: true,
-        meu: 'This computer is mine',
-        naoMeu: 'This computer isn\'t mine',
+        soONome: true,
         aoVoltar: function () { if (overlayPortao) { overlayPortao.remove(); overlayPortao = null; } portaoAberto = true; }
     });
 }
 
 // Quem é, de um par inscrito a dois — ao importar o projecto dele, ou no
-// "Continue alone" do manual. Os botões dizem de quem era o computador (o dono
-// é quem respondeu primeiro na inscrição). `opcoes`: { titulo, sub,
-// semJuntos, antes, aoVoltar, meu, naoMeu }.
+// "Continue alone" do manual. Um botão por pessoa, com a alcunha (ou o código,
+// num par inscrito antes das alcunhas). `opcoes`: { titulo, sub, semJuntos,
+// antes, aoVoltar, soONome }.
 function escolherMembro(e, continuar, caixa, opcoes) {
     opcoes = opcoes || {};
     var p = e.participante;
@@ -9371,9 +9466,7 @@ function escolherMembro(e, continuar, caixa, opcoes) {
                 versaoConsentimento: p.consentimentoDoPar || p.versaoConsentimento, membros: p.membros };
     titulo(caixa, opcoes.titulo || 'This project was made by a pair', opcoes.sub || 'Who are you?');
     p.membros.forEach(function (m) {
-        var b = botao(m.papel === 'computador'
-            ? (opcoes.meu || 'The computer was mine')
-            : (opcoes.naoMeu || 'The computer wasn\'t mine'));
+        var b = botao(opcoes.soONome ? nomeDe(m) : 'I am ' + nomeDe(m));
         b.addEventListener('click', function () {
             if (opcoes.antes) opcoes.antes();
             if (m.id === p.id) continuar();   // o ficheiro já é desta pessoa
@@ -9408,7 +9501,7 @@ function pedirParaDividir() {
     var ok = perguntar('Start as yourself?\n\n' +
         'You will answer a few questions and get your own participant code. The drawings stay here. ' +
         'The code ' + codigoDoPar + ' keeps the work you did together.\n\n' +
-        'If your partner is taking the project home, save it for them first (Export \u203a Save project (JSON)).\n\n' +
+        'If one of you is taking the project home, save it first (Export \u203a Save project (JSON)).\n\n' +
         'Do this only if you worked on this project with someone else.');
     if (!ok) return;
     showShortcutsModal = false;
@@ -9462,22 +9555,26 @@ function fecharSessaoDoPar() {
 function escolherDonoDoProjecto(e, continuar) {
     var caixa = overlayPortao && overlayPortao.firstChild;
     if (caixa && e.participante.membros && e.participante.membros.length) { escolherMembro(e, continuar, caixa); return; }
-    if (!caixa) { if (perguntar('This file belongs to participant ' + e.participante.id + '.\n\nContinue as that participant on this computer?')) continuar(); return; }
+    if (!caixa) { if (perguntar('This file belongs to ' + quemE(e.participante) + '.\n\nContinue as that participant on this computer?')) continuar(); return; }
     var id = e.participante.id;
     // Um ficheiro guardado por quem JÁ se separou traz o código dessa pessoa,
     // não o do par: quem era a outra metade liga-se ao par, nunca a ela.
     var doPar = e.participante.importadoDe || '';
     var codigoDoPar = doPar || id;
-    titulo(caixa, 'This project was saved by ' + id, doPar
-        ? id + ' already has their own code, separate from the pair ' + doPar + '.'
+    var nome = nomeDe(e.participante);
+    titulo(caixa, 'This project was saved by ' + (e.participante.alcunha ? nome + ' (' + id + ')' : id), doPar
+        ? nome + ' already has a code separate from the pair ' + doPar + '.'
         : 'Did you work on it alone, or with someone else?');
 
-    var b1 = botao('It is mine \u2014 continue as ' + id);
+    // Num ficheiro de quem se inscreveu sozinho, os botões respondem à
+    // pergunta: começar por si serve às duas pessoas, também à dona do
+    // ficheiro (o código dela fica a ser o do par). Com o nome, só quando ela
+    // já se separou — aí quem importa é mesmo a outra pessoa.
+    var b1 = botao(doPar ? 'I am ' + nome + ' \u2014 continue' : 'Alone \u2014 continue as ' + nome);
     b1.addEventListener('click', continuar);
     caixa.appendChild(b1);
 
-    var b2 = botao(doPar ? 'I was the other person in pair ' + doPar + ' \u2014 start as myself'
-                         : 'Start as myself \u2014 we worked in a pair');
+    var b2 = botao(doPar ? 'I worked with ' + nome + ' \u2014 start as myself' : 'With someone else \u2014 start as myself');
     b2.addEventListener('click', function () {
         abrirInscricaoDoPar({ coorte: e.participante.coorte || '', material: e.participante.material || '' }, codigoDoPar,
             function () { var c = overlayPortao && overlayPortao.firstChild; if (c) passoCodigo(c); },
@@ -9507,12 +9604,13 @@ function escolherDonoDoProjecto(e, continuar) {
 
 // --- CONCLUSÃO -------------------------------------------------------------
 
-function concluirPortao(grupo, respostas, par) {
+function concluirPortao(grupo, respostas, par, alcunha) {
     // A versão do consentimento fica com o participante (e viaja no ficheiro do
-    // projecto): é ela que diz se os desenhos desta pessoa podem sair.
+    // projecto): é ela que diz se os desenhos desta pessoa podem sair. A
+    // alcunha também, mas não vai no registo.
     participante = { id: novoIdParticipante(), coorte: grupo.coorte,
                      material: grupo.material, quando: new Date().toISOString(),
-                     versaoConsentimento: VERSAO_CONSENTIMENTO };
+                     versaoConsentimento: VERSAO_CONSENTIMENTO, alcunha: alcunha || '' };
     if (par && par.importadoDe) {
         participante.importadoDe = par.importadoDe;
         participante.consentimentoDoPar = par.consentimentoDoPar || '';
@@ -10388,16 +10486,16 @@ var AVALIACAO_PARADO_SEGUNDOS = 45;      // quanto tempo sem mexer conta como "p
 
 var PERGUNTAS_SAIDA = [
     { id: 'facilidade', tipo: 'escala',
-      label: 'How easy was it to build letters from the modules?',
+      label: 'How easy was it to compose letters from the modules?',
       extremos: ['Very hard', 'Very easy'] },
     { id: 'restricao', tipo: 'escala',
       label: 'The fixed set of modules felt…',
-      extremos: ['Limiting', 'Generative'] },
+      extremos: ['Not limiting at all', 'Very limiting'] },
     { id: 'usaria', tipo: 'escala',
       label: 'Would you use Pragmatipo in future projects or studies?',
       extremos: ['Very unlikely', 'Very likely'] },
     { id: 'comentario', tipo: 'longo', obrigatoria: false,
-      label: 'Anything you would change, or that surprised you?' }
+      label: 'Would you change anything in the software? Is there anything you would like to point out, positive or negative?' }
 ];
 
 // --- ESTADO ----------------------------------------------------------------
@@ -10513,11 +10611,11 @@ function mostrarAvaliacao(aoSair) {
     var quantas = numeros[PERGUNTAS_SAIDA.length] || 'A few';
 
     // Num par a trabalhar no mesmo computador, cada pessoa responde à vez e
-    // sem ver a resposta da outra: primeiro quem é dono do computador, depois,
-    // num formulário novo, o colega. Lado a lado, uma podia responder pelas
-    // duas, ou a primeira resposta condicionar a segunda. Cada resposta fica com
-    // o código da pessoa; quando depois cada uma continuar sozinha, a pergunta
-    // volta — e as duas comparam-se.
+    // sem ver a resposta da outra: primeiro quem respondeu primeiro na
+    // inscrição, depois, num formulário novo, a outra. Lado a lado, uma podia
+    // responder pelas duas, ou a primeira resposta condicionar a segunda. Cada
+    // resposta fica com o código da pessoa; quando depois cada uma continuar
+    // sozinha, a pergunta volta — e as duas comparam-se.
     var emPar = !!(participante && participante.membros && !participante.importadoDe);
     var ordem = emPar ? participante.membros.slice().sort(function (a, b) {
         return (a.papel === 'computador' ? 0 : 1) - (b.papel === 'computador' ? 0 : 1);
@@ -10558,8 +10656,8 @@ function mostrarAvaliacao(aoSair) {
         var membro = ordem[i];
         titulo(caixa, 'How did it go?', !emPar
             ? quantas + ' quick questions \u2014 they help the research more than you think'
-            : (i === 0 ? 'First, the person whose computer this is \u2014 ' + quantas.toLowerCase() + ' quick questions'
-                       : 'Now your partner, on your own \u2014 ' + quantas.toLowerCase() + ' quick questions'));
+            : (i === 0 ? 'First, ' + nomeDe(membro) + ' \u2014 ' + quantas.toLowerCase() + ' quick questions'
+                       : 'Now, ' + nomeDe(membro) + ' \u2014 ' + quantas.toLowerCase() + ' quick questions'));
 
         var respostas = {};
         PERGUNTAS_SAIDA.forEach(function (p) {
@@ -10605,13 +10703,11 @@ function mostrarAvaliacao(aoSair) {
     // Entre as duas: o computador passa de mão, e a resposta anterior já não
     // está à vista.
     function passarAoColega(i) {
-        titulo(caixa, 'Thank you', 'Now pass the computer to your partner');
-        var nota = document.createElement('div');
-        nota.textContent = 'Your partner answers the same questions on their own. The answers you just gave are not shown.';
-        estilo(nota, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#555',
-                       'line-height': '1.55', 'margin': '0 0 6px' });
-        caixa.appendChild(nota);
-        var comecar = botao('I am the partner \u2014 start');
+        // Sem alcunha (par inscrito antes delas), o nome é o código com a ordem
+        // entre parênteses, e o possessivo ficava colado ao parêntese.
+        titulo(caixa, ordem[i].alcunha ? ordem[i].alcunha + '\'s turn' : 'Next: ' + nomeDe(ordem[i]),
+               'The same questions, now for ' + nomeDe(ordem[i]));
+        var comecar = botao('Start');
         comecar.addEventListener('click', function () { passo(i); });
         caixa.appendChild(comecar);
     }
@@ -10647,31 +10743,44 @@ function mostrarAgradecimento(caixa) {
                      'color': '#555', 'margin': '0 0 6px' });
     caixa.appendChild(rotulo);
 
-    var codigo = document.createElement('div');
-    // Num par, o código para pedir que apaguem os dados é o de cada pessoa.
+    // Num par, o código para pedir que apaguem os dados é o de cada pessoa:
+    // uma caixa por pessoa, com a alcunha por cima, fora do que se selecciona —
+    // quem copia o código para o e-mail não leva a alcunha com ele.
     var ehPar = participante && participante.membros && !participante.importadoDe;
     if (ehPar) rotulo.textContent = 'Your anonymous codes (one each)';
-    codigo.textContent = !participante ? '—'
-        : ehPar ? participante.membros.map(function (m) { return m.id; }).join('  \u00b7  ')
-        : participante.id;
-    estilo(codigo, { 'font': '700 20px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#0a0',
-                     'letter-spacing': '1px', 'text-align': 'center',
-                     'background': '#f2fff2', 'border': '0.75px solid #0a0',
-                     'border-radius': '6px', 'padding': '14px', 'margin': '0 0 10px',
-                     'user-select': 'all' });
-    caixa.appendChild(codigo);
+    function caixaDoCodigo(texto) {
+        var c = document.createElement('div');
+        c.textContent = texto;
+        estilo(c, { 'font': '700 20px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#0a0',
+                    'letter-spacing': '1px', 'text-align': 'center',
+                    'background': '#f2fff2', 'border': '0.75px solid #0a0',
+                    'border-radius': '6px', 'padding': '14px', 'margin': '0',
+                    'user-select': 'all' });
+        return c;
+    }
+    var codigos = document.createElement('div');
+    estilo(codigos, { 'display': 'flex', 'gap': '10px', 'margin': '0 0 10px' });
+    (ehPar ? participante.membros : [participante]).forEach(function (m) {
+        var col = document.createElement('div');
+        estilo(col, { 'flex': '1 1 0', 'min-width': '0' });
+        if (ehPar && m.alcunha) {
+            var nome = document.createElement('div');
+            nome.textContent = m.alcunha;
+            estilo(nome, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#888',
+                           'text-align': 'center', 'margin': '0 0 4px' });
+            col.appendChild(nome);
+        }
+        col.appendChild(caixaDoCodigo(m ? m.id : '—'));
+        codigos.appendChild(col);
+    });
+    caixa.appendChild(codigos);
 
     var nota = document.createElement('div');
     estilo(nota, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#888',
                    'line-height': '1.55', 'margin': '0 0 4px' });
-    nota.appendChild(document.createTextNode('Write it down if you may want your data removed later. Send it to '));
-    var lnk = document.createElement('a');
-    lnk.href = 'mailto:' + EMAIL_CONTACTO + '?subject=' +
-               encodeURIComponent('Pragmatipo — remove my data');
-    lnk.textContent = EMAIL_CONTACTO;
-    estilo(lnk, { 'color': '#0a0', 'text-decoration': 'underline' });
-    nota.appendChild(lnk);
-    nota.appendChild(document.createTextNode(' and it is deleted.'));
+    // Onde fica o código, e mais nada: o pedido para apagar está no Guide (Your
+    // data), não se anuncia aqui.
+    nota.textContent = (ehPar ? 'Your codes are' : 'Your code is') + ' also in the Guide, under Your data.';
     caixa.appendChild(nota);
 
     var b = botao(sairDepoisDeAvaliar ? 'Back to the site' : 'Back to drawing');
