@@ -37,6 +37,20 @@ var artH = 66;
 var artOffsetX = 0;
 var artOffsetY = 0;
 
+// Papel A. As folhas F1–F3 são as do papel de sempre (≈25×35, 35×50 e 50×70 cm)
+// e são um pouco maiores do que a folha A que se põe no prelo: F1 leva uma A4,
+// F2 uma A3 e F3 uma A2. O último segmento do controlo da folha mostra essa A à
+// escala, ao centro da folha (desenharPapelA), no alfabeto e no cartaz.
+var PAPEL_DE_CADA_FOLHA = [
+    { nome: 'A4', mm: [210, 297] },
+    { nome: 'A3', mm: [297, 420] },
+    { nome: 'A2', mm: [420, 594] }
+];
+var showPapelA = true;
+// Cinzento: as cores já são das guias tipográficas (o azul é o da X-height) e
+// esta linha é do papel, não da letra.
+var COR_PAPEL_A = [110, 110, 110];
+
 // --- SISTEMA DE ARTBOARD ---
 var artboardSelect;
 var currentArtboard = 'Formato 1 (690x990px)';
@@ -3234,6 +3248,52 @@ function getFillVectors(rot) {
     return { p: { x: 0, y: 0 }, s: { x: 0, y: 0 } };
 }
 
+// O papel A da folha aberta, em quadrículas, à escala da exportação —
+// ESCALA_EXPORTACAO pt por quadrícula, ≈ 10,6 mm, a mesma das legendas das
+// folhas. Medida exacta, sem arredondar às quadrículas: a linha cai onde cai a
+// borda do papel, muitas vezes a meio de uma quadrícula. Ao centro da folha.
+function papelA() {
+    var papel = PAPEL_DE_CADA_FOLHA[currentArtboardIdx];
+    var mmPorQuadricula = ESCALA_EXPORTACAO * 25.4 / 72;
+    var mm = isLandscape ? [papel.mm[1], papel.mm[0]] : papel.mm;
+    var w = mm[0] / mmPorQuadricula, h = mm[1] / mmPorQuadricula;
+    return { nome: papel.nome, mm: mm, w: w, h: h,
+             x: (artW - w) / 2, y: (artH - h) / 2 };   // a partir do canto da folha
+}
+
+// Esbate o que fica fora do papel A e contorna-o a tracejado, com o nome e o
+// tamanho por cima. Vai por cima da grelha, para ela se continuar a ler na
+// parte esbatida, e por baixo das peças: é referência, como a grelha. O
+// esbatido é leve (≈244) para ficar entre a folha (249) e o fundo (238): mais
+// escuro, a margem confundia-se com o fundo e a folha parecia acabar na linha.
+// O SVG do cartaz sai cortado às peças, por isso o que conta para caber no
+// papel é o tamanho do desenho, não o sítio: quem fica dentro da linha cabe.
+function desenharPapelA(gridStartX, gridStartY) {
+    var a = papelA();
+    var fw = artW * tileSize, fh = artH * tileSize;
+    var x0 = gridStartX + a.x * tileSize;
+    var y0 = gridStartY + a.y * tileSize;
+    var w = a.w * tileSize, h = a.h * tileSize;
+    var rotulo = a.nome + ' \u00b7 ' + a.mm[0] + ' \u00d7 ' + a.mm[1] + ' mm';
+    push();
+    rectMode(CORNER); noStroke(); fill(0, 5);
+    rect(gridStartX, gridStartY, fw, y0 - gridStartY);                 // cima
+    rect(gridStartX, y0 + h, fw, gridStartY + fh - (y0 + h));          // baixo
+    rect(gridStartX, y0, x0 - gridStartX, h);                          // esquerda
+    rect(x0 + w, y0, gridStartX + fw - (x0 + w), h);                   // direita
+    noFill(); stroke(COR_PAPEL_A[0], COR_PAPEL_A[1], COR_PAPEL_A[2], 180); strokeWeight(0.75);
+    drawingContext.setLineDash([6, 4]);
+    rect(x0, y0, w, h);
+    drawingContext.setLineDash([]);
+    // Por cima da linha, como os rótulos das guias tipográficas; quando a
+    // margem de cima tem menos de 14 px não há lá espaço e passa para dentro
+    // (F1 deitada até ≈ 9 px por quadrícula; F1 ao alto e F2 deitada no zoom mínimo).
+    noStroke(); fill(COR_PAPEL_A[0], COR_PAPEL_A[1], COR_PAPEL_A[2], 200); textSize(9);
+    if (y0 - gridStartY >= 14) { textAlign(LEFT, BOTTOM); text(rotulo, x0, y0 - 3); }
+    else { textAlign(LEFT, TOP); text(rotulo, x0 + 3, y0 + 3); }
+    pop();
+}
+
 function drawGrid() {
     // 0. OS LIMITES GLOBAIS SÃO AGORA LIDOS DIRETAMENTE
     var gridStartX = centerX + (artOffsetX - GRID_CX) * tileSize;
@@ -3288,6 +3348,9 @@ function drawGrid() {
         }
         pop();
     }
+
+    // 1b. Papel A, no alfabeto e no cartaz. Liga-se no controlo da folha.
+    if (showPapelA) desenharPapelA(gridStartX, gridStartY);
 
     // 2. GUIAS TIPOGRÁFICAS E LATERAIS
     if (showGuides && !modoCartaz) {
@@ -4550,7 +4613,7 @@ function checkTopBarClick() {
         toolStartX + (5.5 * toolGapX),
         toolStartX + (9.5 * toolGapX)
     ];
-    // A folha: F1 · F2 · F3 ‖ ao alto · deitada, um controlo só (drawControloDaFolha).
+    // A folha: F1 · F2 · F3 ‖ ao alto · deitada ‖ papel A, um controlo só (drawControloDaFolha).
     var folhaW = (4 * toolGapX) + tBoxSize;
     var cxFolha = toolStartX + (14 * toolGapX);
 
@@ -4567,9 +4630,10 @@ function checkTopBarClick() {
         if (mouseX > cxs[2] - styleBtnW / 2 && mouseX < cxs[2] + styleBtnW / 2) {
             currentGridStyle = mouseX < cxs[2] ? 'lines' : 'dots'; return;
         }
-        // Folha [F1 | F2 | F3 ‖ AO ALTO | DEITADA]
+        // Folha [F1 | F2 | F3 ‖ AO ALTO | DEITADA ‖ PAPEL A]
         var seg = (mouseX > cxFolha - folhaW / 2 && mouseX < cxFolha + folhaW / 2)
                 ? segmentoDaFolha(cxFolha, folhaW) : -1;
+        if (seg === 5) { showPapelA = !showPapelA; return; }
         if (seg >= 0 && seg < 3) {
             var novoIdx = seg;
             var idxAnterior = currentArtboardIdx;
@@ -4584,7 +4648,7 @@ function checkTopBarClick() {
             }
             return;
         }
-        if (seg >= 3) {
+        if (seg === 3 || seg === 4) {
             var novaOrient = (seg === 4);
             var orientAnterior = isLandscape;
             if (aplicarMudancaDeFolha(function () { isLandscape = novaOrient; },
@@ -4873,7 +4937,7 @@ function drawUI() {
     var cx0 = toolStartX + (1.5 * toolGapX);
     var cx1 = toolStartX + (5.5 * toolGapX);
     var cx2 = toolStartX + (9.5 * toolGapX);
-    // A folha (formato e orientação) ocupa cinco colunas, a começar onde
+    // A folha (formato, orientação e papel A) ocupa cinco colunas, a começar onde
     // começava o F1/F2/F3.
     var folhaW = (4 * toolGapX) + tBoxSize;
     var cxFolha = toolStartX + (14 * toolGapX);
@@ -4894,8 +4958,11 @@ function drawUI() {
             var segW = folhaW / SEGMENTOS_DA_FOLHA;
             // No cartaz, a folha muda só o cartaz aberto — convém dizê-lo.
             var soEste = modoCartaz ? ' — this poster only' : '';
-            activeTooltip = ["Frame 1 (690 × 990 px / ≈ 25 × 35 cm)", "Frame 2 (990 × 1380 px / ≈ 35 × 50 cm)",
-                             "Frame 3 (1380 × 1980 px / ≈ 50 × 70 cm)", "Portrait", "Landscape"][seg] + soEste;
+            var papelDaDica = papelA();
+            activeTooltip = seg === 5
+                ? "Paper size: " + papelDaDica.nome + " (" + papelDaDica.mm[0] + " × " + papelDaDica.mm[1] + " mm)"
+                : ["Frame 1 (690 × 990 px / ≈ 25 × 35 cm)", "Frame 2 (990 × 1380 px / ≈ 35 × 50 cm)",
+                   "Frame 3 (1380 × 1980 px / ≈ 50 × 70 cm)", "Portrait", "Landscape"][seg] + soEste;
             tooltipX = cxFolha - folhaW / 2 + (seg + 0.5) * segW;
             tooltipY = ly + styleBtnH / 2 + 15 * globalScale;
         }
@@ -5204,11 +5271,18 @@ var MANUAL = [
     { t: 'li', s: 'F3: close to 50 \u00d7 70 cm \u2014 46 \u00d7 66 cells' },
     { t: 'li', s: 'Modules always sit inside the sheet. Changing frame or orientation deletes whatever would fall outside the new sheet, so it asks first and tells you which letters would lose modules' },
     { t: 'li', s: 'With a poster open, the frame and orientation belong to that poster alone: the alphabet and the other posters keep their own' },
+    { t: 'li', s: 'Each frame is slightly larger than the A sheet that goes on the press: A4 for F1, A3 for F2, A2 for F3 \u2014 see Paper size' },
 
     { t: 'h', s: 'Portrait / Landscape' },
-    { t: 'li', s: 'The two sheet icons after F1 / F2 / F3, in the same control' },
-    { t: 'li', s: 'Portrait: the upright sheet — vertical artboard' },
+    { t: 'li', s: 'The two solid sheet icons after F1 / F2 / F3, in the same control' },
+    { t: 'li', s: 'Portrait: the solid upright sheet — vertical artboard' },
     { t: 'li', s: 'Landscape: the sheet lying down — horizontal artboard' },
+
+    { t: 'h', s: 'Paper size' },
+    { t: 'li', s: 'The dashed sheet icon at the end of the same control, after Portrait / Landscape' },
+    { t: 'li', s: 'Shows the A sheet that goes on the press, at actual scale and centred on the frame: A4 in F1, A3 in F2, A2 in F3' },
+    { t: 'li', s: 'Whatever stays inside the dashed line fits on that sheet' },
+    { t: 'li', s: 'Works on letters and posters alike. It is on from the start: click it to hide the sheet, and again to bring it back' },
 
     { t: 'h', s: 'Alphabet / Poster' },
     { t: 'li', s: 'Sits above the thumbnail list and chooses what you are drawing on' },
@@ -5221,7 +5295,7 @@ var MANUAL = [
     { t: 'li', s: 'Click a poster in the side list to open it. Each one shows its whole sheet in miniature' },
     { t: 'li', s: '+ New artboard adds a poster in the frame of the one that is open, and opens it' },
     { t: 'li', s: 'The three buttons below act on the open poster: duplicate it, rename it, delete it. Double-clicking a poster in the list also renames it' },
-    { t: 'li', s: 'Each poster has its own frame and orientation, chosen with F1 / F2 / F3 and the two sheet icons while it is open' },
+    { t: 'li', s: 'Each poster has its own frame and orientation, chosen with F1 / F2 / F3 and Portrait / Landscape while it is open' },
     { t: 'li', s: 'Deleting asks first and cannot be undone. The last poster cannot be deleted — Clear poster empties it instead' },
 
     { t: 'h', s: '36 side thumbnails' },
@@ -8373,9 +8447,11 @@ function drawSegmentedControl(cx, cy, w, h, options, selectedIdx) {
 }
 
 // A FOLHA NUM CONTROLO SÓ: formato e orientação são a mesma coisa — a folha
-// em que se desenha. Cinco segmentos, F1 · F2 · F3 ‖ ao alto · deitada, com
-// uma escolha de cada lado do separador. Os cliques usam segmentoDaFolha.
-var SEGMENTOS_DA_FOLHA = 5;
+// em que se desenha. Seis segmentos, F1 · F2 · F3 ‖ ao alto · deitada ‖ papel A,
+// com uma escolha em cada um dos dois primeiros grupos; o último liga e desliga
+// a linha do papel A. A largura é a de antes, alinhada com o zoom por baixo.
+// Os cliques usam segmentoDaFolha.
+var SEGMENTOS_DA_FOLHA = 6;
 
 function segmentoDaFolha(cx, w) {
     return constrain(Math.floor((mouseX - (cx - w / 2)) / (w / SEGMENTOS_DA_FOLHA)), 0, SEGMENTOS_DA_FOLHA - 1);
@@ -8391,7 +8467,7 @@ function drawControloDaFolha(cx, cy, w, h) {
                 mouseX > startX && mouseX < startX + w ? segmentoDaFolha(cx, w) : -1;
     for (var i = 0; i < SEGMENTOS_DA_FOLHA; i++) {
         var segCX = startX + (i * segW) + (segW / 2);
-        var escolhido = (i < 3) ? (i === currentArtboardIdx) : (i === 3 ? !isLandscape : isLandscape);
+        var escolhido = (i < 3) ? (i === currentArtboardIdx) : (i === 3 ? !isLandscape : (i === 4 ? isLandscape : showPapelA));
         if (escolhido) {
             fill(255); stroke(238); strokeWeight(0.75);
             rect(segCX, cy, segW - 4 * globalScale, h - 4 * globalScale, 4 * globalScale);
@@ -8399,10 +8475,11 @@ function drawControloDaFolha(cx, cy, w, h) {
             fill(235); noStroke();
             rect(segCX, cy, segW - 4 * globalScale, h - 4 * globalScale, 4 * globalScale);
         }
-        // Entre o formato e a orientação, o separador vai de ponta a ponta.
+        // Entre os grupos, o separador vai de ponta a ponta.
         if (i > 0) {
-            stroke(i === 3 ? 225 : 238); strokeWeight(0.75);
-            var meia = (i === 3) ? h / 2 - 3 * globalScale : h / 3;
+            var entreGrupos = (i === 3 || i === 5);
+            stroke(entreGrupos ? 225 : 238); strokeWeight(0.75);
+            var meia = entreGrupos ? h / 2 - 3 * globalScale : h / 3;
             line(startX + i * segW, cy - meia, startX + i * segW, cy + meia);
         }
         if (i < 3) {
@@ -8416,11 +8493,16 @@ function drawControloDaFolha(cx, cy, w, h) {
             // que o deles: os Phosphor têm 16 em 256 a 20 px (1,25 px), mas são
             // imagens ampliadas e a suavização dá-lhes uns 0,4 px a mais.
             // Medido a 0,48 e a 1 de escala, num ecrã Retina.
+            // O papel A é a mesma folha ao alto, a tracejado como a linha que
+            // mostra; ligado, fica verde como as escolhas ao lado.
             var curto = 10.5 * globalScale, longo = 15 * globalScale;
+            var deitada = (i === 4);
             noFill(); strokeJoin(ROUND);
             stroke(escolhido ? color(0, 200, 0) : (i === sobre ? color(40) : color(80)));
             strokeWeight(globalScale + 0.4);
-            rect(segCX, cy, i === 3 ? curto : longo, i === 3 ? longo : curto, 1.5 * globalScale);
+            if (i === 5) drawingContext.setLineDash([2.5 * globalScale, 2 * globalScale]);
+            rect(segCX, cy, deitada ? longo : curto, deitada ? curto : longo, 1.5 * globalScale);
+            drawingContext.setLineDash([]);
             strokeJoin(MITER);
         }
     }
