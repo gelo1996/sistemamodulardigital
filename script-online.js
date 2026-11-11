@@ -11,6 +11,9 @@ var BASE_PATH = IS_LOCAL
 // --- SISTEMA DE POP-UP (MODAL) E RODAPÉ ---
 var showShortcutsModal = false;
 var suppressDrawUntilRelease = false; // impede que o clique que fecha o modal desenhe no artboard
+// O mousedown deste gesto fechou a faixa da palavra ou o manual: o contextmenu
+// que vem a seguir (o Ctrl+clique do Mac) não abre o menu onde eles estavam.
+var cliqueFechouSobreposicao = false;
 var btnAtalhos = { x: 0, y: 0, w: 100, h: 30 };
 var btnFlip = { x: 0, y: 0, w: 30, h: 30 }; // na barra de cima, a seguir à rotação
 var btnHome = { x: 0, y: 0, w: 30, h: 30 }; // Voltar a pragmatipo.pt
@@ -144,8 +147,14 @@ var isOverlapMode = false; // Por defeito, a colisão está ligada
 var telaPorEscolher = true;
 
 function escolherTela(char) {
+    // Com a letra já à vista, o clique não faz nada ao desenho (como no
+    // escolherCartaz). Recarregá-la repunha a última cópia guardada, que só se
+    // actualiza ao mudar de letra, ao desfazer ou ao exportar: o que se tinha
+    // desenhado desde aí desaparecia.
+    var jaAberta = !telaPorEscolher && char === currentChar;
     telaPorEscolher = false;
-    if (char === currentChar) loadCharacter(char);   // o switchCharacter ignorava
+    if (jaAberta) return;
+    if (char === currentChar) loadCharacter(char);   // a primeira escolha, ao entrar: o switchCharacter ignorava
     else switchCharacter(char);
 }
 
@@ -182,9 +191,12 @@ var rotateOriginals = [];          // posições no momento em que se pegou no p
 var rotateHandleAngle = -90;       // onde o punho está, em graus (-90 = topo)
 
 // Nome da tecla modificadora, para o manual mostrar o atalho certo em cada
-// sistema. O código aceita sempre as duas (metaKey || ctrlKey).
-var TECLA_CMD = /Mac|iPod|iPhone|iPad/.test(navigator.platform || '') ? 'Cmd' : 'Ctrl';
-var TECLA_ALT = /Mac|iPod|iPhone|iPad/.test(navigator.platform || '') ? 'Option' : 'Alt';
+// sistema. Os atalhos aceitam sempre as duas (metaKey || ctrlKey); só o clique
+// as distingue: o «só esta peça» dentro de um grupo é o Cmd no Mac e o Ctrl no
+// PC, porque no Mac o Ctrl+clique é o botão direito.
+var EM_MAC = /Mac|iPod|iPhone|iPad/.test(navigator.platform || '');
+var TECLA_CMD = EM_MAC ? 'Cmd' : 'Ctrl';
+var TECLA_ALT = EM_MAC ? 'Option' : 'Alt';
 var hoveringRotateHandle = false;  // para o cursor reagir
 
 // --- VARIÁVEIS DE SELEÇÃO E DRAG & DROP ---
@@ -192,6 +204,15 @@ var selectedObjects = [];
 var isDraggingSelection = false;
 var dragStartGrid = { x: 0, y: 0 };
 var dragOriginals = [];
+// As dragOriginals rodam com o R a meio do arrasto; esta cópia não: é o que
+// volta se a selecção não pousar, e a origem que fica no Option.
+var dragOrigemIntacta = [];
+// Com a simetria ligada, os espelhos que saíram do tabuleiro com a selecção
+// (e o lugar de cada um na lista), para voltarem se ela não pousar.
+var dragEspelhosLevantados = [];
+// E, por peça da selecção, o espelho levantado de cada tipo (V, H, VH): o
+// espelho novo que lhe toma o lugar herda os grupos dele (gruposNoCompleto).
+var dragParceirosPorPeca = [];
 var selectionBox = { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0 };
 
 function preload() {
@@ -339,8 +360,8 @@ function aplicarMudancaDeFolha(mudar, repor) {
         var msg = 'This sheet is smaller. ' + fora.modulos +
                   (fora.modulos === 1 ? ' module that falls' : ' modules that fall') +
                   ' outside will be deleted, in: ' + quais +
-                  (modoCartaz ? '.\n\nThey can be recovered with undo.\n\n'
-                              : '.\n\nEach letter can be recovered one at a time with undo.\n\n') +
+                  (modoCartaz ? '.\n\nThey can be recovered with undo, on a sheet where they fit.\n\n'
+                              : '.\n\nEach letter can be recovered one at a time with undo, on a sheet where they fit.\n\n') +
                   'This is only asked once — after this, changing sheet trims straight away.\n\nContinue?';
         if (!perguntar(msg)) {
             repor();
@@ -426,6 +447,11 @@ function setup() {
     pixelDensity(displayDensity());
     var cnv = createCanvas(windowWidth, windowHeight);
     forceCanvasLayout(cnv);
+    // O botão direito abre o menu da ferramenta (aoMenuDeContexto). No próprio
+    // canvas e não na janela: os formulários e a caixa de texto da palavra
+    // ficam com o menu do browser. O elemento é sempre este — o resizeCanvas
+    // não o troca.
+    if (cnv && cnv.elt) cnv.elt.addEventListener('contextmenu', aoMenuDeContexto);
     rectMode(CENTER);
     imageMode(CENTER);
     strokeWeight(0.75);
@@ -771,7 +797,19 @@ function calculateLayout() {
     uiSlider.y = ty;
 }
 
+// Com o rato em cima de um menu aberto (Clear, Export, o do botão direito), o
+// canvas por baixo não o vê. O p5 escuta o mousemove na janela e continuava a
+// mexer o mouseX por baixo do menu: os botões (Export, Import), a paleta, as
+// ferramentas e as peças tapadas pelo menu acendiam-se ao passar. Durante este
+// frame o ponteiro fica longe de tudo; volta no fim, para os cliques e o resto.
 function draw() {
+    if (!ratoSobreMenu()) { desenharFrame(); return; }
+    var mx = mouseX, my = mouseY;
+    mouseX = -100000; mouseY = -100000;
+    try { desenharFrame(); } finally { mouseX = mx; mouseY = my; }
+}
+
+function desenharFrame() {
     background(238);
 
     // LÓGICA DAS GUIAS
@@ -861,12 +899,19 @@ function draw() {
     // Pousa por cima da miniatura da letra; sem miniatura, encosta ao fundo (ou
     // ao topo da faixa da palavra, para não cair sobre a composição).
     // É uma nota do canvas: com o manual aberto não deve flutuar por cima dele.
+    // A meio de um arrasto conta o desenho de antes dele (pecasDoDesenho).
     var pil = getContagemBounds();
     if (pil) {
-        desenharPilula('modules: ' + placedObjects.length,
+        desenharPilula('modules: ' + pecasDoDesenho().length,
                        pil.cx, pil.cy, [249, 235], [120],
-                       { largura: pil.largura, contorno: 238 });
+                       { larguraFixa: pil.largura, contorno: 238 });
     }
+    // Por cima da contagem, só no Letterpress, a lista para impressão — esta é
+    // um botão. Depois a dica da peça sob o ponteiro, por cima de tudo o que é
+    // do canvas: desenhada junto do fantasma, a régua, a contagem, a faixa da
+    // palavra e a barra de baixo passavam-lhe por cima.
+    desenharListaImpressao();
+    desenharDicaDaPeca();
 
     verificarAutosave();
     verificarAvaliacao();
@@ -886,6 +931,7 @@ function handleInteraction() {
     if (showShortcutsModal) return;
     if (sobreFaixaPreview()) return;
     if (sobreBarraDeToque()) return;
+    if (sobreListaImpressao()) return;   // a lista para impressão é interface: nada se pinta nem apaga por baixo
     // Dois dedos são zoom, não desenho — nem o dedo que fica depois de um sair.
     if (toque.gesto || toque.aguardarLevantar) return;
     // Só um toque que começou na prancheta pousa ou apaga: arrastar a lista,
@@ -976,7 +1022,24 @@ function getHoveredGuide() {
 }
 
 function mousePressed(evento) {
+    // Os botões laterais do rato (recuar e avançar, o 3 e o 4, e os que houver
+    // a mais) não fazem nada na ferramenta, nem na prancheta nem nas barras. O
+    // p5 dá-lhes mouseButton = LEFT e o rato por carregado: pintavam, apagavam,
+    // escolhiam e arrastavam como o esquerdo (a cada quadro, pinta-se enquanto o
+    // rato está carregado). Desfaz-se isso antes de mexer em mais nada — também a
+    // meio de um gesto do esquerdo, que continua: carregado só se outro botão
+    // estiver em baixo (buttons: 1 o esquerdo, 2 o direito, 4 o do meio), e
+    // com esse botão.
+    if (evento && evento.button > 2) {
+        var outros = (evento.buttons || 0) & 7;
+        porPressao(outros !== 0);
+        if (outros & 1) mouseButton = LEFT;
+        else if (outros & 4) mouseButton = CENTER;
+        else if (outros & 2) mouseButton = RIGHT;
+        return false;
+    }
     arrastoComecouNaTela = false;
+    cliqueFechouSobreposicao = false;
     // Toques fora do canvas (formulários, menus, a caixa de texto) são do
     // HTML: o p5 escuta a janela inteira, e sem isto um toque numa opção do
     // menu fechava o menu antes de a opção o receber.
@@ -997,6 +1060,11 @@ function mousePressed(evento) {
         suppressDrawUntilRelease = true;   // este clique fecha, não desenha
         return;
     }
+    // O botão direito é só do menu (aoMenuDeContexto, que escolhe a peça e o
+    // abre, seja qual for a ordem dos eventos do browser). Aqui não faz nada:
+    // antes reescrevia o Shift e o Option de um arrasto em curso, deslocava a
+    // prancheta com a Mão e carregava nos botões da barra de toque.
+    if (evento && evento.button === 2) return false;
     shiftNoClique = evento ? !!evento.shiftKey : keyIsDown(SHIFT);
     // No toque não há tecla Shift: o botão Shift da barra de baixo faz as vezes dela,
     // só no canvas — na lista, a letra de referência fixa-se com toque longo.
@@ -1010,9 +1078,16 @@ function mousePressed(evento) {
                            !sobreNotasDoCanto(mouseX, mouseY);
     panUltimoX = mouseX; panUltimoY = mouseY;
     if (cliqueNaBarraDeToque()) return false;
+    // A lista para impressão também é interface, nunca prancheta: o clique (na
+    // cabeça ou nas linhas) fica nela.
+    if (mouseButton === LEFT && cliqueNaListaImpressao()) return false;
     // Lido do evento, como o Shift: o keyIsDown(ALT) não é de fiar, porque o
     // Option no macOS não gera keydown repetido enquanto se arrasta.
     altNoClique = evento ? !!evento.altKey : false;
+    // Cmd no Mac, Ctrl no PC: o clique escolhe só a peça, mesmo dentro de um
+    // grupo. No Mac não pode ser o Ctrl, que faz do clique o botão direito. No
+    // toque não há tecla nenhuma (e os toques adiados chegam sem evento).
+    soEstaPecaNoClique = evento ? !!(EM_MAC ? evento.metaKey : evento.ctrlKey) : false;
     if (mouseButton == LEFT) {
         // A faixa da pré-visualização só apanha os cliques que caem sobre ela;
         // o resto da ferramenta continua a funcionar normalmente.
@@ -1023,6 +1098,7 @@ function mousePressed(evento) {
             if (dist(mouseX, mouseY, fecharX, fecharY) < 15 * globalScale) {
                 fecharPreview();
                 suppressDrawUntilRelease = true;
+                cliqueFechouSobreposicao = true;
             }
             return;
         }
@@ -1034,7 +1110,7 @@ function mousePressed(evento) {
             var closeX = b.x + b.w / 2 - 30 * globalScale;
             var closeY = b.y - b.h / 2 + 30 * globalScale;
             if (dist(mouseX, mouseY, closeX, closeY) < 18 * globalScale) {
-                showShortcutsModal = false; suppressDrawUntilRelease = true;
+                showShortcutsModal = false; suppressDrawUntilRelease = true; cliqueFechouSobreposicao = true;
                 return;
             }
 
@@ -1050,6 +1126,7 @@ function mousePressed(evento) {
                     suppressDrawUntilRelease = true;
                     if (mb.acao === 'dividir') pedirParaDividir();
                     else if (mb.acao === 'sozinho') continuarSozinho();
+                    else if (mb.acao === 'copiar') copiarCodigo(mb.valor);
                     return;
                 }
             }
@@ -1065,7 +1142,7 @@ function mousePressed(evento) {
 
             // Clique fora do painel: fecha
             if (mouseX < b.x - b.w / 2 || mouseX > b.x + b.w / 2 || mouseY < b.y - b.h / 2 || mouseY > b.y + b.h / 2) {
-                showShortcutsModal = false; suppressDrawUntilRelease = true;
+                showShortcutsModal = false; suppressDrawUntilRelease = true; cliqueFechouSobreposicao = true;
             }
             return;
         }
@@ -1105,6 +1182,15 @@ function mousePressed(evento) {
             checkSidebarClick();
         }
         else {
+            // No Mac, o Ctrl+clique é o clique direito: o browser abre o menu
+            // (contextmenu), mas o p5 vê um clique esquerdo. Na prancheta não
+            // pinta, não apaga, não escolhe nem arrasta — e o que pintaria
+            // fica travado até largar.
+            if (EM_MAC && evento && evento.ctrlKey && !eToque(evento)) {
+                suppressDrawUntilRelease = true;
+                arrastoComecouNaTela = false;
+                return false;
+            }
             if (telaPorEscolher) return;   // ainda não há tela onde pousar nada
             if (keyIsDown(32) || selectedModule === -3) return;
 
@@ -1120,7 +1206,11 @@ function mousePressed(evento) {
                     rotateLastAngle = atan2(mouseY - bb.cy, mouseX - bb.cx);
                     ensureRotationBase();
                     rotateAccum = rotateStepsApplied * 90;
-                    saveHistory(); // um único registo de undo para todo o arrasto
+                    // Um único passo para todo o arrasto, mas só entra no
+                    // histórico à primeira rotação que mude o desenho
+                    // (mouseDragged, ou o R a meio: ver rodarSelecao):
+                    // carregar e largar sem rodar não gasta nada.
+                    snapshotAntesDoPunho = JSON.parse(JSON.stringify(placedObjects));
                     return;
                 }
             }
@@ -1135,20 +1225,43 @@ function mousePressed(evento) {
                 var clickedIdx = findObjectAt(gX, gY);
                 if (clickedIdx !== -1) {
                     var clickedObj = placedObjects[clickedIdx];
+                    // O que o clique escolhe. Com Move/select, uma peça agrupada
+                    // traz o grupo de topo inteiro — ou só ela, com Cmd (Ctrl no
+                    // PC). A borracha nunca se alarga ao grupo: apaga só a peça
+                    // debaixo do ponteiro, e com o grupo escolhido o
+                    // attemptDeleteTile a seguir apagava-o todo.
+                    var alvo = (selectedModule == -2) ? alvoDoClique(clickedObj, soEstaPecaNoClique) : [clickedObj];
                     // Shift numa peça que já está escolhida tira-a da seleção —
-                    // o mesmo gesto que a acrescenta, ao contrário. E não começa
-                    // arrasto nenhum: quem está a corrigir a seleção não quer
-                    // mexer no desenho.
+                    // o mesmo gesto que a acrescenta, ao contrário (com o grupo
+                    // que o clique traz). E não começa arrasto nenhum: quem está
+                    // a corrigir a seleção não quer mexer no desenho.
                     if (shiftNoClique && selectedObjects.includes(clickedObj)) {
-                        selectedObjects.splice(selectedObjects.indexOf(clickedObj), 1);
+                        selectedObjects = selectedObjects.filter(function (o) { return alvo.indexOf(o) < 0; });
                         resetRotationBase();
                         return false;
                     }
-                    if (!selectedObjects.includes(clickedObj)) {
-                        if (!shiftNoClique) selectedObjects = [clickedObj]; else selectedObjects.push(clickedObj);
+                    if (selectedModule == -2 && soEstaPecaNoClique && !shiftNoClique) {
+                        // Cmd+clique escolhe só esta peça, mesmo que já estivesse
+                        // escolhida com o resto do grupo (como o Direct Selection).
+                        if (selectedObjects.length !== 1 || selectedObjects[0] !== clickedObj) {
+                            selectedObjects = [clickedObj];
+                            resetRotationBase();
+                        }
+                    } else if (!selectedObjects.includes(clickedObj)) {
+                        if (!shiftNoClique) selectedObjects = alvo;
+                        else alvo.forEach(function (o) { if (!selectedObjects.includes(o)) selectedObjects.push(o); });
                         resetRotationBase(); // seleção nova: base e punho a zero
                     }
                     if (selectedModule == -2) {
+                        // Arrasta-se só o que está mesmo no tabuleiro (ver
+                        // selecaoNoTabuleiro): uma peça da selecção que já lá
+                        // não está voltava a ser pousada ao largar. E a base de
+                        // rotação, que a contava, recomeça.
+                        var noTabuleiro = selecaoNoTabuleiro();
+                        if (noTabuleiro.length < selectedObjects.length) {
+                            selectedObjects = noTabuleiro;
+                            resetRotationBase();
+                        }
                         // A fotografia para o undo é tirada AGORA, antes de as
                         // peças saírem do tabuleiro para acompanharem o rato. Se
                         // fosse tirada ao largar, guardava o tabuleiro sem elas
@@ -1156,11 +1269,19 @@ function mousePressed(evento) {
                         snapshotAntesDoArrasto = JSON.parse(JSON.stringify(placedObjects));
                         isDraggingSelection = true; dragStartGrid = { x: gX, y: gY }; currentRotation = 0;
                         dragOriginals = JSON.parse(JSON.stringify(selectedObjects));
+                        dragOrigemIntacta = JSON.parse(JSON.stringify(selectedObjects));
                         for (var i = 0; i < selectedObjects.length; i++) {
                             var idx = placedObjects.indexOf(selectedObjects[i]);
                             if (idx > -1) placedObjects.splice(idx, 1);
                             removeObjFromCollisionMap(selectedObjects[i]);
                         }
+                        // Com a simetria ligada, os espelhos saem com as peças e
+                        // só voltam se elas voltarem; se pousarem, os espelhos
+                        // novos ficam no lugar deles. No Option não: a origem
+                        // fica, e os espelhos dela também.
+                        var parceiros = altNoClique ? null : parceirosDeEspelho(selectedObjects);
+                        dragEspelhosLevantados = parceiros ? levantarPecas(parceiros.pecas) : [];
+                        dragParceirosPorPeca = parceiros ? parceiros.porPeca : [];
                     }
                 } else {
                     selectionBox.active = true; selectionBox.startX = mouseX; selectionBox.startY = mouseY;
@@ -1178,15 +1299,33 @@ function mousePressed(evento) {
 }
 
 function mouseReleased(evento) {
+    // Largar um botão lateral também não faz nada (ver o mousePressed): não
+    // larga o arrasto, a caixa ou o punho que o esquerdo tenha em curso. O p5
+    // já o deu por levantado; se outro botão continua em baixo, volta a estar
+    // carregado.
+    if (evento && evento.button > 2) {
+        if ((evento.buttons || 0) & 7) porPressao(true);
+        return;
+    }
     if (eToque(evento) && !naTela(evento)) return;
     if (eToque(evento) && toque.ignorarFim) return false;   // fim de um gesto de dois dedos
     if (isDraggingSlider) { isDraggingSlider = false; return; } // Liberta o slider
     if (isRotatingSelection) {
         isRotatingSelection = false; // o punho volta a seguir a rotação da peça
+        snapshotAntesDoPunho = null;
+        devolverPassoDoPunho();
         return;
     }
 
-    if (keyIsDown(32)) return; // BLOQUEIO DE CÂMARA
+    // BLOQUEIO DE CÂMARA. Menos para o arrasto de uma selecção, que acaba sempre
+    // ao largar, com ou sem o Espaço (pousa, ou volta tudo como estava): largar
+    // com o Espaço em baixo deixava-o pendurado, e o clique seguinte noutra
+    // peça começava outro por cima — as peças do primeiro, e os espelhos
+    // levantados com elas, perdiam-se.
+    // A caixa e a guia também acabam: só começam sem o Espaço (o mousePressed
+    // sai antes com ele), por isso são um gesto de antes dele. Ficavam presas
+    // ao ponteiro, e as teclas paradas (outroGestoEmCurso), até outro clique.
+    if (keyIsDown(32) && !isDraggingSelection && !selectionBox.active && !draggedGuide) return;
     if (draggedGuide) {
         draggedGuide = null;
         guardarGuias();          // ficam onde a pessoa as deixou
@@ -1207,13 +1346,26 @@ function mouseReleased(evento) {
         var gMinY = floor((minY - centerY) / tileSize) + GRID_CY;
         var gMaxY = floor((maxY - centerY) / tileSize) + GRID_CY;
 
+        var apanhadas = [];
         for (var i = 0; i < placedObjects.length; i++) {
             var obj = placedObjects[i];
             // Agora já vai encontrar as peças porque está a procurar na zona certa (100)
             if (obj.x >= gMinX && obj.x <= gMaxX && obj.y >= gMinY && obj.y <= gMaxY) {
                 if (!selectedObjects.includes(obj)) selectedObjects.push(obj);
+                apanhadas.push(obj);
             }
             resetRotationBase(); // seleção nova por caixa
+        }
+        // Com Move/select, cada peça apanhada traz o seu grupo de topo inteiro,
+        // como no clique. Só as apanhadas: com Shift, uma peça escolhida antes
+        // sozinha (Cmd+clique) não passa a trazer o grupo. A borracha nunca se
+        // alarga: fica só o que a caixa apanhou. Com Cmd (Ctrl no PC) no início
+        // da caixa também não: escolhe só as peças apanhadas, como o Cmd+clique
+        // escolhe só a peça (o Direct Selection do Illustrator).
+        if (selectedModule == -2 && !soEstaPecaNoClique) {
+            comGruposDeTopo(apanhadas).forEach(function (o) {
+                if (!selectedObjects.includes(o)) selectedObjects.push(o);
+            });
         }
     } else if (isDraggingSelection) {
         var localX = mouseX - centerX;
@@ -1226,55 +1378,118 @@ function mouseReleased(evento) {
 
         var objectsToPlace = [];
 
+        // Ao mover, cada peça leva os seus grupos. No Option, o que se arrasta
+        // é uma cópia: leva só os grupos que vão inteiros, com ids novos — a
+        // origem, que fica, guarda os seus. Conta-se agora, antes de pousar
+        // nada: as arrastadas estão fora do tabuleiro, por isso um grupo vai
+        // inteiro se nenhuma das peças que ficaram for dele.
+        var comGrupos = altNoClique ? remapearGrupos(copiaComGruposInteiros(dragOriginals)) : dragOriginals;
         for (var i = 0; i < dragOriginals.length; i++) {
             var o = dragOriginals[i];
-            objectsToPlace.push({ type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot });
+            var nova = { type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot };
+            definirGrupos(nova, gruposDe(comGrupos[i]));
+            objectsToPlace.push(nova);
         }
 
-        var groupWithMirrors = [];
-        for (var i = 0; i < objectsToPlace.length; i++) {
-            var mirrors = getMirroredGroup(objectsToPlace[i]);
-            for (var m = 0; m < mirrors.length; m++) {
-                if (!containsObj(groupWithMirrors, mirrors[m])) {
-                    groupWithMirrors.push(mirrors[m]);
-                }
-            }
-        }
+        var groupWithMirrors = juntarComEspelhos(objectsToPlace);
+        gruposNoCompleto(groupWithMirrors, objectsToPlace, dragParceirosPorPeca);
 
-        // Um clique que não chegou a mover nada não é um passo do histórico —
-        // senão cada toque numa peça gastava um undo sem ter mudado o desenho.
         var mexeu = (dx !== 0 || dy !== 0);
+        // Um clique que não mudou nada — nem moveu, nem rodou com o R a meio
+        // do arrasto (o R mexe nas dragOriginals) — não volta a pousar nada: as
+        // peças voltam tal e qual, pelo else de baixo, e não gasta um passo do
+        // histórico. Voltar a pousá-las gerava de novo os espelhos da simetria,
+        // por cima dos que já lá estavam, e o Option sem arrastar deixava a
+        // cópia exactamente em cima do original. Compara-se com a cópia
+        // intocável, e não com a selecção, que pode mudar a meio.
+        var nadaMudou = !mexeu && dragOriginals.every(function (o, i) {
+            var s = dragOrigemIntacta[i];
+            return !!s && o.type === s.type && o.x === s.x && o.y === s.y && o.rot === s.rot;
+        });
 
-        if (checkPlacementValidGroup(groupWithMirrors)) {
-            if (mexeu) empurrarHistorico(snapshotAntesDoArrasto);
+        if (!nadaMudou && checkPlacementValidGroup(groupWithMirrors)) {
+            // Mover ou rodar a pousar é um passo do histórico, e fecha-se no fim
+            // deste ramo, com tudo pousado (ver fecharPasso). Antes só se guardava
+            // ao mover: rodar com o R sem sair do sítio não ficava no histórico,
+            // e o Cmd+Z a seguir desfazia a acção anterior (a peça pousada
+            // desaparecia).
             for (var i = 0; i < groupWithMirrors.length; i++) {
                 placedObjects.push(groupWithMirrors[i]);
                 addObjToCollisionMap(groupWithMirrors[i]);
             }
-            selectedObjects = groupWithMirrors.slice(0, dragOriginals.length);
+            // Os espelhos levantados ao começar ficam de fora: os novos, acabados
+            // de pousar, tomaram-lhes o lugar.
+            selectedObjects = movidasNoCompleto(groupWithMirrors, objectsToPlace);
+            // A selecção está agora noutro sítio (ou é a cópia do Option): a base
+            // de rotação, tirada antes do arrasto, deixa de valer, como nas
+            // setas. Sem isto, o R a seguir rodava a partir dela, e as peças
+            // saltavam para perto do sítio de onde tinham vindo.
+            resetRotationBase();
 
             // Option a arrastar: as peças de origem voltam ao lugar, e o que se
             // arrastou passa a ser uma cópia. Testa-se DEPOIS de a cópia estar
-            // posta, para o teste ver o sítio como ele vai mesmo ficar — sem
-            // arrasto nenhum, a origem cai por cima da cópia e não passa, que é
-            // exactamente o que se quer: um Option sem mover não duplica nada.
-            if (altNoClique && checkPlacementValidGroup(dragOriginals)) {
-                for (var i = 0; i < dragOriginals.length; i++) {
-                    placedObjects.push(dragOriginals[i]);
-                    addObjToCollisionMap(dragOriginals[i]);
+            // posta, para o teste ver o sítio como ele vai mesmo ficar. Um
+            // Option sem arrastar já não chega aqui (nadaMudou, acima): a origem
+            // caía por cima da cópia e, no Free e com as curvas no Letterpress,
+            // passava — ficavam duas peças iguais no mesmo sítio. A origem que
+            // volta é a cópia intocável: com o R a meio, voltava rodada como a
+            // cópia (e, se rodada não coubesse, perdia-se). Mesmo assim só volta
+            // se não ficar igual a uma peça já pousada — a cópia pode ter
+            // acabado exactamente no sítio dela.
+            if (altNoClique && !algumaPecaIgualJaPousada(dragOrigemIntacta) && checkPlacementValidGroup(dragOrigemIntacta)) {
+                for (var i = 0; i < dragOrigemIntacta.length; i++) {
+                    placedObjects.push(dragOrigemIntacta[i]);
+                    addObjToCollisionMap(dragOrigemIntacta[i]);
+                }
+            } else if (altNoClique) {
+                // A origem não voltou (não cabia, ou ficava repetida): o Option
+                // foi afinal um mover, e quem fica no lugar de cada peça de
+                // origem leva-lhe os grupos — senão a peça saía do grupo em
+                // silêncio. É o espelho da cópia que caiu exactamente onde ela
+                // estava, se o houver; senão, a própria peça arrastada. Uma
+                // arrastada que caiu no sítio de outra peça de origem não conta
+                // como espelho: fica com os grupos da sua, como num mover.
+                for (var i = 0; i < dragOrigemIntacta.length; i++) {
+                    var origem = dragOrigemIntacta[i], gOrigem = gruposDe(origem);
+                    if (gOrigem.length === 0) continue;
+                    var fica = objectsToPlace[i];
+                    for (var k = 0; k < groupWithMirrors.length; k++) {
+                        var q = groupWithMirrors[k];
+                        if (objectsToPlace.indexOf(q) < 0 && q.type === origem.type && q.x === origem.x &&
+                            q.y === origem.y && q.rot === origem.rot) { fica = q; break; }
+                    }
+                    definirGrupos(fica, gOrigem);
                 }
             }
+            // Só aqui se sabe como ficaram as peças: uma cópia que acaba em cima
+            // da própria origem traz ids de grupo novos, que o ramo de cima troca
+            // pelos de antes, e fica tudo igual: isso não é um passo.
+            fecharPasso(snapshotAntesDoArrasto);
         } else {
-            for (var i = 0; i < dragOriginals.length; i++) {
-                var orig = dragOriginals[i];
+            // Não pousou, ou nada mudou: volta tudo como estava. A cópia
+            // intocável, e não as dragOriginals — com o R a meio voltavam
+            // rodadas, sem teste nenhum, e podiam ficar por cima de outras
+            // peças, até no Letterpress. E os espelhos levantados, cada um no
+            // seu lugar.
+            for (var i = 0; i < dragOrigemIntacta.length; i++) {
+                var orig = dragOrigemIntacta[i];
                 placedObjects.push(orig);
                 addObjToCollisionMap(orig);
                 selectedObjects[i] = orig;
             }
+            reporPecas(dragEspelhosLevantados);
+            // As arrastadas voltaram para o fim da lista e, no Free, um clique
+            // numa peça sem a mexer (ou um arrasto recusado, ou que voltou ao
+            // mesmo sítio) punha-a por cima das outras. Repõe-se a ordem de
+            // antes, com os mesmos objectos (ver reporOrdem).
+            if (snapshotAntesDoArrasto && mesmoAspecto(placedObjects, snapshotAntesDoArrasto)) reporOrdem(snapshotAntesDoArrasto);
         }
 
         isDraggingSelection = false;
         dragOriginals = [];
+        dragOrigemIntacta = [];
+        dragEspelhosLevantados = [];
+        dragParceirosPorPeca = [];
         snapshotAntesDoArrasto = null;
     }
 }
@@ -1338,7 +1553,47 @@ function removeObjFromCollisionMap(obj) {
     }
 }
 
+// --- SIMETRIA: O ESPELHO DOS PARALELOGRAMOS É O PAR ---
+// Os paralelogramos (17 a 20 — os 19 a 22 da paleta) não são simétricos: o
+// espelho de cada um é o outro do par, 17 com 18 e 19 com 20, como no Flip
+// (ESPELHO_MODULO). Até à v1 a simetria tratava-os como as curvas (o mesmo
+// módulo, rodado): a peça levava 90 graus, passava de 3x2 a 2x3, e do outro
+// lado ficava outra forma, com o número do original em vez do do par. A
+// posição sai da caixa, como no Flip: a caixa espelhada é a caixa do par, e a
+// conta serve para as quatro rotações sem fórmulas por família.
+// Só para os módulos com par; os outros recebem null e seguem com as contas de
+// sempre. A tabela também lhes acertaria na figura, mas nalguns noutra
+// representação (outra rotação, outro pivô) — e o espelho exacto já pousado
+// nos desenhos antigos deixaria de ser reconhecido ao apagar ou mover com a
+// simetria ligada.
+// Desenhos antigos com o par errado: a peça que lá ficou do outro lado (o
+// mesmo módulo rodado) já não é o espelho exacto. Com a simetria ligada,
+// apagar ou mexer na original deixa-a ficar, solta, e vice-versa; tira-se à
+// mão. Aceite: era a forma errada.
+function parEspelhado(eixo, type, x, y, rot) {
+    var esp = ESPELHO_MODULO[type];
+    if (!esp || esp.tipo === type) return null;
+    // No eixo horizontal (H) a peça vira de cima para baixo: é virar como no
+    // Flip e dar meia volta — daí o + 2. O % de um negativo é negativo em JS:
+    // daí o + 4, também como no Flip.
+    var rotM = ((esp.rotBase - rot + (eixo === 'H' ? 2 : 0)) % 4 + 4) % 4;
+    var caixaOrig = caixaDaPeca(type, rot, x, y);
+    var caixaNova = caixaDaPeca(esp.tipo, rotM, 0, 0);
+    // V: as mesmas linhas e as colunas invertidas no eixo; H: as mesmas
+    // colunas e as linhas invertidas.
+    if (eixo === 'H') {
+        return { type: esp.tipo, x: caixaOrig.minX - caixaNova.minX,
+                 y: (GRID_H - 1 - caixaOrig.maxY) - caixaNova.minY, rot: rotM };
+    }
+    return { type: esp.tipo, x: (GRID_W - 1 - caixaOrig.maxX) - caixaNova.minX,
+             y: caixaOrig.minY - caixaNova.minY, rot: rotM };
+}
+
 function getMirroredPlacementV(type, x, y, rot) {
+    // Os paralelogramos saem já aqui, com o par. Dos diagonais, só o 16 segue
+    // para a conta das curvas, abaixo.
+    var par = parEspelhado('V', type, x, y, rot);
+    if (par) return par;
     var W = GRID_W - 1;
     var dims = getModuleDims(type);
     if (isCurveGroup(type) || isDiagonalGroup(type)) { // <-- Categoria incluída
@@ -1365,6 +1620,9 @@ function getMirroredPlacementV(type, x, y, rot) {
 }
 
 function getMirroredPlacementH(type, x, y, rot) {
+    // Como no V: os paralelogramos têm par (parEspelhado, acima).
+    var par = parEspelhado('H', type, x, y, rot);
+    if (par) return par;
     var H = GRID_H - 1;
     var dims = getModuleDims(type);
     if (isCurveGroup(type) || isDiagonalGroup(type)) { // <-- Categoria incluída
@@ -1413,6 +1671,419 @@ function containsObj(arr, obj) {
         if (arr[i].type === obj.type && arr[i].x === obj.x && arr[i].y === obj.y && arr[i].rot === obj.rot) return true;
     }
     return false;
+}
+
+// Alguma peça do grupo já está pousada exactamente assim — o mesmo módulo, na
+// mesma quadrícula, com a mesma rotação? Colar ou duplicar por cima dela
+// deixava duas iguais empilhadas: no ecrã via-se uma só, e só ao arrastar
+// apareciam as duas (e a contagem já contava as duas).
+function algumaPecaIgualJaPousada(grupo) {
+    for (var k = 0; k < grupo.length; k++) {
+        if (containsObj(placedObjects, grupo[k])) return true;
+    }
+    return false;
+}
+
+// A lista sem as peças repetidas exactamente iguais. Um desenho antigo pode
+// trazê-las; copiadas tal e qual, a segunda caía por cima da primeira, e no
+// Letterpress a cópia já não cabia em lado nenhum.
+function semRepetidas(lista) {
+    var out = [];
+    for (var k = 0; k < lista.length; k++) {
+        if (!containsObj(out, lista[k])) out.push(lista[k]);
+    }
+    return out;
+}
+
+// --- SIMETRIA: OS ESPELHOS ACOMPANHAM A PEÇA ---
+// Com a simetria ligada, mover ou rodar uma peça (arrastar, setas, R, punho)
+// leva os espelhos dela, como apagar já levava. Antes só se geravam os da
+// posição nova: os da antiga ficavam onde estavam, soltos, e um espelho novo
+// podia cair em cima de um antigo — no Free ficava repetido.
+
+// Os espelhos que a simetria ligada faz de uma peça, por tipo: V (o do eixo
+// vertical), H (o do horizontal) e VH (o dos dois). Com as regras do
+// getMirroredGroup — fica null o que cair na própria peça ou num espelho já
+// contado —, por isso os não nulos são exactamente os espelhos que ele junta.
+function espelhosPorTipo(p) {
+    var r = { V: null, H: null, VH: null };
+    var vistos = [p];
+    if (isMirrorModeV) {
+        var mV = getMirroredPlacementV(p.type, p.x, p.y, p.rot);
+        if (!containsObj(vistos, mV)) { r.V = mV; vistos.push(mV); }
+    }
+    if (isMirrorModeH) {
+        var mH = getMirroredPlacementH(p.type, p.x, p.y, p.rot);
+        if (!containsObj(vistos, mH)) { r.H = mH; vistos.push(mH); }
+        if (r.V) {
+            var mVH = getMirroredPlacementH(r.V.type, r.V.x, r.V.y, r.V.rot);
+            if (!containsObj(vistos, mVH)) { r.VH = mVH; vistos.push(mVH); }
+        }
+    }
+    return r;
+}
+
+// Os parceiros de espelho de um conjunto de peças: as peças pousadas que são o
+// espelho exacto (tipo, x, y e rotação, como no containsObj) de alguma delas,
+// segundo os espelhos ligados. As do próprio conjunto não contam — quem
+// selecciona uma peça e o espelho dela continua a mover as duas, cada uma com
+// os seus espelhos —, e nenhuma é parceira duas vezes. Procura-se do fim para
+// o princípio, como ao apagar. Devolve a lista (`pecas`) e, por peça do
+// conjunto e pela mesma ordem, a parceira de cada tipo de espelho
+// (`porPeca[i].V`, `.H` e `.VH`; null quando não há).
+function parceirosDeEspelho(conjunto) {
+    var r = { pecas: [], porPeca: [] };
+    var tipos = ['V', 'H', 'VH'];
+    for (var i = 0; i < conjunto.length; i++) {
+        var par = { V: null, H: null, VH: null };
+        if (isMirrorModeV || isMirrorModeH) {
+            var alvos = espelhosPorTipo(conjunto[i]);
+            for (var t = 0; t < tipos.length; t++) {
+                var alvo = alvos[tipos[t]];
+                if (!alvo) continue;
+                for (var k = placedObjects.length - 1; k >= 0; k--) {
+                    var q = placedObjects[k];
+                    if (q.type === alvo.type && q.x === alvo.x && q.y === alvo.y && q.rot === alvo.rot &&
+                        conjunto.indexOf(q) < 0 && r.pecas.indexOf(q) < 0) {
+                        par[tipos[t]] = q;
+                        r.pecas.push(q);
+                        break;
+                    }
+                }
+            }
+        }
+        r.porPeca.push(par);
+    }
+    return r;
+}
+
+// Tira peças do tabuleiro e do mapa de colisões, e guarda o lugar que cada uma
+// tinha na lista: o reporPecas devolve-as exactamente onde estavam, na grelha
+// e na ordem do desenho (a de cima continua por cima).
+function levantarPecas(pecas) {
+    var levantadas = [];
+    for (var k = 0; k < pecas.length; k++) {
+        var idx = placedObjects.indexOf(pecas[k]);
+        var repetida = levantadas.some(function (l) { return l.peca === pecas[k]; });
+        if (idx > -1 && !repetida) levantadas.push({ peca: pecas[k], lugar: idx });
+    }
+    levantadas.sort(function (a, b) { return a.lugar - b.lugar; });
+    // Do fim para o princípio, para os lugares que faltam não mudarem.
+    for (var k = levantadas.length - 1; k >= 0; k--) {
+        placedObjects.splice(levantadas[k].lugar, 1);
+        removeObjFromCollisionMap(levantadas[k].peca);
+    }
+    return levantadas;
+}
+
+function reporPecas(levantadas) {
+    for (var k = 0; k < levantadas.length; k++) {
+        placedObjects.splice(Math.min(levantadas[k].lugar, placedObjects.length), 0, levantadas[k].peca);
+        addObjToCollisionMap(levantadas[k].peca);
+    }
+}
+
+// As peças do desenho da tela aberta, para quem o conta ou o fotografa: a linha
+// da Desenhos, as contagens das Letras, dos Modulos e da Sessoes, a cápsula
+// «modules: N», a miniatura e a Print list. A meio de um arrasto, as peças
+// arrastadas (e, com a simetria, os espelhos delas) andam fora do tabuleiro, a
+// acompanhar o rato, e só voltam ao largar: a página a sair de vista nesse
+// instante fotografava o desenho sem elas, e a contagem e a miniatura desciam.
+// O arrasto ainda não pousou, por isso conta o desenho de antes dele: o
+// tabuleiro, a cópia intocável das arrastadas (sem o R a meio) e os espelhos
+// levantados. No Option, a origem; as cópias ainda não. Fora de um arrasto é o
+// tabuleiro. O que pinta as peças na prancheta não passa por aqui.
+function pecasDoDesenho() {
+    if (!isDraggingSelection) return placedObjects;
+    var pecas = placedObjects.concat(dragOrigemIntacta);
+    for (var k = 0; k < dragEspelhosLevantados.length; k++) pecas.push(dragEspelhosLevantados[k].peca);
+    return pecas;
+}
+
+// Depois de mover ou rodar, fica seleccionado o que se moveu, nunca os
+// espelhos. O `completo` (o que se pousou) vem [peça, espelhos dela, peça
+// seguinte, …], sem repetidas além das movidas iguais (ver juntarComEspelhos):
+// a fatia do tamanho das movidas, que se usava, apanhava espelhos quando eram
+// 2 ou mais peças. Uma movida que caiu em cima do espelho de outra está no
+// completo como esse espelho — é esse o objecto que se escolhe. Sem simetria,
+// dá o completo inteiro, como a fatia dava.
+// Duas movidas iguais (empilhadas no Free) ficam cada uma com a sua: escolhe-se
+// a primeira igual que ainda não foi escolhida.
+function movidasNoCompleto(completo, movidas) {
+    var sel = [];
+    for (var k = 0; k < movidas.length; k++) {
+        var m = movidas[k];
+        for (var c = 0; c < completo.length; c++) {
+            var o = completo[c];
+            if (o.type === m.type && o.x === m.x && o.y === m.y && o.rot === m.rot && sel.indexOf(o) < 0) {
+                sel.push(o);
+                break;
+            }
+        }
+    }
+    return sel;
+}
+
+// O que se pousa ao mover ou rodar (setas, centrar, R, punho, arrastar): cada
+// movida com os espelhos que a simetria ligada lhe faz (getMirroredGroup), sem
+// repetir — uma movida que cai no espelho de outra fica uma só. Mas contava-se
+// só por valor (tipo, sítio, rotação), e duas peças iguais empilhadas no Free,
+// ambas escolhidas, fundiam-se numa ao mover, rodar ou arrastar. Agora cada
+// peça do grupo de uma movida entra tantas vezes quantas as movidas iguais a
+// ela até aí: sem peças repetidas na selecção, é exactamente o que era.
+function juntarComEspelhos(movidas) {
+    var completo = [];
+    // Quantas das primeiras `ate` peças da lista são iguais a `o`.
+    function quantas(lista, ate, o) {
+        var n = 0;
+        for (var i = 0; i < ate; i++) {
+            var p = lista[i];
+            if (p.type === o.type && p.x === o.x && p.y === o.y && p.rot === o.rot) n++;
+        }
+        return n;
+    }
+    for (var k = 0; k < movidas.length; k++) {
+        var vezes = quantas(movidas, k + 1, movidas[k]);
+        var ms = getMirroredGroup(movidas[k]);
+        for (var m = 0; m < ms.length; m++) {
+            if (quantas(completo, completo.length, ms[m]) < vezes) completo.push(ms[m]);
+        }
+    }
+    return completo;
+}
+
+// --- GRUPOS (Cmd+G / Ctrl+G), COMO NO ILLUSTRATOR ---
+// Uma peça agrupada tem `g`: os ids dos grupos a que pertence, do mais
+// interior para o mais exterior (grupos dentro de grupos). Sem grupo não tem a
+// propriedade — nunca `g: []`. Cuidado com o nome: no resto do código «grupo»
+// quer dizer só um conjunto de peças (getMirroredGroup,
+// checkPlacementValidGroup, limitesDoGrupo…); aqui é o grupo guardado, o que o
+// Cmd+G faz. Os ids nunca se reutilizam, para não colidirem entre artboards,
+// entre cópias, nem com peças levantadas a meio de um arrasto. Os grupos não
+// vão para a folha (o pecasDaTela só leva tipo, x, y e rotação); vão no
+// autosave, no histórico e no JSON exportado, que copiam as peças inteiras.
+// Por isso quem faz uma peça nova a partir de outra (mover, rodar, virar)
+// passa-lhe os grupos, e quem faz uma cópia dá-lhe ids novos.
+var contadorDeGrupos = 0;
+
+// Os ids de grupo de uma peça, só os que fazem sentido: um ficheiro importado
+// ou um registo antigo pode trazer lixo (um `g` que não é lista, ids vazios,
+// que não são texto, ou repetidos). Saem também os que têm o nome de uma
+// propriedade do próprio JavaScript (constructor, __proto__…), porque os ids
+// servem de chave nos mapas de baixo. Devolve sempre uma lista nova: mexer
+// nela não mexe na peça.
+function gruposDe(p) {
+    var out = [];
+    if (!p || !Array.isArray(p.g)) return out;
+    for (var k = 0; k < p.g.length; k++) {
+        var id = p.g[k];
+        if (typeof id === 'string' && id !== '' && !(id in Object.prototype) && out.indexOf(id) < 0) out.push(id);
+    }
+    return out;
+}
+
+// O grupo mais exterior de uma peça: é esse que o clique escolhe.
+function grupoDeTopo(p) {
+    var g = gruposDe(p);
+    return g.length ? g[g.length - 1] : null;
+}
+
+// Escreve os grupos de uma peça. Sempre numa lista só dela: partilhada com
+// outra peça, mexer numa mexia nas duas. Sem nenhum, a propriedade sai.
+function definirGrupos(p, ids) {
+    if (ids && ids.length) p.g = ids.slice();
+    else delete p.g;
+}
+
+// As peças de um grupo, por identidade (por omissão, as do tabuleiro).
+function membrosDoGrupo(id, lista) {
+    lista = lista || placedObjects;
+    var out = [];
+    for (var k = 0; k < lista.length; k++) {
+        if (gruposDe(lista[k]).indexOf(id) > -1) out.push(lista[k]);
+    }
+    return out;
+}
+
+function novoIdDeGrupo() {
+    contadorDeGrupos++;
+    return Date.now().toString(36) + '-' + contadorDeGrupos.toString(36);
+}
+
+// Os grupos que um conjunto de peças leva INTEIROS: aqueles de que nenhuma
+// peça do tabuleiro fora do conjunto faz parte (true; os que só vão em parte
+// ficam false). A meio de um arrasto as peças arrastadas estão fora do
+// tabuleiro: um grupo que vai todo no arrasto conta como inteiro — e vai. Os
+// espelhos levantados com elas (simetria) também estão fora do tabuleiro, mas
+// não vão: contam como peças de fora (um Cmd+C a meio do arrasto levava o id
+// de um grupo que só ia em parte).
+function gruposInteiros(conjunto) {
+    var inteiro = {};
+    for (var k = 0; k < conjunto.length; k++) {
+        var g = gruposDe(conjunto[k]);
+        for (var j = 0; j < g.length; j++) inteiro[g[j]] = true;
+    }
+    var fora = placedObjects.concat(dragEspelhosLevantados.map(function (l) { return l.peca; }));
+    for (var k = 0; k < fora.length; k++) {
+        var g = gruposDe(fora[k]);
+        if (g.length === 0 || conjunto.indexOf(fora[k]) > -1) continue;
+        for (var j = 0; j < g.length; j++) {
+            if (inteiro[g[j]]) inteiro[g[j]] = false;
+        }
+    }
+    return inteiro;
+}
+
+// A cópia de um conjunto de peças (área de transferência, duplicar, Option a
+// arrastar) só com os grupos que vão inteiros: copiar meio grupo não leva o
+// grupo, e os ids desses saem das peças copiadas. Os outros ficam os do
+// original — só guardam a estrutura; quem pousa a cópia dá-lhes ids novos
+// (remapearGrupos). Tem de ser no momento da cópia: ao colar, o original pode
+// já ter mudado, ou estar noutra tela.
+function copiaComGruposInteiros(conjunto) {
+    var inteiro = gruposInteiros(conjunto);
+    var copia = JSON.parse(JSON.stringify(conjunto));
+    for (var k = 0; k < copia.length; k++) {
+        definirGrupos(copia[k], gruposDe(copia[k]).filter(function (id) { return inteiro[id]; }));
+    }
+    return copia;
+}
+
+// Uma cópia das peças com ids de grupo novos — o mesmo id novo para o mesmo id
+// antigo em todas elas (um mapa por chamada): a cópia fica com a estrutura de
+// grupos do original, mas à parte dele. Colar duas vezes dá dois grupos
+// diferentes. A lista que entra fica como estava.
+function remapearGrupos(lista) {
+    var mapa = {};
+    var copia = JSON.parse(JSON.stringify(lista));
+    for (var k = 0; k < copia.length; k++) {
+        var g = gruposDe(copia[k]);
+        for (var j = 0; j < g.length; j++) {
+            if (!mapa[g[j]]) mapa[g[j]] = novoIdDeGrupo();
+            g[j] = mapa[g[j]];
+        }
+        definirGrupos(copia[k], g);
+    }
+    return copia;
+}
+
+// As peças mais as dos seus grupos de topo, sem repetir, com as peças
+// primeiro (a primeira da selecção é a que o punho e o ângulo da barra lêem).
+// Os grupos de topo marcam-se num mapa e o tabuleiro percorre-se uma vez, em
+// vez de uma vez por peça: uma caixa pode apanhar um cartaz inteiro.
+function comGruposDeTopo(pecas) {
+    var out = pecas.slice();
+    var topos = {}, algum = false;
+    for (var k = 0; k < pecas.length; k++) {
+        var t = grupoDeTopo(pecas[k]);
+        if (t) { topos[t] = true; algum = true; }
+    }
+    if (!algum) return out;
+    for (var k = 0; k < placedObjects.length; k++) {
+        var g = gruposDe(placedObjects[k]);
+        for (var j = 0; j < g.length; j++) {
+            if (topos[g[j]]) {
+                if (out.indexOf(placedObjects[k]) < 0) out.push(placedObjects[k]);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+// O que um clique numa peça escolhe com Move/select: o grupo de topo inteiro,
+// com a peça clicada em primeiro; só ela com Cmd (Ctrl no PC) — como o Direct
+// Selection do Illustrator — ou se não tiver grupo. O menu do botão direito
+// escolhe da mesma maneira.
+function alvoDoClique(peca, soEsta) {
+    return soEsta ? [peca] : comGruposDeTopo([peca]);
+}
+
+// A selecção, só com as peças que estão mesmo no tabuleiro. O Flip troca as
+// peças por outras (as viradas são objectos novos) e deixava a selecção a
+// apontar para as de antes; já não deixa, mas quem age sobre a selecção e
+// volta a pousar peças (setas, rodar, arrastar) usa só estas: uma selecção
+// obsoleta nunca pode fazer voltar peças que já lá não estão.
+function selecaoNoTabuleiro() {
+    return selectedObjects.filter(function (p) { return placedObjects.indexOf(p) > -1; });
+}
+
+// O que o desagrupar tira: em cada peça, o grupo mais exterior que está
+// inteiro na selecção — um nível de cada vez, como no Illustrator. null se
+// nenhum grupo estiver inteiro na selecção.
+function gruposADesagrupar(sel) {
+    var inteiro = gruposInteiros(sel);
+    var tirar = null;
+    for (var k = 0; k < sel.length; k++) {
+        var g = gruposDe(sel[k]);
+        for (var j = g.length - 1; j >= 0; j--) {
+            if (inteiro[g[j]]) {
+                tirar = tirar || {};
+                tirar[g[j]] = true;
+                break;
+            }
+        }
+    }
+    return tirar;
+}
+
+// As mesmas regras para os atalhos e para o menu do botão direito, que
+// esmaece o Group e o Ungroup com estas. Nunca a meio de um arrasto (as peças
+// andam fora do tabuleiro) nem de uma rotação pelo punho (a base dela ficava
+// com os grupos de antes).
+function podeAgrupar() {
+    return !isDraggingSelection && !isRotatingSelection && selecaoNoTabuleiro().length >= 2;
+}
+
+function podeDesagrupar() {
+    return !isDraggingSelection && !isRotatingSelection && gruposADesagrupar(selecaoNoTabuleiro()) !== null;
+}
+
+// Os grupos no que se vai pousar depois de mover ou rodar (`completo`: as
+// movidas e os espelhos novos da simetria). Uma movida que caiu exactamente no
+// espelho novo de outra fica ela, com os seus grupos, e não o espelho. E o
+// espelho novo que toma o lugar de um espelho antigo levantado — do mesmo tipo
+// (V, H ou VH) e da mesma peça — herda os grupos dele, para não desfazer em
+// silêncio um grupo do lado espelhado. Os outros espelhos novos ficam sem
+// grupo, como os de uma peça pintada. `porPeca[i]` são os espelhos antigos de
+// `movidas[i]` (parceirosDeEspelho); sem ele, só a primeira parte.
+function gruposNoCompleto(completo, movidas, porPeca) {
+    var tipos = ['V', 'H', 'VH'];
+    var i, c, o;
+    for (i = 0; i < movidas.length; i++) {
+        var m = movidas[i];
+        if (completo.indexOf(m) > -1) continue;
+        for (c = 0; c < completo.length; c++) {
+            o = completo[c];
+            if (o.type === m.type && o.x === m.x && o.y === m.y && o.rot === m.rot && movidas.indexOf(o) < 0) {
+                completo[c] = m;
+                break;
+            }
+        }
+    }
+    if (!porPeca) return;
+    // Com duas movidas iguais empilhadas (ver juntarComEspelhos), cada uma tem o
+    // seu espelho novo: cada antigo passa os grupos a um espelho novo diferente,
+    // enquanto os houver.
+    var herdaram = [];
+    for (i = 0; i < movidas.length && i < porPeca.length; i++) {
+        if (!porPeca[i]) continue;
+        var novos = espelhosPorTipo(movidas[i]);
+        for (var t = 0; t < tipos.length; t++) {
+            var antigo = porPeca[i][tipos[t]], pos = novos[tipos[t]];
+            var g = antigo ? gruposDe(antigo) : [];
+            if (!pos || g.length === 0) continue;
+            var herdeiro = null;
+            for (c = 0; c < completo.length; c++) {
+                o = completo[c];
+                if (o.type === pos.type && o.x === pos.x && o.y === pos.y && o.rot === pos.rot && movidas.indexOf(o) < 0) {
+                    if (!herdeiro) herdeiro = o;
+                    if (herdaram.indexOf(o) < 0) { herdeiro = o; break; }
+                }
+            }
+            if (herdeiro) { definirGrupos(herdeiro, g); herdaram.push(herdeiro); }
+        }
+    }
 }
 
 function checkPlacementValidGroup(group) {
@@ -2241,8 +2912,11 @@ function check17Override(t1, j1, i1, r1, c1, t2, j2, i2, r2, c2) {
         if (relRot == 1 || relRot == 3) {
             if (j1 == 0 && i1 == 2 && j2 == 0 && i2 == 0) return -1;
             if (j1 == 1 && i1 == 2 && j2 == 0 && i2 == 2) return -1;
-            if (j2 == 0 && i2 == 0 && j1 == 0 && i1 == 2) return -1;
-            if (j2 == 0 && i2 == 2 && j1 == 1 && i1 == 2) return -1;
+            // As mesmas duas, com as peças trocadas. Eram cópias das de cima com as
+            // condições por outra ordem, e o par só era recusado numa das ordens
+            // de pousar: nos tipos móveis, estes dois paralelogramos sobrepõem-se.
+            if (j2 == 0 && i2 == 2 && j1 == 0 && i1 == 0) return -1;
+            if (j2 == 1 && i2 == 2 && j1 == 0 && i1 == 2) return -1;
         }
     }
 
@@ -3082,6 +3756,14 @@ function canPlaceTile(gx, gy, type, rot) {
     if (hasGeneticMap(type)) {
         for (var k = 0; k < placedObjects.length; k++) {
             var occupant = placedObjects[k];
+            // A mesma peça (tipo e rotação) no mesmo sítio nunca passa. Curvas
+            // diferentes podem partilhar o centro — as concêntricas encaixam
+            // umas nas outras, e a excepção logo abaixo deixa-as passar —, mas
+            // uma curva igual tem, por força, o mesmo centro: era a mesma peça
+            // repetida, escondida por cima da outra. As concêntricas (tipo
+            // diferente) e as vizinhas (o mesmo tipo noutra rotação) continuam
+            // a passar.
+            if (occupant.type === type && occupant.x === gx && occupant.y === gy && occupant.rot === rot) return false;
             if (hasGeneticMap(occupant.type)) {
                 if (isCurveGroup(type) && isCurveGroup(occupant.type)) {
                     var c1 = getCurveCenter(gx, gy, type, rot);
@@ -3387,8 +4069,37 @@ function drawGrid() {
         if (isMirrorModeH) line(sidebarWidth, centerY, width, centerY);
         drawingContext.setLineDash([]);
         noStroke(); fill(255, 50, 50, 180); textSize(9);
-        if (isMirrorModeV) { textAlign(LEFT, TOP); text("VERTICAL SYMMETRY", centerX + 10, topBarHeight + 15); }
-        if (isMirrorModeH) { textAlign(RIGHT, BOTTOM); text("HORIZONTAL SYMMETRY", width - 15, centerY - 5); }
+        if (isMirrorModeV) { textAlign(LEFT, TOP); text("Vertical symmetry", centerX + 10, topBarHeight + 15); }
+        if (isMirrorModeH) { textAlign(RIGHT, BOTTOM); text("Horizontal symmetry", width - 15, centerY - 5); }
+
+        // Numa folha de largura ímpar (F1 e F2 ao alto, F1 deitada), o eixo da
+        // simetria vertical é o meio da grelha, meia quadrícula ao lado do meio
+        // da folha, e a última coluna fica sem espelho: o dela cairia fora da
+        // folha, à esquerda, e uma peça que lhe toque é recusada. O espelho e o
+        // eixo ficam como estão (as metades continuam a encostar e uma haste
+        // continua a caber no eixo); a coluna fica assinalada, numa faixa ténue
+        // da cor do eixo, para se perceber porquê. O mesmo para a última linha
+        // com a simetria horizontal e a altura ímpar. Só na prancheta, como o
+        // eixo: nunca nas exportações, nas miniaturas nem nos dados.
+        var semEspelhoV = isMirrorModeV && artW % 2 === 1, semEspelhoH = isMirrorModeH && artH % 2 === 1;
+        if (semEspelhoV || semEspelhoH) {
+            push();
+            rectMode(CORNER); noStroke(); fill(255, 50, 50, 28);
+            if (semEspelhoV) rect(gridEndX - tileSize, gridStartY, tileSize, gridPixH);
+            if (semEspelhoH) rect(gridStartX, gridEndY - tileSize, gridPixW, tileSize);
+            fill(255, 50, 50, 180); textSize(9);
+            // Ao longo da coluna, de cima para baixo, a partir do topo à vista;
+            // na linha, a partir da esquerda à vista. Só se esse ponto for da folha.
+            var yNoMirror = max(gridStartY, topBarHeight) + 10, xNoMirror = max(gridStartX, sidebarWidth) + 10;
+            if (semEspelhoV && yNoMirror < gridEndY) {
+                push();
+                translate(gridEndX - tileSize / 2, yNoMirror);
+                rotate(90); textAlign(LEFT, CENTER); text("No mirror", 0, 0);
+                pop();
+            }
+            if (semEspelhoH && xNoMirror < gridEndX) { textAlign(LEFT, CENTER); text("No mirror", xNoMirror, gridEndY - tileSize / 2); }
+            pop();
+        }
     }
 
     rectMode(CENTER);
@@ -3404,7 +4115,10 @@ var cliqueRepetido = false;  // 2.º toque de um duplo clique (evento.detail > 1
 var arrastoComecouNaTela = false;  // o arrasto em curso começou na prancheta (Mão, Espaço)
 var panUltimoX = 0, panUltimoY = 0;  // onde ia o ponteiro no último passo do arrasto da Mão
 var altNoClique = false;     // Option/Alt no momento do clique: arrastar duplica
+var soEstaPecaNoClique = false;   // Cmd (Ctrl no PC) no momento do clique: só a peça, mesmo num grupo
 var snapshotAntesDoArrasto = null;   // tabuleiro antes de as peças saírem, para o undo
+var snapshotAntesDoPunho = null;     // tabuleiro ao carregar no punho; null depois da primeira rotação do gesto que mude o desenho
+var passoDoPunho = null;             // o passo que o punho guardou neste gesto, e o que ele apagou (ver devolverPassoDoPunho)
 
 // Empurra para o histórico uma fotografia já tirada, em vez da do momento.
 // O saveHistory() normal fotografa o estado atual, e há gestos — arrastar — em
@@ -3524,6 +4238,11 @@ function drawCustomCursor() {
     // A faixa da palavra é zona de leitura, não de desenho: sobre ela o rato
     // volta a ser um rato normal, sem fantasma do módulo por baixo.
     if (sobreFaixaPreview()) { cursor(ARROW); return; }
+    // Sobre a lista para impressão, o mesmo: sem fantasma nem realce por baixo,
+    // e o ponteiro à vista (com um módulo escolhido, o noCursor() escondia-o).
+    // A meio de um arrasto, de uma caixa ou do punho, o gesto começou na
+    // prancheta e o fantasma continua.
+    if (sobreListaImpressao() && !isDraggingSelection && !selectionBox.active && !isRotatingSelection) { cursor(ARROW); return; }
 
     if (mouseX > sidebarWidth && mouseY > topBarHeight) {
 
@@ -3605,25 +4324,40 @@ function drawCustomCursor() {
                 var hIdx = findObjectAt(gX, gY);
                 if (hIdx != -1) {
                     cursor('grab');
-                    var hObj = placedObjects[hIdx];
-                    var dims = getModuleDims(hObj.type);
-                    var offX = (dims.len - 1) * (tileSize / 2);
-                    var offY = (dims.wid - 1) * (tileSize / 2);
-                    var cx = centerX + (hObj.x - GRID_CX) * tileSize + (tileSize / 2);
-                    var cy = centerY + (hObj.y - GRID_CY) * tileSize + (tileSize / 2);
+                    // Realça o que o clique escolhe: numa peça de um grupo, o
+                    // grupo de topo inteiro (alvoDoClique), como no Illustrator.
+                    // A dica continua a nomear só a peça sob o ponteiro. Com o
+                    // Cmd (Ctrl no PC) em baixo, o clique escolhe só a peça, e o
+                    // realce também. Lido no keyIsDown do p5: 91 e 93 são o Cmd
+                    // no Safari e no Chrome, 224 no Firefox; no Mac não conta o
+                    // Control, que faz do clique o botão direito.
+                    var soEsta = EM_MAC ? (keyIsDown(91) || keyIsDown(93) || keyIsDown(224)) : keyIsDown(CONTROL);
+                    var realce = alvoDoClique(placedObjects[hIdx], soEsta);
+                    for (var r = 0; r < realce.length; r++) {
+                        var hObj = realce[r];
+                        var dims = getModuleDims(hObj.type);
+                        var offX = (dims.len - 1) * (tileSize / 2);
+                        var offY = (dims.wid - 1) * (tileSize / 2);
+                        var cx = centerX + (hObj.x - GRID_CX) * tileSize + (tileSize / 2);
+                        var cy = centerY + (hObj.y - GRID_CY) * tileSize + (tileSize / 2);
 
-                    push();
-                    translate(cx, cy);
-                    rotate(hObj.rot * 90);
-                    if (blueModules[hObj.type] && blueModules[hObj.type].width > 1) {
-                        image(blueModules[hObj.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                        push();
+                        translate(cx, cy);
+                        rotate(hObj.rot * 90);
+                        if (blueModules[hObj.type] && blueModules[hObj.type].width > 1) {
+                            image(blueModules[hObj.type], offX, offY, tileSize * dims.len, tileSize * dims.wid);
+                        }
+                        pop();
                     }
-                    pop();
                 } else {
                     cursor(ARROW);
                 }
             }
         } else if (selectedModule >= 0) {
+            // Com um menu aberto (Clear, Export, o do botão direito), o próximo
+            // clique só o fecha e não pousa nada (mousePressed): o fantasma não
+            // promete o contrário, nem aparece por baixo do menu.
+            if (menuAberto) { cursor(ARROW); return; }
             noCursor();
             // No toque, o fantasma é o módulo a ser arrastado antes de pousar:
             // mais claro do que o do rato. Não aparece num zoom de dois dedos,
@@ -3697,6 +4431,77 @@ function drawCustomCursor() {
     } else {
         cursor(ARROW);
     }
+}
+
+// --- DICA DA PEÇA SOB O PONTEIRO ---
+// Parado sobre uma peça já pousada, aparece o número dela — o mesmo da paleta —
+// ao lado da peça, centrado na vertical. Com um módulo da paleta na mão não
+// aparece: a meio do desenho, com o 9 escolhido, surgia «Module 7» por cima do
+// fantasma. Com as outras ferramentas (Mover, borracha, Mão, guias) aparece.
+// As outras dicas são instantâneas; esta espera um instante sobre a MESMA
+// peça, para não piscar enquanto se passa o rato pelo desenho. Só lê o estado:
+// não mexe no desenho, no histórico, nem no que se recolhe.
+var ATRASO_DICA_PECA = 400;                 // ms parado sobre a mesma peça
+var dicaDaPeca = { obj: null, desde: 0 };   // a peça debaixo do ponteiro, e desde quando
+// O p5 guarda a última posição do rato quando ele sai da janela: sem isto, a
+// dica ficava na borda até o rato voltar.
+var ponteiroForaDaJanela = false;
+document.addEventListener('mouseout', function (e) { if (!e.relatedTarget) ponteiroForaDaJanela = true; });
+document.addEventListener('mousemove', function () { ponteiroForaDaJanela = false; });
+
+// A peça de cima na célula do ponteiro, com o mesmo teste dos cliques e do
+// realce (findObjectAt): a dica nunca nomeia uma peça e o clique apanha outra.
+// null quando não há dica a dar — um módulo da paleta na mão, o ponteiro fora
+// da prancheta ou sobre interface que está por cima dela, um dedo (não paira),
+// um botão premido, ou um gesto a meio (arrastar, caixa, punho, guia, zoom, o
+// Espaço da Mão).
+function pecaSobOPonteiro() {
+    if (selectedModule >= 0) return null;
+    if (telaPorEscolher || interfaceBloqueada() || showShortcutsModal || menuAberto) return null;
+    if (ponteiroForaDaJanela || mouseX <= sidebarWidth || mouseY <= topBarHeight) return null;
+    if (!pairaLivre() || toque.ativo || mouseIsPressed) return null;
+    if (isDraggingSelection || selectionBox.active || isRotatingSelection || hoveringRotateHandle) return null;
+    if (draggedGuide || getHoveredGuide() || isDraggingSlider || keyIsDown(32)) return null;
+    if (sobreFaixaPreview() || sobreBarraDeToque() || sobreNotasDoCanto(mouseX, mouseY)) return null;
+    var gX = floor((mouseX - centerX) / tileSize) + GRID_CX;
+    var gY = floor((mouseY - centerY) / tileSize) + GRID_CY;
+    var idx = findObjectAt(gX, gY);
+    return idx === -1 ? null : placedObjects[idx];
+}
+
+function desenharDicaDaPeca() {
+    var alvo = pecaSobOPonteiro();
+    // Outra peça, ou nenhuma: o relógio recomeça e a dica some logo.
+    if (alvo !== dicaDaPeca.obj) { dicaDaPeca.obj = alvo; dicaDaPeca.desde = millis(); }
+    if (!alvo || millis() - dicaDaPeca.desde < ATRASO_DICA_PECA) return;
+    // Só depende da peça e da vista, nunca do rato: enquanto ele anda dentro da
+    // mesma peça a dica não se mexe. À direita da peça, sem lhe tocar, e centrada
+    // na vertical, sem subir para a barra de cima nem sair da janela. Com a faixa
+    // da palavra aberta, o fundo é o topo dela: é opaca e a dica não vai para cima.
+    var g = globalScale, h = 22 * g, afastada = 8 * g;
+    var texto = 'Module ' + etiquetaDoModulo(alvo.type), tw = larguraDaCaixaDeDica(texto);
+    var caixa = caixaDaPeca(alvo.type, alvo.rot, alvo.x, alvo.y);
+    var esq = centerX + (caixa.minX - GRID_CX) * tileSize;
+    var dir = centerX + (caixa.maxX + 1 - GRID_CX) * tileSize;
+    var cy = centerY + ((caixa.minY + caixa.maxY + 1) / 2 - GRID_CY) * tileSize;
+    var fundo = showWordPreview ? getPreviewBounds().y : height;
+    // A barra de toque, quando se vê (um rato num aparelho táctil), é como a
+    // faixa: a dica não lhe passa por cima, fica acima do topo dela.
+    var barra = barraDeToque();
+    if (barra) fundo = min(fundo, barra.y - barra.h / 2);
+    var y = constrain(cy, topBarHeight + h / 2 + 4 * g, fundo - h / 2 - 4 * g);
+    var x = dir + afastada + tw / 2;
+    // Se à direita sair da janela ou tocar nas notas do canto, vai para a
+    // esquerda da peça. Se aí entrasse na barra lateral (só em zooms enormes),
+    // fica à direita, limitada pelo desenharCaixaDeDica.
+    var tocaNasNotas = caixasDasNotasDoCanto().some(function (n) {
+        return x + tw / 2 >= n.x0 && x - tw / 2 <= n.x1 && y + h / 2 >= n.y0 && y - h / 2 <= n.y1;
+    });
+    if (x + tw / 2 > width - 10 || tocaNasNotas) {
+        var xEsq = esq - afastada - tw / 2;
+        if (xEsq - tw / 2 >= sidebarWidth + 10) x = xEsq;
+    }
+    desenharCaixaDeDica(texto, x, y, sidebarWidth);
 }
 
 function initAllCharacters() {
@@ -3868,7 +4673,9 @@ function novoCartaz(copiar) {
     var entrada = { objects: [], history: [], redoHistory: [],
                     formato: currentArtboardIdx, landscape: isLandscape };
     if (copiar && origem) {
-        entrada.objects = JSON.parse(JSON.stringify(origem.objects));
+        // Com ids de grupo novos: o cartaz copiado fica com a mesma estrutura
+        // de grupos, mas são outros grupos — os ids nunca se repetem entre telas.
+        entrada.objects = remapearGrupos(origem.objects);
         entrada.nome = (nomeDoCartaz(currentChar) + ' copy').slice(0, TAMANHO_NOME_CARTAZ);
     }
     storedCharacters[k] = entrada;
@@ -3883,7 +4690,6 @@ function renomearCartaz(k) {
     var e = storedCharacters[k];
     if (!e) return;
     var novo = pedirTexto('Name this poster:', nomeDoCartaz(k));
-    ultimaActividade = Date.now();   // escrever o nome não é estar parado: a avaliação não salta logo a seguir
     if (novo === null) return;                       // cancelou
     novo = novo.replace(/\s+/g, ' ').trim().slice(0, TAMANHO_NOME_CARTAZ);
     // Vazio, ou o nome por omissão, é voltar a não ter nome.
@@ -3966,33 +4772,124 @@ function saveHistory() {
     storedCharacters[currentChar].redoHistory = [];
 }
 
+// O histórico é por letra e não sabe em que modo nem em que folha cada passo foi
+// tirado: um passo do Free traz peças sobrepostas, um de uma folha maior traz
+// peças que nesta ficam de fora. Antes de o repor, vê-se se pode voltar.
+// Devolve '' (pode), 'folha' ou 'sobreposicao'; a folha primeiro, porque o Free
+// não a resolve.
+//
+// Só contam as peças que o passo traria de volta — as do destino que não estão
+// agora no tabuleiro (tipo, x, y e rotação, uma a uma). Uma que já lá está não
+// conta: numa letra feita no Free e aberta no Letterpress, desfazer o último
+// gesto não põe nenhuma peça em cima de outra, e não podia ser recusado por
+// causa das que ela já traz.
+function motivoParaNaoRepor(destino) {
+    function chave(o) { return o.type + ',' + o.x + ',' + o.y + ',' + o.rot; }
+    var noTabuleiro = {};
+    placedObjects.forEach(function (o) { noTabuleiro[chave(o)] = (noTabuleiro[chave(o)] || 0) + 1; });
+    var voltam = [];
+    for (var k = 0; k < destino.length; k++) {
+        var c = chave(destino[k]);
+        if (noTabuleiro[c] > 0) noTabuleiro[c]--;
+        else voltam.push(k);
+    }
+    // O limite da folha vale nos dois modos, como no canPlaceTile.
+    if (voltam.some(function (i) { return !isObjInsideArtboard(destino[i]); })) return 'folha';
+    if (isOverlapMode || voltam.length === 0) return '';
+
+    // A regra é a do canPlaceTile, que lê as peças e o mapa de colisões: passam
+    // a ser os do destino e voltam a ser os de agora no fim, venha o que vier.
+    // Um mapa só para o passo inteiro, e cada peça sai dele enquanto é testada:
+    // construí-lo por peça tornava lento o desfazer de um Clear numa letra grande.
+    var pecasDeAgora = placedObjects, mapaDeAgora = collisionMap;
+    var motivo = '';
+    try {
+        placedObjects = destino.slice();
+        collisionMap = createCollisionMap();
+        placedObjects.forEach(addObjToCollisionMap);
+        for (var v = 0; v < voltam.length && !motivo; v++) {
+            var p = destino[voltam[v]];
+            placedObjects.splice(voltam[v], 1);
+            removeObjFromCollisionMap(p);
+            if (!canPlaceTile(p.x, p.y, p.type, p.rot)) motivo = 'sobreposicao';
+            placedObjects.splice(voltam[v], 0, p);
+            addObjToCollisionMap(p);
+        }
+    } finally {
+        placedObjects = pecasDeAgora;
+        collisionMap = mapaDeAgora;
+    }
+    return motivo;
+}
+
+// `feito` e `fazer`: 'undone'/'undo' ou 'redone'/'redo'. Quem recusa não muda
+// nada — tabuleiro, histórico, selecção e autosave ficam como estavam.
+function recusarPasso(motivo, feito, fazer) {
+    // O alert engole o mouseup, e o Cmd+Z pode chegar com o botão em baixo: a
+    // caixa, o punho, o zoom, a guia ou a Mão ficavam presos ao ponteiro depois
+    // do aviso (o reporEstadoDoRato só muda o global; o p5 continuava a dar o
+    // botão por premido). O gesto acaba aqui, e a guia fica gravada onde ia,
+    // como ao largar. Um arrasto de peças não: andam fora do tabuleiro e o
+    // cancelar não as repõe. O Cmd+Z não chega aqui a meio dele (está
+    // bloqueado), mas o botão da barra chega, se o mouseup se tiver perdido. A
+    // meio da caixa, do punho ou de uma guia o Cmd+Z também já não chega (ver
+    // outroGestoEmCurso); fica isto para o zoom, a Mão e o botão da barra.
+    if (!isDraggingSelection) {
+        if (draggedGuide) guardarGuias();
+        cancelarInteraccaoEmCurso();
+        porPressao(false);
+    }
+    avisar(motivo === 'folha'
+        ? 'This step cannot be ' + feito + ' on this sheet: part of it would fall outside the sheet. Go back to a sheet where it fits to ' + fazer + ' it.'
+        : 'This step cannot be ' + feito + ' in Letterpress mode: two modules would end up on top of each other. Switch to Free mode to ' + fazer + ' it.');
+}
+
 function undo() {
     if (typeof acoes !== 'undefined') acoes.undos++;
+    passoDoPunho = null;   // a meio do punho, o histórico deixa de ser o que ele guardou
+    passoDaRajada = null;  // o mesmo para o passo da rajada de setas
     var hist = storedCharacters[currentChar].history;
     var redoHist = storedCharacters[currentChar].redoHistory;
 
     if (hist.length > 0) {
+        var motivo = motivoParaNaoRepor(hist[hist.length - 1]);
+        if (motivo) { recusarPasso(motivo, 'undone', 'undo'); return; }
         redoHist.push(JSON.parse(JSON.stringify(placedObjects))); // Guarda para o "Avançar"
         var previousState = hist.pop();
         placedObjects = JSON.parse(JSON.stringify(previousState));
         rebuildCollisionMap();
         saveCharacter(currentChar);
         selectedObjects = [];
+        gravarDepoisDeDesfazer();
     }
 }
 
 function redo() {
+    passoDoPunho = null;   // como no undo
+    passoDaRajada = null;
     var hist = storedCharacters[currentChar].history;
     var redoHist = storedCharacters[currentChar].redoHistory;
 
     if (redoHist.length > 0) {
+        var motivo = motivoParaNaoRepor(redoHist[redoHist.length - 1]);
+        if (motivo) { recusarPasso(motivo, 'redone', 'redo'); return; }
         hist.push(JSON.parse(JSON.stringify(placedObjects))); // Guarda para o "Voltar"
         var nextState = redoHist.pop();
         placedObjects = JSON.parse(JSON.stringify(nextState));
         rebuildCollisionMap();
         saveCharacter(currentChar);
         selectedObjects = [];
+        gravarDepoisDeDesfazer();
     }
+}
+
+// Um undo ou redo que só desfaz um agrupar não muda a assinatura do autosave
+// (que não vê os grupos — ver depoisDeMudarGrupos), e o registo ficava com os
+// grupos de antes: grava-se já. Sem registarActividade, como ao agrupar; o
+// tique trata do resto, como sempre. A meio de um arrasto não: as peças
+// arrastadas andam fora do tabuleiro (ver verificarAutosave).
+function gravarDepoisDeDesfazer() {
+    if (!isDraggingSelection) guardarTrabalho();
 }
 
 function saveCharacter(char) {
@@ -4011,6 +4908,7 @@ function loadCharacter(char) {
     rebuildCollisionMap();
     currentChar = char;
     selectedObjects = [];
+    passoDaRajada = null;   // a rajada de setas acaba aqui (ver moverSelecao)
     // Um cartaz ainda sem formato próprio fica, ao abrir, com a folha em que
     // abriu — a do alfabeto, que era a que partilhava.
     if (eCartaz(char) && !temFormatoProprio(storedCharacters[char])) {
@@ -4115,7 +5013,7 @@ function getGlobalBounds() {
 
     for (var i = 0; i < characters.length; i++) {
         var c = characters[i];
-        var objs = (c == currentChar) ? placedObjects : (storedCharacters[c] ? storedCharacters[c].objects : []);
+        var objs = (c == currentChar) ? pecasDoDesenho() : (storedCharacters[c] ? storedCharacters[c].objects : []);
         if (!objs || objs.length == 0) continue;
 
         for (var k = 0; k < objs.length; k++) {
@@ -4148,8 +5046,10 @@ function getGlobalBounds() {
 }
 
 // --- DESENHO DA MINIATURA ---
+// A da letra aberta é a do desenho de antes de um arrasto em curso (pecasDoDesenho),
+// como a escala comum do alfabeto (getGlobalBounds).
 function drawThumbnail(char, x, y, size) {
-    var objs = (char == currentChar) ? placedObjects : (storedCharacters[char] ? storedCharacters[char].objects : []);
+    var objs = (char == currentChar) ? pecasDoDesenho() : (storedCharacters[char] ? storedCharacters[char].objects : []);
     if (!objs || objs.length == 0) return;
 
     // Cada cartaz mede-se por si; as letras partilham a caixa do alfabeto para
@@ -4243,7 +5143,7 @@ document.addEventListener('visibilitychange', function () {
 });
 
 function desenharMiniaturaCartaz(k, x, y, tam) {
-    var objs = (k === currentChar) ? placedObjects
+    var objs = (k === currentChar) ? pecasDoDesenho()
              : (storedCharacters[k] ? storedCharacters[k].objects : []);
     var f = formatoDoCartaz(k);
     var lado = Math.max(1, Math.round(tam));
@@ -5122,11 +6022,27 @@ function drawUI() {
     stroke(238); strokeWeight(0.75); line(sidebarWidth, topBarHeight, sidebarWidth, effectiveBottom);
 
     if (activeTooltip && !showShortcutsModal && pairaLivre()) {   // no toque, o ponteiro fica onde o dedo saiu
-        push(); textSize(10 * globalScale); textStyle(NORMAL); var tw = textWidth(activeTooltip) + 16 * globalScale;
-        tooltipX = constrain(tooltipX, tw / 2 + 10, width - tw / 2 - 10);
-        rectMode(CENTER); fill(30, 230); noStroke(); rect(tooltipX, tooltipY, tw, 22 * globalScale, 4 * globalScale);
-        fill(255); textAlign(CENTER, CENTER); text(activeTooltip, tooltipX, tooltipY); pop();
+        desenharCaixaDeDica(activeTooltip, tooltipX, tooltipY);
     }
+}
+
+// O desenho de uma dica: caixa escura e texto branco, centrados em (x, y).
+// Vive num sítio só para a dica da barra e a da peça na prancheta (ver
+// desenharDicaDaPeca) terem o mesmo aspecto. A caixa não sai da janela; com
+// `limiteEsq` (opcional) também não passa para a esquerda dele — a da prancheta
+// não entra na barra lateral.
+function desenharCaixaDeDica(texto, x, y, limiteEsq) {
+    var tw = larguraDaCaixaDeDica(texto);
+    push(); textSize(10 * globalScale); textStyle(NORMAL);
+    x = constrain(x, (limiteEsq || 0) + tw / 2 + 10, width - tw / 2 - 10);
+    rectMode(CENTER); fill(30, 230); noStroke(); rect(x, y, tw, 22 * globalScale, 4 * globalScale);
+    fill(255); textAlign(CENTER, CENTER); text(texto, x, y); pop();
+}
+
+// A largura real da caixa: a dica da peça precisa dela para escolher o lado.
+function larguraDaCaixaDeDica(texto) {
+    push(); textSize(10 * globalScale); textStyle(NORMAL); var tw = textWidth(texto) + 16 * globalScale; pop();
+    return tw;
 }
 
 // --- CONTEÚDO DO MANUAL (modal) ---
@@ -5150,15 +6066,16 @@ var MANUAL = [
     { t: 'li', s: 'In Poster mode, rename a poster with the middle button below the list — double-clicking is for the mouse', tactil: true },
 
     { t: 'h', s: 'The bar at the bottom', tactil: true },
-    { t: 'li', s: 'Stands in for the keyboard: Select all, Shift, Copy, Cut, Paste, Paste in place, Duplicate and Delete. The ones that do not apply yet are greyed out', tactil: true },
+    { t: 'li', s: 'Stands in for the keyboard: Select all, Shift, Copy, Cut, Paste, Paste in place, Duplicate, Delete, Group and Ungroup. The ones that do not apply yet are greyed out', tactil: true },
     { t: 'li', s: 'Shift stands in for holding the Shift key on the artboard, and stays on (green) until you tap it again. While it is on, with Move / select, tapping a module adds it to the selection or takes it out, and a box adds to the selection instead of replacing it. It does not act on the side list: to pin a reference letter, hold it there', tactil: true },
-    { t: 'li', s: 'Paste puts the copy next to the original; Paste in place puts it exactly where it was copied from, even on another artboard', tactil: true },
+    { t: 'li', s: 'Paste puts the copy next to the original; Paste in place puts it exactly where it was copied from, even on another artboard. Neither ever lands exactly on top of an identical module', tactil: true },
 
     { t: 'cat', s: 'Working modes' },
 
     { t: 'h', s: 'Letterpress mode' },
     { t: 'li', s: 'The first control of the top bar' },
     { t: 'li', s: 'Simulates handling the movable-type version of the system: modules cannot overlap' },
+    { t: 'li', s: 'Lists the modules each artboard needs for printing — see Print list' },
 
     { t: 'h', s: 'Free mode' },
     { t: 'li', s: 'Simulates handling the stencil version of the system: modules can overlap' },
@@ -5174,6 +6091,7 @@ var MANUAL = [
     { t: 'h', s: 'The module palette' },
     { t: 'li', s: 'The row of shapes across the top. Pick one, then click on the artboard to place it' },
     { t: 'li', s: 'There are 22 of them. Hovering one shows its number' },
+    { t: 'li', s: 'Hovering a module on the artboard shows its number beside it, except while you are drawing with a module from the palette' },
     { t: 'li', s: 'A module can be rotated before it is placed, and again afterwards' },
 
     { t: 'h', s: 'Move / select', ic: 'mover' },
@@ -5181,6 +6099,7 @@ var MANUAL = [
     { t: 'li', s: 'Select them one at a time, or several at once by dragging' },
     { t: 'li', s: 'Shift-click adds a module to the selection, and removes it again if it is already in' },
     { t: 'li', s: 'Drag the handle above the selection to rotate it' },
+    { t: 'li', s: 'A paste never lands exactly on top of an identical module: Paste moves the copy to the nearest free spot, and Paste in place does nothing if the same modules are already there' },
     { t: 'sc', k: 'V', s: 'Move / select tool' },
     { t: 'sc', k: TECLA_ALT + ' + Drag', s: 'Drag away a copy, leaving the original in place' },
     { t: 'sc', k: TECLA_CMD + ' + A', s: 'Select every module' },
@@ -5190,6 +6109,28 @@ var MANUAL = [
     { t: 'sc', k: TECLA_CMD + ' + Shift + V', s: 'Paste in place (great across letters)' },
     { t: 'sc', k: TECLA_CMD + ' + D', s: 'Duplicate the selection in place' },
     { t: 'sc', k: 'Arrow keys', s: 'Nudge the selection one cell' },
+
+    { t: 'h', s: 'Groups' },
+    { t: 'li', s: 'Keep several modules together, so they are selected, moved and rotated as one' },
+    { t: 'li', s: 'Clicking any module of a group selects the whole group. So does a selection box that catches part of it' },
+    { t: 'li', s: 'With Move / select, hovering over a module of a group highlights the whole group, which is what a click selects. Hold ' + TECLA_CMD + ' to highlight just that module' },
+    { t: 'li', s: TECLA_CMD + '-click selects a single module inside a group' },
+    { t: 'li', s: 'Holding ' + TECLA_CMD + ' as you start a selection box selects only the modules it catches, not their whole groups' },
+    { t: 'li', s: 'Shift-click adds a whole group to the selection, or takes it out (with ' + TECLA_CMD + ' too, just that module)' },
+    { t: 'li', s: 'Groups can sit inside other groups: ungrouping takes them apart one level at a time' },
+    { t: 'sc', k: TECLA_CMD + ' + G', s: 'Group the selection' },
+    { t: 'sc', k: TECLA_CMD + ' + Shift + G', s: 'Ungroup, one level at a time' },
+
+    { t: 'h', s: 'Right-click menu' },
+    // O Control+clique só é clique direito no Mac: no PC, o Ctrl+clique escolhe
+    // uma peça dentro de um grupo, e a frase não serviria de nada.
+    { t: 'li', s: 'Right-click the artboard to open it' + (EM_MAC ? '. Control-click opens it too' : '') },
+    { t: 'li', s: 'Cut, Copy, Paste, Paste in place, Duplicate, Delete, Group, Ungroup and Select all do the same as their keyboard shortcuts. The ones that do not apply are greyed out' },
+    { t: 'li', s: 'Right-clicking a module that is not selected selects it first, with its group. Right-clicking an empty spot keeps the selection' },
+    { t: 'li', s: 'Paste centres the copy where you right-clicked' },
+    { t: 'li', s: 'Center horizontally on artboard and Center vertically on artboard move the selection to the middle of the artboard, one direction at a time' },
+    { t: 'li', s: 'They are kept apart because a letter almost always only wants the horizontal one: the vertical one moves it off its baseline' },
+    { t: 'li', s: 'When the exact middle falls halfway across a cell, the selection stops half a cell to the left, or above' },
 
     { t: 'h', s: 'Eraser', ic: 'limpar' },
     { t: 'li', s: 'Delete one or more modules on the artboard' },
@@ -5203,6 +6144,9 @@ var MANUAL = [
 
     { t: 'h', s: 'Vertical & horizontal symmetry', ic: ['espelhoV', 'espelhoH'] },
     { t: 'li', s: 'Speeds up drawing symmetrical letters \u2014 vertically, horizontally or on both axes \u2014 by mirroring every module automatically' },
+    { t: 'li', s: 'Moving or rotating a module moves its mirrored copy too' },
+    { t: 'li', s: 'Mirrored, 19 becomes 20 and 21 becomes 22 \u2014 and the other way round' },
+    { t: 'li', s: 'On an artboard with an odd number of cells across, the last column on the right has no mirror, so modules cannot be placed there while vertical symmetry is on. It is marked No mirror. The same goes for the bottom row and horizontal symmetry' },
 
     { t: 'h', s: 'Rotation' },
     { t: 'li', s: 'Shows the current rotation of the module' },
@@ -5253,7 +6197,11 @@ var MANUAL = [
 
     { t: 'h', s: 'Module count' },
     { t: 'li', s: 'Above the reference ruler, it counts the modules on the artboard you are on' },
-    { t: 'li', s: 'Both of them step aside on short windows, so they never cover the toolbar' },
+
+    { t: 'h', s: 'Print list' },
+    { t: 'li', s: 'Letterpress mode only. The box above the module count lists the modules on the artboard you are on, so you know which movable type to gather for printing' },
+    { t: 'li', s: 'Click it to open the list (for example 07 × 2, 11 × 1) and again to close it. The numbers are the ones in the palette' },
+    { t: 'li', s: 'They all step aside on short windows, so they never cover the toolbar' },
 
     { t: 'cat', s: 'Canvas & display' },
 
@@ -5369,16 +6317,20 @@ var MANUAL = [
 
     { t: 'h', participante: true, s: 'Your participant code' },
     // Num par, os três códigos em tópicos separados (pedido do Ângelo): o do
-    // par e o de cada pessoa, pela ordem da inscrição.
-    { t: 'li', participante: true, mostrar: emParNoGuia, s: function () {
+    // par e o de cada pessoa, pela ordem da inscrição. Cada código tem ao lado
+    // um botão de copiar (copiar: o código; pedido do Ângelo, 11/Nov/2026).
+    { t: 'li', participante: true, mostrar: emParNoGuia, copiar: function () { return participante.id; }, s: function () {
         return participante.id + ' \u2014 your pair code: what you make together on this computer is stored under it';
     } },
-    { t: 'li', participante: true, mostrar: emParNoGuia, s: function () { return linhaDoMembro(membroDoPar(0)); } },
+    { t: 'li', participante: true, mostrar: emParNoGuia, copiar: function () { return membroDoPar(0).id; },
+      s: function () { return linhaDoMembro(membroDoPar(0)); } },
     { t: 'li', participante: true, mostrar: function () { return emParNoGuia() && !!membroDoPar(1); },
+      copiar: function () { return membroDoPar(1).id; },
       s: function () { return linhaDoMembro(membroDoPar(1)); } },
     { t: 'li', participante: true, mostrar: emParNoGuia,
       s: 'Write them down: each person\'s code is the only way to ask for their data to be deleted' },
-    { t: 'li', participante: true, mostrar: function () { return !emParNoGuia(); }, s: function () {
+    { t: 'li', participante: true, mostrar: function () { return !emParNoGuia(); },
+      copiar: function () { return participante.id; }, s: function () {
         return codigoComAlcunha(participante) + ' \u2014 the anonymous code your answers and your work are stored under. Write it down: it is the only way to ask for them to be deleted';
     } },
     { t: 'li', participante: true, s: function () { return 'To ask, send the code to ' + EMAIL_CONTACTO + '. Work that has already been printed or shown cannot be withdrawn from those copies'; } },
@@ -5416,6 +6368,96 @@ function wrapText(str, maxW) {
     }
     if (linha) linhas.push(linha);
     return linhas;
+}
+
+// O botão do código, no Guide (Your data; pedido do Ângelo, 11/Nov/2026): uma
+// caixa com duas partes, o código e o ícone de copiar. A parte do ícone é como
+// um botão da barra de ferramentas: o copy.svg a 20, cinzento 80 (40 ao
+// passar), num quadrado de 34 de largura, cinzento-claro 249 (235 ao passar).
+// Passar em qualquer parte realça o contorno do botão todo; no ícone, a parte
+// dele fica também cinzenta. Um clique em qualquer das partes copia; ao copiar, um
+// visto verde no lugar do ícone, durante um instante — sem texto novo. O
+// clique é tratado no mousePressed, como os outros botões do Guide
+// (modalBotoes, acao 'copiar').
+var codigoCopiado = { valor: '', ate: 0 };   // o último código copiado, e até quando mostra o visto
+
+function medidasBotaoCodigo(codigo) {
+    var g = globalScale;
+    push(); textSize(13 * g); textStyle(BOLD);
+    var wCodigo = textWidth(codigo);
+    pop();
+    var pad = 10 * g, celula = 34 * g;
+    return { pad: pad, wCodigo: wCodigo, celula: celula, w: pad * 2 + wCodigo + celula, h: 30 * g };
+}
+
+function desenharBotaoCodigo(codigo, x0, yLinha, areaTop, areaH) {
+    var g = globalScale, m = medidasBotaoCodigo(codigo);
+    var y0 = yLinha + 7.5 * g - m.h / 2, xDiv = x0 + m.pad * 2 + m.wCodigo, raio = 6 * g;
+    var naLinha = mouseY > y0 && mouseY < y0 + m.h && mouseY > areaTop && mouseY < areaTop + areaH;
+    var sobreCodigo = naLinha && mouseX > x0 && mouseX < xDiv;
+    var sobreIcone = naLinha && mouseX >= xDiv && mouseX < x0 + m.w;
+    var copiado = codigoCopiado.valor === codigo && millis() < codigoCopiado.ate;
+    push();
+    rectMode(CORNER); noStroke();
+    fill(255); rect(x0, y0, m.w, m.h, raio);
+    // A parte do ícone, como os botões da barra: cinzento-claro, mais escuro
+    // ao passar, verde-claro depois de copiar.
+    fill(copiado ? color(236, 250, 236) : (sobreIcone ? 235 : 249));
+    rect(xDiv, y0, m.celula, m.h, 0, raio, raio, 0);
+    // A divisória e o contorno, por cima. O contorno realça ao passar em
+    // qualquer das partes.
+    stroke(225); strokeWeight(0.75);
+    line(xDiv, y0, xDiv, y0 + m.h);
+    noFill();
+    if (sobreCodigo || sobreIcone) { stroke(0, 150, 0); strokeWeight(1.2); } else { stroke(215); strokeWeight(0.75); }
+    rect(x0, y0, m.w, m.h, raio);
+    // O código.
+    noStroke(); fill(50); textSize(13 * g); textStyle(BOLD); textAlign(LEFT, CENTER);
+    text(codigo, x0 + m.pad, y0 + m.h / 2);
+    textStyle(NORMAL);
+    // O ícone, ou o visto.
+    var cx = xDiv + m.celula / 2, cy = y0 + m.h / 2;
+    if (copiado) {
+        stroke(0, 170, 0); strokeWeight(1.6 * g); noFill();
+        line(cx - 5 * g, cy, cx - 1.5 * g, cy + 3.5 * g);
+        line(cx - 1.5 * g, cy + 3.5 * g, cx + 5 * g, cy - 3.5 * g);
+    } else if (toolIcons.copiar && toolIcons.copiar.width > 1) {
+        imageMode(CENTER);
+        tint(sobreIcone ? 40 : 80);
+        image(toolIcons.copiar, cx, cy, 20 * g, 20 * g);
+    } else {
+        // Se o SVG não carregar: duas folhas sobrepostas, à mão.
+        stroke(sobreIcone ? 40 : 80); strokeWeight(1.25 * g); noFill(); rectMode(CENTER);
+        rect(cx + 2 * g, cy + 2 * g, 10 * g, 11 * g, 1.5 * g);
+        fill(sobreIcone ? 235 : 249); rect(cx - 2 * g, cy - 2 * g, 10 * g, 11 * g, 1.5 * g);
+    }
+    pop();
+    modalBotoes.push({ acao: 'copiar', valor: codigo, x0: x0, x1: x0 + m.w, y0: y0, y1: y0 + m.h });
+    if (sobreCodigo || sobreIcone) cursor(HAND);
+}
+
+// Copia o código para a área de transferência. O caminho novo do browser
+// primeiro; sem ele (ou se o recusar), o antigo, por uma caixa escondida.
+function copiarCodigo(valor) {
+    function marcar() { codigoCopiado = { valor: valor, ate: millis() + 1500 }; }
+    function pelaCaixa() {
+        var t = document.createElement('textarea');
+        t.value = valor; t.setAttribute('readonly', '');
+        estilo(t, { 'position': 'fixed', 'left': '-9999px', 'top': '0', 'opacity': '0' });
+        document.body.appendChild(t);
+        t.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) {}
+        t.remove();
+        if (ok) marcar();
+    }
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(valor).then(marcar, pelaCaixa);
+            return;
+        }
+    } catch (e) {}
+    pelaCaixa();
 }
 
 function drawShortcutsModal() {
@@ -5550,14 +6592,28 @@ function drawShortcutsModal() {
 
         } else if (bloco.t === 'li') {
             textSize(13 * globalScale); textStyle(NORMAL);
-            var linhas = wrapText(typeof bloco.s === 'function' ? bloco.s() : bloco.s, textW - 16 * globalScale);
+            var textoLi = typeof bloco.s === 'function' ? bloco.s() : bloco.s;
+            // Um código dentro de um botão (Your data): o código sai do texto e
+            // fica no lugar dele uma palavra de espaços que não partem (\u00A0),
+            // da largura do botão; o botão é desenhado por cima. O código é
+            // sempre o começo da frase. A linha do botão é mais alta, para ele
+            // não tocar nas linhas vizinhas.
+            var codigoLi = bloco.copiar ? bloco.copiar() : '';
+            if (codigoLi && textoLi.indexOf(codigoLi) === 0) {
+                var nEspacos = ceil((medidasBotaoCodigo(codigoLi).w + 4 * globalScale) / max(1, textWidth('\u00A0')));
+                textoLi = new Array(nEspacos + 1).join('\u00A0') + textoLi.slice(codigoLi.length);
+                y += 8 * globalScale;
+            } else codigoLi = '';
+            var linhas = wrapText(textoLi, textW - 16 * globalScale);
+            var yPrimeira = y;
             fill(150); textAlign(LEFT, TOP);
             text('•', textX, y);
             fill(90);
             for (var j = 0; j < linhas.length; j++) {
                 text(linhas[j], textX + 16 * globalScale, y);
-                y += 18 * globalScale;
+                y += (codigoLi && j === 0 ? 28 : 18) * globalScale;
             }
+            if (codigoLi) desenharBotaoCodigo(codigoLi, textX + 16 * globalScale, yPrimeira, areaTop, areaH);
             y += 3 * globalScale;
 
         } else if (bloco.t === 'btn') {
@@ -5679,53 +6735,137 @@ function fonteMesmoDisponivel(familia) {
 
 // --- MOVER A SELEÇÃO COM AS SETAS -------------------------------------------
 var ultimoNudge = 0;   // para não encher o histórico com cada toque na seta
+var passoDaRajada = null;   // o recibo do passo que a rajada guardou (ver devolverPasso), com a selecção depois da última seta
 
 function moverSelecao(dx, dy) {
-    if (selectedObjects.length === 0) return false;
+    // Sem peças da selecção no tabuleiro não há nada a mover (nem passo do histórico).
+    if (selecaoNoTabuleiro().length === 0) return false;
 
-    // Uma rajada de setas conta como um só passo de undo
+    // Uma rajada de setas conta como um só passo de undo. Uma seta recusada não
+    // conta para nada: nem gasta um passo, nem apaga o Refazer, nem prolonga a
+    // rajada. A que abriria a rajada e deixa o desenho igual (a peça cai no lugar
+    // do próprio espelho, ver fecharPasso) também não. A meio de uma rajada o
+    // passo já existe; se ela voltar ao desenho do início (uma seta e logo a
+    // contrária), é devolvido, e a seta seguinte já é outro passo. A rajada
+    // acaba também se, entretanto, outro gesto guardou um passo (o topo do
+    // histórico já não é o dela), a selecção mudou, a letra mudou (ver
+    // loadCharacter) ou houve Cmd+Z ou Refazer (que a esquecem): a seta a seguir
+    // juntava-se a um passo que já não era o dela, ou a nenhum, e o Cmd+Z ia dar
+    // a um desenho que nunca se tinha visto. A selecção compara-se pelo aspecto
+    // (ver mesmoAspecto): um clique na selecção sem a mexer, ou um R que a deixa
+    // igual, não a mudam.
     var agora = millis();
-    if (agora - ultimoNudge > 800) saveHistory();
+    var hist = storedCharacters[currentChar].history;
+    var novo = agora - ultimoNudge > 800 || !passoDaRajada || hist[hist.length - 1] !== passoDaRajada.foto ||
+               !mesmoAspecto(passoDaRajada.selecao, selectedObjects);
+    var antes = novo ? JSON.parse(JSON.stringify(placedObjects)) : null;
+    if (!deslocarSelecao(dx, dy)) return false;
+    if (novo) {
+        passoDaRajada = guardarPassoComRecibo(antes);
+        if (!passoDaRajada) return true;
+    } else if (devolverPasso(passoDaRajada)) {
+        passoDaRajada = null;
+        ultimoNudge = 0;
+        return true;
+    }
+    passoDaRajada.selecao = JSON.parse(JSON.stringify(selectedObjects));
     ultimoNudge = agora;
+    return true;
+}
 
-    var anteriores = selectedObjects.slice();
+// O mover propriamente dito, sem histórico: quem chama decide o passo. As
+// setas (um por rajada) e o centrar do menu do botão direito só o guardam se a
+// selecção couber e o desenho mudar. Os espelhos e os grupos vão com as peças;
+// se não couber, fica tudo como estava, a ordem da lista incluída.
+function deslocarSelecao(dx, dy) {
+    // Só as peças da selecção que estão mesmo no tabuleiro (ver
+    // selecaoNoTabuleiro): uma selecção obsoleta voltava a pousar, movidas, as
+    // que já lá não estão — era assim que, depois de um Flip, uma seta fazia
+    // voltar as peças de antes dele.
+    var anteriores = selecaoNoTabuleiro();
+    var ordem = placedObjects.slice();
     for (var i = 0; i < anteriores.length; i++) {
         var idx = placedObjects.indexOf(anteriores[i]);
         if (idx > -1) placedObjects.splice(idx, 1);
         removeObjFromCollisionMap(anteriores[i]);
     }
+    // Com a simetria, os espelhos das peças saem com elas (como no arrastar).
+    var parceiros = parceirosDeEspelho(anteriores);
+    var espelhosLevantados = levantarPecas(parceiros.pecas);
 
-    // Move e volta a gerar os espelhos, como faz o arrastar
+    // Move e volta a gerar os espelhos, como faz o arrastar. Cada peça leva
+    // os seus grupos.
     var movidos = [];
     for (var i = 0; i < anteriores.length; i++) {
         var o = anteriores[i];
-        movidos.push({ type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot });
+        var movida = { type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot };
+        definirGrupos(movida, gruposDe(o));
+        movidos.push(movida);
     }
-    var completo = [];
-    for (var k = 0; k < movidos.length; k++) {
-        var ms = getMirroredGroup(movidos[k]);
-        for (var m = 0; m < ms.length; m++) {
-            if (!containsObj(completo, ms[m])) completo.push(ms[m]);
-        }
-    }
+    var completo = juntarComEspelhos(movidos);
+    gruposNoCompleto(completo, movidos, parceiros.porPeca);
 
     if (checkPlacementValidGroup(completo)) {
         for (var i = 0; i < completo.length; i++) {
             placedObjects.push(completo[i]);
             addObjToCollisionMap(completo[i]);
         }
-        selectedObjects = completo.slice(0, movidos.length);
+        selectedObjects = movidasNoCompleto(completo, movidos);
         rotateOriginals = [];   // a base de rotação deixa de valer
         rotateStepsApplied = 0;
         return true;
     }
 
-    // Não coube: repõe tudo onde estava
+    // Não coube: repõe tudo onde estava, os espelhos incluídos. As peças voltam
+    // para o fim da lista, por isso repõe-se também a ordem, que no Free decide
+    // qual fica por cima.
     for (var i = 0; i < anteriores.length; i++) {
         placedObjects.push(anteriores[i]);
         addObjToCollisionMap(anteriores[i]);
     }
+    reporPecas(espelhosLevantados);
+    placedObjects = ordem;
     selectedObjects = anteriores;
+    return false;
+}
+
+// --- CENTRAR NO ARTBOARD (menu do botão direito) ----------------------------
+// Leva a selecção para o centro da folha numa só direcção, como se fosse com
+// as setas: os mesmos testes, os espelhos da simetria e os grupos com ela, um
+// passo do histórico. As duas direcções ficam separadas de propósito: numa
+// letra quase sempre se quer só a horizontal, porque a vertical tira-a da
+// linha de base. Centra-se a caixa da selecção (a tracejada); quando o centro
+// exacto cai a meia quadrícula, fica meia quadrícula à esquerda (ou acima).
+// Já centrada, não faz nada nem gasta um passo (nem se, com a simetria, cair
+// no lugar do próprio espelho e o desenho ficar igual: ver fecharPasso). Se não
+// couber, não mexe e diz porquê, como o Flip.
+function centrarSelecao(eixo) {
+    if (isDraggingSelection || isRotatingSelection) return false;
+    // Só as peças que estão mesmo no tabuleiro (ver selecaoNoTabuleiro).
+    var sel = selecaoNoTabuleiro();
+    if (sel.length === 0) return false;
+    var lim = limitesDoGrupo(sel);
+    var dx = 0, dy = 0;
+    if (eixo === 'h') dx = artOffsetX + Math.floor((artW - (lim.maxX - lim.minX + 1)) / 2) - lim.minX;
+    else dy = artOffsetY + Math.floor((artH - (lim.maxY - lim.minY + 1)) / 2) - lim.minY;
+    if (dx === 0 && dy === 0) return false;
+
+    var antes = JSON.parse(JSON.stringify(placedObjects));
+    selectedObjects = sel;
+    if (deslocarSelecao(dx, dy)) {
+        fecharPasso(antes);
+        ultimoNudge = 0;   // uma seta logo a seguir já é outro passo do histórico
+        return true;
+    }
+    // Não coube. O motivo, como no Flip: alguma peça (ou espelho) a sair da
+    // folha, ou duas peças a quererem a mesma quadrícula.
+    var fora = sel.some(function (p) {
+        return getMirroredGroup({ type: p.type, x: p.x + dx, y: p.y + dy, rot: p.rot }).some(function (q) {
+            return !isObjInsideArtboard(q);
+        });
+    });
+    avisar('The selection cannot be centered: ' +
+           (fora ? 'part of it would fall outside the sheet' : 'two modules would end up on top of each other') + '.');
     return false;
 }
 
@@ -5740,19 +6880,24 @@ function getReguaBounds() {
     var y = height - tam - margem - 18 * globalScale;
     // Numa janela baixa a régua sobe até entrar na barra de ferramentas.
     // Meia miniatura tapada é pior do que nenhuma, por isso desaparece.
+    // A meio de um arrasto não: as peças arrastadas contam (pecasDoDesenho).
     var cabe = (y - 6 * globalScale) > topBarHeight + 8 * globalScale;
     return { tam: tam,
              x: width - tam - margem,
              y: y,
              cabe: cabe,
-             visivel: cabe && !showShortcutsModal && !showWordPreview && !telaPorEscolher && placedObjects.length > 0 };
+             visivel: cabe && !showShortcutsModal && !showWordPreview && !telaPorEscolher && pecasDoDesenho().length > 0 };
 }
 
 // Onde fica a cápsula "modules: N" — a mesma conta para a desenhar e para
 // saber se um arrasto começou nela. Pousa por cima da miniatura da letra; sem
 // miniatura, encosta ao fundo (ou ao topo da faixa da palavra, para não cair
 // sobre a composição). É uma nota do canvas: com o manual aberto não flutua
-// por cima dele, e só aparece se couber abaixo da barra de ferramentas.
+// por cima dele, e só aparece se couber abaixo da barra de ferramentas. A
+// largura é sempre a da caixa da miniatura, seja qual for o número e o tipo de
+// letra (a Marist só chega depois do arranque): as notas do canto têm todas as
+// mesmas bordas. A lista para impressão, essa sim um botão, pousa por cima dela
+// e segue-a (ver getListaImpressaoBounds).
 function getContagemBounds() {
     if (showShortcutsModal || telaPorEscolher) return null;
     var g = globalScale, reg = getReguaBounds(), meia = 14 * g, cy;
@@ -5760,20 +6905,223 @@ function getContagemBounds() {
     else if (showWordPreview) cy = getPreviewBounds().y - meia - 8 * g;
     else cy = height - meia - 14 * g;
     if (cy - meia <= topBarHeight + 8 * g) return null;
-    push(); textSize(11 * g); textStyle(NORMAL);
-    var largura = max(textWidth('modules: ' + placedObjects.length) + 24 * g, reg.tam + 12 * g);
-    pop();
-    return { cx: reg.x + reg.tam / 2, cy: cy, largura: largura, altura: 28 * g };
+    return { cx: reg.x + reg.tam / 2, cy: cy, largura: reg.tam + 12 * g, altura: 28 * g };
 }
 
-// A régua de referência e a contagem, no canto inferior direito. Não são
-// botões, mas são interface: a Mão não desloca a prancheta a partir delas.
+// As caixas das notas do canto, tal como se desenham: a lista para impressão,
+// a régua de referência e a contagem. Uma só conta para os cliques e para a
+// dica da peça não lhes tocar.
+function caixasDasNotasDoCanto() {
+    var g = globalScale, reg = getReguaBounds(), c = getContagemBounds(), l = getListaImpressaoBounds(), caixas = [];
+    if (l) caixas.push({ x0: l.x0, y0: l.y0, x1: l.x1, y1: l.y1 });
+    if (reg.visivel) caixas.push({ x0: reg.x - 6 * g, y0: reg.y - 6 * g, x1: reg.x + reg.tam + 6 * g, y1: reg.y + reg.tam + 6 * g });
+    if (c) caixas.push({ x0: c.cx - c.largura / 2, y0: c.cy - c.altura / 2, x1: c.cx + c.largura / 2, y1: c.cy + c.altura / 2 });
+    return caixas;
+}
+
+// A régua de referência, a contagem e a lista para impressão, no canto
+// inferior direito. As duas primeiras não são botões e a lista é, mas são
+// todas interface: a Mão não desloca a prancheta a partir delas, e a dica da
+// peça não aparece por cima delas.
 function sobreNotasDoCanto(x, y) {
-    var g = globalScale, reg = getReguaBounds();
-    if (reg.visivel && x > reg.x - 6 * g && x < reg.x + reg.tam + 6 * g &&
-        y > reg.y - 6 * g && y < reg.y + reg.tam + 6 * g) return true;
-    var c = getContagemBounds();
-    return !!c && abs(x - c.cx) < c.largura / 2 && abs(y - c.cy) < c.altura / 2;
+    return caixasDasNotasDoCanto().some(function (c) { return x > c.x0 && x < c.x1 && y > c.y0 && y < c.y1; });
+}
+
+// --- LISTA PARA IMPRESSÃO (só no modo Letterpress) --------------------------
+// Uma caixa por cima da contagem, na mesma coluna: «Print list». Um clique
+// abre a lista dos módulos do artboard aberto — quantos de cada, na ordem da
+// paleta —, para se saber que tipos móveis juntar para imprimir. Aberta, a
+// mesma caixa cresce para cima e a cabeça fica em baixo: o sítio do clique não
+// foge. Só no Letterpress — no Free as peças sobrepõem-se, não há tipos a
+// juntar —, e ao voltar a ele volta como estava, aberta ou fechada. Não fecha
+// com cliques fora: é um painel vivo, que acompanha o desenho, como a faixa da
+// palavra. Não se grava nem se recolhe; os cliques nela contam nos ponteiros,
+// como qualquer clique.
+var listaImpressaoAberta = false;
+
+// Quantas peças de cada módulo há no artboard aberto (letra ou cartaz), na
+// ordem da paleta. A rotação não conta: é a mesma peça física. Conta o que
+// está desenhado — depois de um Flip, as do Flip, que é o que se imprime.
+// Durante um arrasto as peças arrastadas saem do placedObjects (voltam ao
+// largar), e com a simetria os espelhos delas também: conta o desenho de antes
+// do arrasto (pecasDoDesenho), para a lista não mudar a meio.
+function contagemPorModulo() {
+    var pecas = pecasDoDesenho();
+    var n = {};
+    for (var i = 0; i < pecas.length; i++) n[pecas[i].type] = (n[pecas[i].type] || 0) + 1;
+    var out = [], ordem = ordemDosModulos();
+    for (var k = 0; k < ordem.length; k++) {
+        if (n[ordem[k]]) out.push({ tipo: ordem[k], n: n[ordem[k]] });
+    }
+    return out;
+}
+
+// A geometria da lista: uma só conta para a desenhar e para os cliques, como a
+// da contagem. null quando não se mostra — no Free, com o artboard vazio, sem
+// contagem (manual aberto, tela por escolher, janela baixa) ou sem lugar para
+// a cabeça abaixo da barra de cima. A caixa tem sempre a largura W da contagem
+// e da miniatura da letra, com as mesmas bordas, aberta ou fechada, 8 acima da
+// contagem, como a contagem está da miniatura.
+// Aberta, cada linha leva a miniatura do módulo, o número e a quantidade. A
+// miniatura é a da paleta — a mesma caixa de 34, ao mesmo passo de 45 (11
+// entre miniaturas): com ícones de 14 em linhas de 18, os módulos ficavam
+// quase uns em cima dos outros. Só encolhe se a quantidade não couber em W, e
+// a altura das linhas não muda com isso. As que não cabem numa coluna passam
+// a outras, à esquerda (até 4, repartidas por igual, cada uma com W); se nem
+// assim couberem, a última diz quantas faltam. Nunca passa para cima da barra
+// de cima nem para a esquerda da barra lateral; se nem uma linha couber, fica
+// só a cabeça. Os textos medem-se aqui, a cada vez, no corpo e no estilo em
+// que se desenham: a Marist só chega depois do arranque. Cada célula leva
+// também onde ficam a miniatura e os textos, para o desenho não refazer a conta.
+function getListaImpressaoBounds() {
+    if (isOverlapMode) return null;
+    var pil = getContagemBounds();
+    if (!pil) return null;
+    var itens = contagemPorModulo();
+    if (itens.length === 0) return null;
+    var g = globalScale, pad = 10 * g, mini = 34 * g, passo = 45 * g, W = pil.largura;
+    var topo = topBarHeight + 8 * g;
+    var dir = pil.cx + W / 2;
+    var cabY1 = pil.cy - pil.altura / 2 - 8 * g;
+    var cabY0 = cabY1 - 28 * g;
+    if (cabY0 <= topo) return null;
+
+    // Todo o texto da lista é o da contagem: 11, normal, nada a negrito.
+    push(); textSize(11 * g); textStyle(NORMAL);
+    // textoX: onde começa o texto da cabeça. Fica no mesmo sítio quando a
+    // lista aberta ganha colunas para a esquerda.
+    var b = { x0: dir - W, x1: dir, y0: cabY0, y1: cabY1, cabY0: cabY0,
+              textoX: dir - W + 10 * g, mini: mini, corpo: 11 * g, aberta: false, celulas: [] };
+    // n miniaturas numa coluna pedem n·34 + (n-1)·11, mais a folga de cima e
+    // a de baixo. Contam sempre os 34, mesmo que a miniatura encolha.
+    var util = cabY0 - topo - 2 * pad;
+    var porColuna = util >= mini ? floor((util - mini) / passo) + 1 : 0;
+    if (listaImpressaoAberta && porColuna >= 1) {
+        var maxColunas = min(4, floor((dir - (sidebarWidth + 8 * g)) / W));
+        if (maxColunas >= 1) {
+            var nCol = min(maxColunas, ceil(itens.length / porColuna));
+            var lugares = nCol * porColuna;
+            var nCel = min(itens.length, lugares);
+            var mostrar = itens.length > lugares ? lugares - 1 : itens.length;   // a última diz quantas faltam
+            var nLin = ceil(nCel / nCol);
+            var largNum = 0, largQt = 0;
+            for (var i = 0; i < mostrar; i++) {
+                largNum = max(largNum, textWidth(etiquetaDoModulo(itens[i].tipo)));
+                largQt = max(largQt, textWidth('× ' + itens[i].n));
+            }
+            // Cada linha cabe em W: margem de 5 de cada lado, 6 entre a miniatura
+            // e o número, pelo menos 4 entre o número e a quantidade. A miniatura
+            // fica com o que sobra, até aos 34 e nunca menos de 20, igual em
+            // todas as linhas.
+            var margem = 5 * g, vaoNum = 6 * g;
+            var livre = W - 2 * margem - vaoNum - 4 * g;
+            var miniLinha = max(20 * g, min(mini, livre - largNum - largQt));
+            // Só com muitas centenas de peças de um módulo e uma letra muito
+            // larga é que os textos não cabem nem com a miniatura no mínimo:
+            // encolhem eles, para não se tocarem nem saírem da caixa.
+            var escala = min(1, (livre - miniLinha) / max(largNum + largQt, 1));
+            if (mostrar < itens.length) escala = min(escala, (W - 2 * margem) / textWidth('+ ' + (itens.length - mostrar) + ' more'));
+            b.corpo = 11 * g * escala;
+            b.mini = miniLinha;
+            b.x0 = dir - nCol * W;
+            b.y0 = cabY0 - 2 * pad - mini - (nLin - 1) * passo;
+            b.aberta = true;
+            for (var c = 0; c < nCel; c++) {
+                var col = floor(c / nLin), lin = c % nLin;
+                // y: o centro da miniatura, que é também o dos textos da linha.
+                var cel = { x0: b.x0 + col * W, x1: b.x0 + (col + 1) * W, y: b.y0 + pad + mini / 2 + lin * passo };
+                if (c === mostrar) {
+                    cel.mais = itens.length - mostrar;
+                    cel.textoX = cel.x0 + margem;   // «+ k more» começa onde começam as miniaturas
+                } else {
+                    cel.tipo = itens[c].tipo; cel.n = itens[c].n;
+                    cel.miniX = cel.x0 + margem + miniLinha / 2;          // centro da miniatura
+                    cel.textoX = cel.x0 + margem + miniLinha + vaoNum;    // o número, à esquerda
+                    cel.qtX = cel.x1 - margem;                            // a quantidade, alinhada à direita
+                }
+                b.celulas.push(cel);
+            }
+        }
+    }
+    pop();
+    return b;
+}
+
+function sobreListaImpressaoEm(x, y) {
+    var b = getListaImpressaoBounds();
+    return !!b && x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1;
+}
+function sobreListaImpressao() { return sobreListaImpressaoEm(mouseX, mouseY); }
+
+// Devolve true se o clique foi na lista (e trata-o): é interface, nunca
+// prancheta. Só a cabeça abre e fecha; as linhas não fazem nada.
+function cliqueNaListaImpressao() {
+    if (!sobreListaImpressao()) return false;
+    // Nem este clique nem um arrasto que parta dele pintam ou apagam por baixo.
+    suppressDrawUntilRelease = true;
+    // O segundo clique de um duplo clique não desfaz o primeiro (como na lista
+    // dos cartazes): um duplo clique vale por um.
+    if (!cliqueRepetido && mouseY > getListaImpressaoBounds().cabY0) listaImpressaoAberta = !listaImpressaoAberta;
+    return true;
+}
+
+function desenharListaImpressao() {
+    var b = getListaImpressaoBounds();
+    if (!b) return;
+    var g = globalScale;
+    // O texto é o da contagem (11, normal, cinzento 120) — as duas são notas
+    // do mesmo canto —, sem verde. O realce é o dos botões da barra (235) e só
+    // com o ponteiro na cabeça, que é o botão: as linhas não fazem nada.
+    // Fechada, a caixa é só a cabeça e realça-se inteira; aberta, só a faixa
+    // da cabeça, por dentro, como o realce das setas de rodar.
+    var sobreCabeca = pairaLivre() && mouseX > b.x0 && mouseX < b.x1 && mouseY > b.cabY0 && mouseY < b.y1;
+    push();
+    rectMode(CORNERS);
+    fill(sobreCabeca && !b.aberta ? 235 : 249); stroke(238); strokeWeight(0.75);
+    rect(b.x0, b.y0, b.x1, b.y1, 6 * g);
+    if (sobreCabeca && b.aberta) {
+        noStroke(); fill(235);
+        rect(b.x0 + 3 * g, b.cabY0 + 3 * g, b.x1 - 3 * g, b.y1 - 3 * g, 5 * g);
+    }
+
+    var cy = (b.cabY0 + b.y1) / 2;
+    noStroke(); fill(120);
+    textSize(11 * g); textStyle(NORMAL); textAlign(LEFT, CENTER);
+    text('Print list', b.textoX, cy);
+    // Seta a traço, como a dos menus: para cima fechada (a lista abre para
+    // cima), para baixo aberta.
+    var sx = b.x1 - 12 * g, d = 3.2 * g, s = listaImpressaoAberta ? 1 : -1;
+    stroke(120); strokeWeight(1.2 * g); noFill();
+    line(sx - d, cy - s * d / 2, sx, cy + s * d / 2);
+    line(sx, cy + s * d / 2, sx + d, cy - s * d / 2);
+
+    if (b.aberta) {
+        var mini = b.mini;
+        // A miniatura da paleta: a mesma caixa e a mesma imagem (modules, o
+        // tema à vista, Fill ou Dot), na proporção do módulo, mas sem o verde
+        // de escolhida nem o realce — aqui não se escolhe nada. SVG grandes
+        // reduzidos a 24 px: sem escada (o pop repõe).
+        drawingContext.imageSmoothingQuality = 'high';
+        rectMode(CENTER); imageMode(CENTER);
+        textSize(b.corpo);
+        for (var i = 0; i < b.celulas.length; i++) {
+            var c = b.celulas[i];
+            if (c.mais) {
+                noStroke(); fill(120); textAlign(LEFT, CENTER);
+                text('+ ' + c.mais + ' more', c.textoX, c.y);
+                continue;
+            }
+            fill(249); stroke(238); strokeWeight(0.75);
+            rect(c.miniX, c.y, mini, mini, 6 * g);
+            var dm = getModuleDims(c.tipo), maxD = max(dm.len, dm.wid);
+            if (modules[c.tipo]) image(modules[c.tipo], c.miniX, c.y, (dm.len / maxD) * (mini - 10 * g), (dm.wid / maxD) * (mini - 10 * g));
+            noStroke(); fill(120); textAlign(LEFT, CENTER);
+            text(etiquetaDoModulo(c.tipo), c.textoX, c.y);
+            textAlign(RIGHT, CENTER);
+            text('× ' + c.n, c.qtX, c.y);
+        }
+    }
+    pop();
 }
 
 function desenharReguaReferencia() {
@@ -5893,7 +7241,10 @@ function previewInputTemFoco() {
 // Posiciona e estiliza por JS — o Cargo esvazia CSS de <style>, como já vimos.
 function posicionarCampoPreview() {
     var el = garantirCampoPreview();
-    if (!showWordPreview) {
+    // Com a avaliação aberta por cima (desde a v2 pode abrir com a faixa
+    // aberta), o campo fica escondido: o Tab não o alcança, e o que se escreve
+    // vai para a janela, e não para a palavra por trás dela. Volta ao fechar.
+    if (!showWordPreview || avaliacaoAberta) {
         el.style.setProperty('display', 'none', 'important');
         return;
     }
@@ -6102,8 +7453,9 @@ var ultimaAssinatura = '';
 var avisoRecuperado = 0;   // frames que falta mostrar a nota de recuperação
 var autosaveOK = true;     // falso se o browser não deixar guardar (janela privada, espaço cheio)
 
-// Impressão digital barata do estado: deteta peças acrescentadas, apagadas,
-// movidas ou rodadas sem ter de serializar tudo a cada segundo.
+// Impressão digital do estado: deteta peças acrescentadas, apagadas, movidas
+// ou rodadas. Só o tipo, o sítio e a rotação: os grupos gravam-se à parte, e
+// agrupar não é trabalho para a sessão (ver depoisDeMudarGrupos).
 function assinaturaDoTrabalho() {
     // O formato que conta é o do alfabeto, e o de cada cartaz vai com ele mais
     // abaixo. Usar o da folha aberta fazia de cada troca entre cartazes de
@@ -6121,13 +7473,20 @@ function assinaturaDoTrabalho() {
         var objs = (c === currentChar) ? placedObjects
                  : (storedCharacters[c] ? storedCharacters[c].objects : []);
         if (!objs || objs.length === 0) continue;
-        var soma = 0;
+        // Peça a peça, e por ordem: a ordem da lista não conta (um clique numa
+        // peça, sem a mexer, só a muda, e isso não é trabalho). Uma soma
+        // ponderada, como se fazia, anulava-se com a simetria ligada — a peça
+        // anda +1 e o espelho −1 —, e mover ou rodar com os espelhos não era
+        // gravado nem contado. Já deixava escapar, sem simetria, mudanças raras
+        // (meia volta, no mesmo segundo, de um módulo de 2×2 de lado).
+        var pecas = new Array(objs.length);
         for (var k = 0; k < objs.length; k++) {
-            soma += objs[k].x * 31 + objs[k].y * 17 + objs[k].rot * 7 + objs[k].type * 3;
+            pecas[k] = objs[k].type + ',' + objs[k].x + ',' + objs[k].y + ',' + objs[k].rot;
         }
+        pecas.sort();
         // O ':' separa a chave da contagem: sem ele, '@CARTAZ' com 21 peças e
         // '@CARTAZ2' com 1 davam o mesmo texto.
-        s += '|' + c + ':' + objs.length + ',' + soma;
+        s += '|' + c + ':' + objs.length + ',' + pecas.join(';');
         if (eCartaz(c)) {
             var f = formatoDoCartaz(c);
             s += ',' + f.idx + (f.landscape ? 'L' : 'P');
@@ -6263,6 +7622,15 @@ function recuperarTrabalho() {
 // uma vez por segundo, para não pesar no desenho.
 function verificarAutosave() {
     if (frameCount % 60 !== 0) return;
+    // Nunca a meio de um arrasto. Com o botão premido sobre uma selecção, as
+    // peças dela (e, com a simetria, os espelhos) andam fora do tabuleiro, a
+    // acompanhar o rato. Um tique aqui gravava o trabalho sem elas — perdiam-se
+    // se a página fechasse nesse instante — e o registarActividade via-as sair
+    // e, ao largar, voltar: a volta somava-se aos usos como colocações novas,
+    // uma por peça, em cada arrasto (ou clique numa peça) que apanhasse um
+    // tique. Assim, o primeiro tique depois de largar compara com o trabalho
+    // de antes do arrasto, e só conta o que mudou de facto.
+    if (isDraggingSelection) return;
     var a = assinaturaDoTrabalho();
     if (a === ultimaAssinatura) return;
     ultimaAssinatura = a;
@@ -6293,12 +7661,13 @@ function desenharAvisoRecuperado() {
 }
 
 // Formato comum das notas flutuantes: cápsula com fundo suave e texto ao
-// centro. Partilhado para a contagem e o aviso ficarem visualmente irmãos.
+// centro. Partilhado para a contagem e o aviso ficarem visualmente irmãos. Os
+// avisos crescem com o texto; a contagem (`larguraFixa`) nunca.
 function desenharPilula(texto, cx, cy, corFundo, corTexto, opcoes) {
     opcoes = opcoes || {};
     push();
     textSize(11 * globalScale); textStyle(NORMAL); textAlign(CENTER, CENTER);
-    var largura = max(textWidth(texto) + 24 * globalScale, opcoes.largura || 0);
+    var largura = opcoes.larguraFixa || textWidth(texto) + 24 * globalScale;
     var altura = 28 * globalScale;
     rectMode(CENTER);
     if (opcoes.contorno) { stroke(opcoes.contorno); strokeWeight(0.75); } else noStroke();
@@ -6330,6 +7699,14 @@ function abrirManual() {
     categoriasAbertas = {};
 }
 
+// Um gesto do rato a meio, além do arrasto de peças: o punho de rotação, a
+// caixa de selecção ou uma guia. As teclas que mexem no desenho, na selecção,
+// na ferramenta ou nos ficheiros esperam que se largue, como a meio de um
+// arrasto (ver o keyPressed e o ouvinte do Cmd).
+function outroGestoEmCurso() {
+    return isRotatingSelection || selectionBox.active || !!draggedGuide;
+}
+
 function keyPressed(event) {
     // Atalhos do sistema (Cmd+R recarregar, Cmd+S guardar página...) passam
     // intactos: sem isto, um Cmd+R rodava a peça E recarregava a página.
@@ -6354,6 +7731,32 @@ function keyPressed(event) {
     // Com o manual aberto, as teclas não devem mexer no desenho por trás dele
     if (showShortcutsModal) {
         if (keyCode === ESCAPE) showShortcutsModal = false;
+        return;
+    }
+
+    // A meio de um arrasto (o botão premido sobre uma selecção), as peças dela
+    // andam fora do tabuleiro, a acompanhar o rato, e o que mexe no desenho, na
+    // selecção, na ferramenta ou nos ficheiros agia sem elas: cada seta pousava
+    // uma cópia ao lado (ao largar ficavam peças a mais, ou umas por cima das
+    // outras), o Delete guardava um passo do histórico sem elas, o H virava o
+    // resto e as exportações saíam sem elas. Esperam que se largue. Passam o R
+    // (roda o que se arrasta), o G (a grelha) e a vista (C e F); o Espaço e as
+    // modificadoras sozinhas não fazem nada aqui. As setas, como fora do
+    // arrasto, não deslocam a página.
+    if (isDraggingSelection && !(key == 'r' || key == 'R' || key == 'g' || key == 'G' ||
+                                 key == 'c' || key == 'C' || key == 'f' || key == 'F')) {
+        if (keyCode === LEFT_ARROW || keyCode === RIGHT_ARROW || keyCode === UP_ARROW || keyCode === DOWN_ARROW) return false;
+        return;
+    }
+    // O mesmo a meio dos outros gestos do rato (ver outroGestoEmCurso): agiam
+    // por baixo deles. Uma seta a meio do punho movia a selecção e tirava-lhe a
+    // base de rotação (o punho deixava de rodar), e o H a meio da caixa, com o
+    // Flip recusado, abria um aviso que engolia o largar e deixava a caixa
+    // presa ao rato. Passam o R a meio do punho (roda, e o punho continua a
+    // partir daí: ver rodarSelecao), o G e a vista (C e F).
+    if (outroGestoEmCurso() && !((isRotatingSelection && (key == 'r' || key == 'R')) || key == 'g' || key == 'G' ||
+                                 key == 'c' || key == 'C' || key == 'f' || key == 'F')) {
+        if (keyCode === LEFT_ARROW || keyCode === RIGHT_ARROW || keyCode === UP_ARROW || keyCode === DOWN_ARROW) return false;
         return;
     }
 
@@ -6410,6 +7813,9 @@ function keyPressed(event) {
 }
 
 function windowResized() {
+    // O menu do botão direito ficava no sítio antigo, com o Paste a apontar
+    // para outra quadrícula — e a selecção sobre que age vai-se aqui (loadCharacter).
+    if (menuDeQuem === 'contexto') fecharMenu();
     initAllCharacters();
     if (currentChar) {
         saveCharacter(currentChar);
@@ -6420,6 +7826,10 @@ function windowResized() {
 }
 
 function mouseDragged(evento) {
+    // Só com botões laterais em baixo, não se arrasta nada (nem a Mão desloca a
+    // prancheta). O p5 já não chega aqui com eles, porque o mousePressed os
+    // deixa por carregar; fica de reserva.
+    if (evento && evento.buttons && !(evento.buttons & 7)) return false;
     // Arrastar o dedo num formulário tem de o deixar rolar: devolver false
     // aqui cancelava o scroll da página inteira.
     if (eToque(evento) && !naTela(evento)) return;
@@ -6449,7 +7859,18 @@ function mouseDragged(evento) {
 
             var alvo = Math.round(rotateAccum / 90);
             if (alvo !== rotateStepsApplied) {
-                if (applyRotationSteps(alvo)) rotateStepsApplied = alvo;
+                // Uma volta inteira, com os quadrantes do meio recusados: as peças
+                // já estão nessa posição. Nada mudou, não gasta um passo.
+                if ((alvo - rotateStepsApplied) % 4 === 0) {
+                    rotateStepsApplied = alvo;
+                } else if (applyRotationSteps(alvo)) {
+                    rotateStepsApplied = alvo;
+                    // Só a primeira do gesto que mude o desenho entra no
+                    // histórico: as outras já lá estão, e voltar atrás volta ao
+                    // que estava antes do punho. Até essa a fotografia fica: uma
+                    // selecção em cata-vento roda sobre si própria (ver fecharPasso).
+                    if (snapshotAntesDoPunho) guardarPassoDoPunho();
+                }
             }
         }
         return false;
@@ -6598,7 +8019,9 @@ var areaTransferencia = [];  // módulos copiados (guardados com posição absol
 
 function copiarSelecao() {
     if (selectedObjects.length === 0) return false;
-    areaTransferencia = JSON.parse(JSON.stringify(selectedObjects));
+    // Sem as repetidas que um desenho antigo possa ter (ver semRepetidas), e
+    // só com os grupos que vão inteiros (ver copiaComGruposInteiros).
+    areaTransferencia = semRepetidas(copiaComGruposInteiros(selectedObjects));
     return true;
 }
 
@@ -6633,10 +8056,15 @@ function cortarSelecao() {
 }
 
 // Duplica no lugar, ligeiramente ao lado — sem passar pela área de
-// transferência, para não perder o que lá estiver copiado.
+// transferência, para não perder o que lá estiver copiado. Nunca exactamente
+// em cima de uma peça igual já pousada: a cópia não cai no próprio original
+// (não há [0, 0] na lista), mas caía numa cópia anterior — dois Cmd+D sobre o
+// mesmo original iam ambos para (2, 2).
 function duplicarSelecao() {
     if (selectedObjects.length === 0) return false;
-    var original = JSON.parse(JSON.stringify(selectedObjects));
+    // Como copiar e colar: só os grupos que vão inteiros, com ids novos — os
+    // mesmos em todas as tentativas. A cópia é um grupo à parte do original.
+    var original = remapearGrupos(semRepetidas(copiaComGruposInteiros(selectedObjects)));
     var tentativas = [[2, 2], [1, 1], [3, 3], [0, 2], [2, 0], [-2, -2], [4, 4], [-1, -1]];
 
     for (var t = 0; t < tentativas.length; t++) {
@@ -6644,8 +8072,11 @@ function duplicarSelecao() {
         var copia = [];
         for (var k = 0; k < original.length; k++) {
             var o = original[k];
-            copia.push({ type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot });
+            var c = { type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot };
+            definirGrupos(c, gruposDe(o));
+            copia.push(c);
         }
+        if (algumaPecaIgualJaPousada(copia)) continue;   // já lá está uma igual: o sítio seguinte
         if (checkPlacementValidGroup(copia)) {
             saveHistory();
             for (var k = 0; k < copia.length; k++) {
@@ -6659,6 +8090,68 @@ function duplicarSelecao() {
         }
     }
     return false;
+}
+
+// Cmd+G (Ctrl+G no PC): junta a selecção num grupo novo — por fora dos grupos
+// que ela leva inteiros (grupos dentro de grupos, como no Illustrator) e por
+// dentro dos que estão em todas as peças mas têm peças de fora (os
+// antepassados comuns). De um grupo que só vai em parte, e não é comum, a
+// peça sai — como no Illustrator ao agrupar peças de grupos diferentes. Assim
+// a hierarquia fica coerente mesmo com selecções feitas peça a peça
+// (Cmd+clique). É um passo no histórico; a selecção fica.
+function agruparSelecao() {
+    if (!podeAgrupar()) return false;
+    var sel = selecaoNoTabuleiro();
+    var inteiro = gruposInteiros(sel);
+    var comum = {};
+    var daPrimeira = gruposDe(sel[0]);
+    for (var j = 0; j < daPrimeira.length; j++) {
+        var id = daPrimeira[j];
+        if (inteiro[id]) continue;
+        var emTodas = true;
+        for (var k = 1; k < sel.length && emTodas; k++) emTodas = gruposDe(sel[k]).indexOf(id) > -1;
+        if (emTodas) comum[id] = true;
+    }
+    saveHistory();
+    var novo = novoIdDeGrupo();
+    for (var k = 0; k < sel.length; k++) {
+        var g = gruposDe(sel[k]);
+        var dentro = g.filter(function (id) { return inteiro[id]; });
+        var fora = g.filter(function (id) { return comum[id]; });
+        definirGrupos(sel[k], dentro.concat([novo], fora));
+    }
+    depoisDeMudarGrupos();
+    return true;
+}
+
+// Shift+Cmd+G: desfaz um nível — em cada peça, o grupo mais exterior que está
+// inteiro na selecção sai de todas as peças dele. Sem nenhum grupo inteiro na
+// selecção não faz nada, nem gasta um passo do histórico. A selecção fica.
+function desagruparSelecao() {
+    if (isDraggingSelection || isRotatingSelection) return false;
+    var sel = selecaoNoTabuleiro();
+    var tirar = gruposADesagrupar(sel);
+    if (!tirar) return false;
+    saveHistory();
+    for (var k = 0; k < sel.length; k++) {
+        var g = gruposDe(sel[k]);
+        var resto = g.filter(function (id) { return !tirar[id]; });
+        if (resto.length !== g.length) definirGrupos(sel[k], resto);
+    }
+    depoisDeMudarGrupos();
+    return true;
+}
+
+// Depois de agrupar ou desagrupar. A base de rotação é uma cópia da selecção
+// com os grupos de antes: sem a repor, rodar a seguir devolvia as peças com
+// eles. E grava já, porque o tique do autosave não vê os grupos: a assinatura
+// deixa-os de fora de propósito — se os visse, o tique chamava também o
+// registarActividade, que mexe na sessão (fim, segundos, sessão de desenho) e
+// pode mandar um ponto para a folha, e agrupar não é desenhar. Nada do que vai
+// para a folha muda por causa dos grupos.
+function depoisDeMudarGrupos() {
+    resetRotationBase();
+    guardarTrabalho();
 }
 
 // Canto superior-esquerdo do conjunto, em células
@@ -6689,13 +8182,25 @@ function limitesDoGrupo(grupo) {
 // levar uma letra inteira para outro artboard sem a desalinhar.
 // aoLado = cola junto ao original em vez de no ponteiro. É o que a barra de
 // toque usa: o dedo está no botão, e colar debaixo dele não faria sentido.
-function colarAreaTransferencia(noSitio, aoLado) {
+// Em nenhum dos casos a cópia fica exactamente em cima de uma peça igual já
+// pousada (ver algumaPecaIgualJaPousada): no sítio, se lá estiver uma igual,
+// não cola; ao ponteiro ou ao lado, passa ao sítio seguinte da lista.
+// ponto = onde colar, em coordenadas do canvas, em vez do ponteiro. É o Paste
+// do menu do botão direito: cola onde se carregou, e não sobre o item do menu,
+// que é onde o ponteiro está quando se escolhe.
+function colarAreaTransferencia(noSitio, aoLado, ponto) {
     if (areaTransferencia.length === 0) return false;
 
     var canto = cantoDoGrupo(areaTransferencia);
 
     if (noSitio) {
-        var grupo = JSON.parse(JSON.stringify(areaTransferencia));
+        // Com ids de grupo novos em cada colagem: com os mesmos, a cópia
+        // juntava-se ao grupo do original (ou ao de outra colagem).
+        var grupo = remapearGrupos(areaTransferencia);
+        // No mesmo artboard, o sítio é o do original: a cópia ficava escondida
+        // por cima dele. Aí não faz nada — colar no sítio é para levar a letra
+        // a outro artboard.
+        if (algumaPecaIgualJaPousada(grupo)) return false;
         if (checkPlacementValidGroup(grupo)) {
             saveHistory();
             for (var k = 0; k < grupo.length; k++) {
@@ -6707,17 +8212,21 @@ function colarAreaTransferencia(noSitio, aoLado) {
             resetRotationBase();
             return true;
         }
-        return false;   // não cabe exatamente aí; não inventa outro sítio
+        return false;   // não cabe exatamente aí (ou já lá está igual); não inventa outro sítio
     }
 
     // Cola onde está o rato (se estiver sobre o artboard), com o centro do
     // grupo no ponteiro, como os módulos; caso contrário, ligeiramente ao
-    // lado do original, para a cópia não ficar escondida.
+    // lado do original, para a cópia não ficar escondida. Com o ponteiro no
+    // centro do original (a menos de meia quadrícula dele), o primeiro sítio
+    // da lista é o próprio original: esse salta-se, como qualquer outro com
+    // uma peça igual já pousada.
     var destX, destY;
-    if (!aoLado && mouseX > sidebarWidth && mouseY > topBarHeight) {
+    var px = ponto ? ponto.x : mouseX, py = ponto ? ponto.y : mouseY;
+    if (!aoLado && px > sidebarWidth && py > topBarHeight) {
         var lim = limitesDoGrupo(areaTransferencia);
-        var ux = (mouseX - centerX) / tileSize + GRID_CX;
-        var uy = (mouseY - centerY) / tileSize + GRID_CY;
+        var ux = (px - centerX) / tileSize + GRID_CX;
+        var uy = (py - centerY) / tileSize + GRID_CY;
         destX = canto.x + Math.floor(ux - (lim.minX + lim.maxX + 1) / 2 + 0.5);
         destY = canto.y + Math.floor(uy - (lim.minY + lim.maxY + 1) / 2 + 0.5);
     } else {
@@ -6726,16 +8235,26 @@ function colarAreaTransferencia(noSitio, aoLado) {
     }
 
     // Se não couber no sítio pedido, procura um lugar próximo em vez de falhar
+    // — e o mesmo se lá estiver já uma peça igual. Os ids de grupo novos dão-se
+    // uma vez por colagem, iguais em todas as tentativas.
+    var comIdsNovos = remapearGrupos(areaTransferencia);
     var tentativas = [[0, 0], [1, 1], [2, 2], [-1, -1], [3, 3], [0, 2], [2, 0], [-2, -2], [4, 4]];
     for (var t = 0; t < tentativas.length; t++) {
         var dx = destX - canto.x + tentativas[t][0];
         var dy = destY - canto.y + tentativas[t][1];
 
         var grupo = [];
-        for (var k = 0; k < areaTransferencia.length; k++) {
-            var o = areaTransferencia[k];
-            grupo.push({ type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot });
+        for (var k = 0; k < comIdsNovos.length; k++) {
+            var o = comIdsNovos[k];
+            var c = { type: o.type, x: o.x + dx, y: o.y + dy, rot: o.rot };
+            definirGrupos(c, gruposDe(o));
+            grupo.push(c);
         }
+
+        // Nunca exactamente em cima de uma peça igual. No Letterpress o
+        // canPlaceTile já a recusa; no Free tudo pode sobrepor-se e passava.
+        // Tenta o sítio seguinte.
+        if (algumaPecaIgualJaPousada(grupo)) continue;
 
         if (checkPlacementValidGroup(grupo)) {
             saveHistory();
@@ -6766,6 +8285,18 @@ window.addEventListener('keydown', function (e) {
     if (previewInputTemFoco()) return;
 
     var tecla = (e.key || '').toLowerCase();
+    // Com o botão premido sobre uma selecção, as peças dela andam fora do
+    // tabuleiro, a acompanhar o rato: colar, cortar ou duplicar nesse instante
+    // não as via, e a cópia podia cair exactamente em cima do original. E
+    // agrupar contava os grupos sem elas. O mesmo com desfazer e refazer (ao
+    // largar, as peças voltavam por cima do que o desfazer repôs — ficavam
+    // repetidas), escolher tudo (a selecção trocava a meio) e copiar (levava as
+    // peças como estavam antes do R a meio). Esperam que se largue; o browser
+    // também não age (procurar, favoritos, histórico, reabrir o separador…). O
+    // mesmo a meio do punho, da caixa de selecção ou de uma guia (ver
+    // outroGestoEmCurso): o Cmd+Z, por exemplo, desfazia por baixo do punho.
+    if ((isDraggingSelection || outroGestoEmCurso()) && (tecla === 'v' || tecla === 'x' || tecla === 'd' || tecla === 'g' ||
+                                tecla === 'z' || tecla === 'y' || tecla === 'a' || tecla === 'c')) { e.preventDefault(); return; }
     if (tecla === 'z') {
         // Shift+Z (ou Cmd+Y, à maneira do Windows) refaz
         e.preventDefault();
@@ -6781,7 +8312,8 @@ window.addEventListener('keydown', function (e) {
         if (cortarSelecao()) e.preventDefault();
     } else if (tecla === 'v') {
         // Shift+V cola nas coordenadas originais — para levar uma letra
-        // inteira para outro artboard sem a desalinhar.
+        // inteira para outro artboard sem a desalinhar. No mesmo artboard, por
+        // cima do original, não faz nada (ver colarAreaTransferencia).
         if (colarAreaTransferencia(e.shiftKey)) e.preventDefault();
     } else if (tecla === 'd') {
         // Havendo seleção, o atalho é nosso: bloqueia sempre o "adicionar aos
@@ -6789,6 +8321,15 @@ window.addEventListener('keydown', function (e) {
         if (selectedObjects.length > 0) {
             e.preventDefault();
             duplicarSelecao();
+        }
+    } else if (tecla === 'g') {
+        // Cmd+G agrupa; Shift+Cmd+G desagrupa um nível, como no Illustrator.
+        // Havendo seleção, o atalho é nosso: bloqueia sempre o «procurar
+        // seguinte» do browser, mesmo que não haja nada a (des)agrupar. A meio
+        // de uma rotação pelo punho não faz nada (ver podeAgrupar).
+        if (selectedObjects.length > 0) {
+            e.preventDefault();
+            if (e.shiftKey) desagruparSelecao(); else agruparSelecao();
         }
     }
 });
@@ -6940,52 +8481,97 @@ function applyRotationSteps(n) {
     if (rotateOriginals.length === 0) return false;
     n = ((n % 4) + 4) % 4;
 
-    // Tira da grelha o que lá está neste momento
-    var anteriores = selectedObjects.slice();
+    // Tira da grelha o que lá está neste momento — as peças da selecção que
+    // estão mesmo no tabuleiro (ver selecaoNoTabuleiro). Se faltar alguma (uma
+    // selecção obsoleta, como a que o Flip deixava), a base é também de peças
+    // que já lá não estão, e rodá-la voltava a pousá-las. Não roda: a selecção
+    // fica só com as que estão, e a base recomeça a partir delas.
+    var anteriores = selecaoNoTabuleiro();
+    if (anteriores.length < selectedObjects.length) {
+        selectedObjects = anteriores;
+        resetRotationBase();
+        return false;
+    }
+    var ordem = placedObjects.slice();
     for (var i = 0; i < anteriores.length; i++) {
         var idx = placedObjects.indexOf(anteriores[i]);
         if (idx > -1) placedObjects.splice(idx, 1);
         removeObjFromCollisionMap(anteriores[i]);
     }
+    // Com a simetria, os espelhos delas também (como no arrastar).
+    var parceiros = parceirosDeEspelho(anteriores);
+    var espelhosLevantados = levantarPecas(parceiros.pecas);
 
     // Parte sempre do original e roda n vezes
     var grupo = rotateGroupBy(rotateOriginals, n);
+    // Os grupos vêm das peças tal como estão agora, e não da base: a base é
+    // uma cópia de quando a selecção foi feita, e a peça rodada tem de ficar
+    // com os grupos que tem. A selecção segue a ordem da base; se o número
+    // não bater, ficam os da base.
+    var alinhadas = grupo.length === anteriores.length;
+    if (alinhadas) {
+        for (var k = 0; k < grupo.length; k++) definirGrupos(grupo[k], gruposDe(anteriores[k]));
+    }
 
     // Junta os espelhos ativos
-    var completo = [];
-    for (var k = 0; k < grupo.length; k++) {
-        var ms = getMirroredGroup(grupo[k]);
-        for (var m = 0; m < ms.length; m++) {
-            if (!containsObj(completo, ms[m])) completo.push(ms[m]);
-        }
-    }
+    var completo = juntarComEspelhos(grupo);
+    gruposNoCompleto(completo, grupo, alinhadas ? parceiros.porPeca : null);
 
     if (checkPlacementValidGroup(completo)) {
         for (var i = 0; i < completo.length; i++) {
             placedObjects.push(completo[i]);
             addObjToCollisionMap(completo[i]);
         }
-        selectedObjects = completo.slice(0, grupo.length);
+        selectedObjects = movidasNoCompleto(completo, grupo);
         return true;
     }
 
-    // Não coube: repõe o que lá estava
+    // Não coube: repõe o que lá estava, os espelhos incluídos, e pela mesma
+    // ordem (uma recusa não muda nada; no Free a ordem decide qual fica por cima).
     for (var i = 0; i < anteriores.length; i++) {
         placedObjects.push(anteriores[i]);
         addObjToCollisionMap(anteriores[i]);
     }
+    reporPecas(espelhosLevantados);
+    placedObjects = ordem;
     selectedObjects = anteriores;
     return false;
 }
 
-// direcao: +1 horário, -1 anti-horário
+// direcao: +1 horário, -1 anti-horário. O passo do histórico só entra se a
+// selecção rodar mesmo, como no Flip: guardado antes, uma rotação que não cabe
+// esvaziava o Refazer e, com o histórico cheio, levava o passo mais antigo. E só
+// se o desenho mudar: quatro módulos em cata-vento rodam sobre si próprios (ver
+// fecharPasso).
 function rodarSelecao(direcao) {
     if (selectedObjects.length === 0) return false;
     ensureRotationBase();
-    saveHistory();
+    var antes = JSON.parse(JSON.stringify(placedObjects));
     var alvo = rotateStepsApplied + direcao;
-    if (applyRotationSteps(alvo)) { rotateStepsApplied = alvo; return true; }
-    return false;
+    if (!applyRotationSteps(alvo)) return false;
+    rotateStepsApplied = alvo;
+    if (isRotatingSelection) {
+        // R a meio do punho: faz parte do gesto do punho, que tem um só passo,
+        // guardado à primeira rotação que mude o desenho (a do rato ou a do R) e
+        // devolvido ao largar se o desenho voltar ao do início (ver
+        // guardarPassoDoPunho e devolverPassoDoPunho). O ângulo do punho
+        // acompanha o R, e o punho continua a partir do ângulo novo. Antes, o
+        // movimento seguinte do rato voltava ao quarto de volta de antes
+        // (Math.round(rotateAccum / 90)) e desfazia o R, que ficava no histórico
+        // como um passo sem efeito; e o R guardava um passo seu (dois no gesto,
+        // se o punho já tinha guardado o dele). As setas e o Cmd+D, que também
+        // guardavam o seu com o punho em baixo, já não chegam aqui (ver
+        // outroGestoEmCurso). O ângulo fica no quarto de volta aplicado, com o
+        // que o rato já tinha andado dentro do dele: depois de um quarto de
+        // volta recusado, o ângulo estava à frente (ou atrás) do aplicado, e
+        // somar-lhe 90 deixava-o a apontar para o de antes do R, que o
+        // movimento seguinte do rato repunha. Sem recusa, é o mesmo que somar.
+        rotateAccum = rotateStepsApplied * 90 + (rotateAccum - Math.round(rotateAccum / 90) * 90);
+        if (snapshotAntesDoPunho) guardarPassoDoPunho();
+        return true;
+    }
+    fecharPasso(antes);
+    return true;
 }
 
 function rotateSelectedObjects() {
@@ -7871,8 +9457,10 @@ function zonaDoToque(x, y) {
         return dentro ? 'manual' : 'outra';
     }
     if (x < sidebarWidth && y > getCharTop() && y < fundoDaListaLateral()) return 'lista';
+    // A lista para impressão não é prancheta: um toque nela não pousa módulo ao
+    // levantar, nem conta para o zoom de dois dedos.
     if (x > sidebarWidth && y > topBarHeight && !sobreBarraDeToqueEm(x, y) &&
-        !(showWordPreview && y > getPreviewBounds().y)) return 'tela';
+        !(showWordPreview && y > getPreviewBounds().y) && !sobreListaImpressaoEm(x, y)) return 'tela';
     return 'outra';
 }
 
@@ -7909,9 +9497,18 @@ function desfazerInicioDoToque() {
 function cancelarInteraccaoEmCurso() {
     isDraggingSelection = false;
     dragOriginals = [];
+    // As peças (e os espelhos levantados) não voltam por aqui: quem cancela
+    // repõe a fotografia de antes do toque (desfazerInicioDoToque), ou já
+    // largou (largarDono).
+    dragOrigemIntacta = [];
+    dragEspelhosLevantados = [];
+    dragParceirosPorPeca = [];
     snapshotAntesDoArrasto = null;
     selectionBox.active = false;
     isRotatingSelection = false;
+    snapshotAntesDoPunho = null;   // o que o punho já rodou fica, com o seu passo
+    passoDoPunho = null;
+    passoDaRajada = null;
     draggedGuide = null;
     isDraggingSlider = false;
 }
@@ -8239,7 +9836,11 @@ var BOTOES_DE_TOQUE = [
     { id: 'colar', texto: 'Paste' },
     { id: 'colarSitio', texto: 'In place' },
     { id: 'duplicar', texto: 'Duplicate' },
-    { id: 'apagar', texto: 'Delete' }
+    { id: 'apagar', texto: 'Delete' },
+    // Os do Cmd+G e do Shift+Cmd+G: num tablet sem teclado, um grupo não se
+    // desfazia. Pela ordem do menu do botão direito, a seguir ao Delete.
+    { id: 'agrupar', texto: 'Group' },
+    { id: 'desagrupar', texto: 'Ungroup' }
 ];
 
 function barraDeToque() {
@@ -8285,13 +9886,19 @@ function modulosEmTexto(n) { return n + (n === 1 ? ' module' : ' modules'); }
 function razaoDoBotaoDeToque(id) {
     if (id === 'tudo') return 'Nothing to select yet';
     if (id === 'colar' || id === 'colarSitio') return 'Copy or cut something first';
+    if (id === 'agrupar' && selectedObjects.length > 0) return 'Select two or more modules first';
+    if (id === 'desagrupar' && selectedObjects.length > 0) return 'Select a group first';
     return 'Select modules first, with Move / select';
 }
 
+// O Group e o Ungroup acendem e esmaecem com as mesmas regras do menu do botão
+// direito (podeAgrupar, podeDesagrupar): fazem o mesmo que o Cmd+G e o Shift+Cmd+G.
 function botaoDeToqueDisponivel(id) {
     if (id === 'juntar') return true;
     if (id === 'tudo') return placedObjects.length > 0;
     if (id === 'colar' || id === 'colarSitio') return areaTransferencia.length > 0;
+    if (id === 'agrupar') return podeAgrupar();
+    if (id === 'desagrupar') return podeDesagrupar();
     return selectedObjects.length > 0;
 }
 
@@ -8369,6 +9976,9 @@ function cliqueNaBarraDeToque() {
         else if (bt.id === 'colarSitio') { if (!colarAreaTransferencia(true)) avisarNaBarra('It does not fit in the same place here', true); }
         else if (bt.id === 'duplicar') { if (!duplicarSelecao()) avisarNaBarra('No room to duplicate here', true); }
         else if (bt.id === 'apagar') apagarSelecao();
+        // Agrupar não se vê no desenho: diz-se numa nota, como o Copy.
+        else if (bt.id === 'agrupar') { if (agruparSelecao()) avisarNaBarra('Grouped ' + modulosEmTexto(selecaoNoTabuleiro().length)); }
+        else if (bt.id === 'desagrupar') { if (desagruparSelecao()) avisarNaBarra('Ungrouped'); }
         return true;
     }
     return true;   // entre botões: não passa para a prancheta
@@ -8376,6 +9986,11 @@ function cliqueNaBarraDeToque() {
 
 // --- DETEÇÃO DE SCROLL (RATO / TRACKPAD) ---
 function mouseWheel(event) {
+    // Com a avaliação (ou o portão) por cima, a roda é da janela. Sem isto,
+    // fazia andar o Guide ou a lista de letras escondidos por trás, e a janela
+    // não se deslocava: o return false impede o browser de a mover.
+    if (interfaceBloqueada()) return;
+
     // Com o modal aberto, a roda faz scroll ao manual
     if (showShortcutsModal) {
         modalScrollY = constrain(modalScrollY + event.delta, 0, modalMaxScroll);
@@ -8517,6 +10132,11 @@ function drawControloDaFolha(cx, cy, w, h) {
 function reporEstadoDoRato() {
     mouseIsPressed = false;
     suppressDrawUntilRelease = true; // o clique que abriu o diálogo não desenha
+    // O diálogo engole o largar: uma caixa de selecção a meio ficava presa ao
+    // rato. Acaba aqui, sem juntar à selecção o que ela apanhava (como no
+    // recusarPasso, que a cancela). As teclas já não chegam a meio dela (ver
+    // outroGestoEmCurso); fica por segurança.
+    selectionBox.active = false;
 }
 
 function avisar(mensagem) {
@@ -8578,6 +10198,124 @@ function sairMesmo() {
     window.location.href = 'https://pragmatipo.pt';
 }
 
+// Duas listas com as mesmas peças (tipo, sítio, rotação e grupos), por qualquer ordem.
+function mesmasPecas(a, b) {
+    function chaves(lista) { return lista.map(function (o) { return [o.type, o.x, o.y, o.rot, gruposDe(o).join('+')].join(','); }).sort().join(' '); }
+    return chaves(a) === chaves(b);
+}
+
+// O quadrado (00) e o círculo (15) são os únicos módulos que ficam iguais ao
+// rodar um quarto de volta, em Fill e em Dot (confirmado nos SVGs). Os retângulos
+// (01 a 05 e 21) e os paralelogramos 19 e 20 ficam iguais a meia volta; os 17 e 18
+// não, porque não estão ao centro da sua caixa e meia volta desloca-os meia
+// quadrícula. Para saber se um gesto mudou o desenho, contam pelas quadrículas
+// que ocupam, e não pela rotação e pelo pivô, que mudam ao rodar (os de meia
+// volta, mais o sentido em que estão: `rot % 2`). A rotação continua guardada na
+// peça, e nos dados, como até aqui.
+function chaveDoAspecto(o) {
+    var x = o.x, y = o.y, rot = o.rot;
+    var quartoDeVolta = o.type === 0 || o.type === 15;
+    if (quartoDeVolta || [1, 2, 3, 4, 5, 19, 20, 21].indexOf(o.type) > -1) {
+        var d = getModuleDims(o.type), v = getFillVectors(o.rot);
+        x = Math.min(o.x, o.x + v.p.x * (d.len - 1) + v.s.x * (d.wid - 1));
+        y = Math.min(o.y, o.y + v.p.y * (d.len - 1) + v.s.y * (d.wid - 1));
+        rot = quartoDeVolta ? '' : o.rot % 2;
+    }
+    return [o.type, x, y, rot, gruposDe(o).join('+')].join(',');
+}
+
+function mesmoAspecto(a, b) {
+    return a.map(chaveDoAspecto).sort().join(' ') === b.map(chaveDoAspecto).sort().join(' ');
+}
+
+// Fecha um gesto já aplicado (mover, rodar, largar um arrasto), com a fotografia
+// de antes dele. Se o desenho mudou, é um passo do histórico e devolve true. Se
+// ficou igual (quatro módulos em cata-vento rodados, um quadrado rodado, uma peça
+// levada ao lugar do próprio espelho com a simetria), não é: guardá-lo apagava o
+// Refazer e, com o histórico cheio, levava o passo mais antigo, e o Cmd+Z a seguir
+// parecia não fazer nada. Devolve false.
+function fecharPasso(antes) {
+    if (!mesmoAspecto(placedObjects, antes)) {
+        empurrarHistorico(antes);
+        return true;
+    }
+    reporOrdem(antes);
+    return false;
+}
+
+// Um gesto sem efeito tirou as peças e voltou a pô-las no fim da lista e, sem
+// passo, não havia Cmd+Z que repusesse a ordem, que no Free decide qual fica por
+// cima. Repõe-se com os mesmos objectos, porque é para eles que a selecção aponta;
+// o mapa de colisões continua certo, porque não depende da ordem da lista.
+// Casa-se primeiro pela chave exacta (tipo, sítio, rotação e grupos) e só as
+// que sobram pela do aspecto: com duas peças do mesmo aspecto empilhadas no
+// Free (dois quadrados com rotações diferentes), casar logo pelo aspecto podia
+// trocá-las, e a de baixo passava para cima.
+function reporOrdem(foto) {
+    function exacta(o) { return [o.type, o.x, o.y, o.rot, gruposDe(o).join('+')].join(','); }
+    var livres = placedObjects.slice(), porChave = {}, porAspecto = {};
+    livres.forEach(function (o, i) {
+        var k = exacta(o);
+        (porChave[k] = porChave[k] || []).push(i);
+    });
+    var nova = foto.map(function (f) {
+        var l = porChave[exacta(f)];
+        if (!l || l.length === 0) return null;
+        var i = l.shift(), o = livres[i];
+        livres[i] = null;
+        return o;
+    });
+    livres.forEach(function (o) {
+        if (!o) return;
+        var k = chaveDoAspecto(o);
+        (porAspecto[k] = porAspecto[k] || []).push(o);
+    });
+    placedObjects = nova.map(function (o, i) { return o || porAspecto[chaveDoAspecto(foto[i])].shift(); });
+}
+
+// Fecha o passo de um gesto que ainda pode voltar ao início (o punho, uma rajada
+// de setas) e devolve o recibo para o desfazer, ou null se não houve passo. Quem
+// guarda um passo apaga o Refazer e, com o histórico cheio, leva o passo mais
+// antigo: fica tudo no recibo.
+function guardarPassoComRecibo(foto) {
+    var c = storedCharacters[currentChar];
+    var refazer = c.redoHistory, maisAntigo = c.history.length >= 15 ? c.history[0] : null;
+    if (!fecharPasso(foto)) return null;
+    return { foto: foto, refazer: refazer, maisAntigo: maisAntigo };
+}
+
+// O gesto voltou ao desenho do início e não foi um passo: histórico, Refazer,
+// passo mais antigo e ordem da lista ficam como estavam. Se entretanto outro
+// gesto guardou o seu (era o caso de uma seta a meio do punho, ou de um R a meio
+// da rajada; hoje o keyPressed e o moverSelecao já não o deixam), este
+// deixou de estar no topo e fica tudo como está; o Cmd+Z e o Refazer esquecem o
+// recibo (ver undo e redo). Devolve true se o passo foi devolvido.
+function devolverPasso(recibo) {
+    var c = storedCharacters[currentChar];
+    if (!recibo || c.history[c.history.length - 1] !== recibo.foto || !mesmoAspecto(placedObjects, recibo.foto)) return false;
+    c.history.pop();
+    if (recibo.maisAntigo) c.history.unshift(recibo.maisAntigo);
+    c.redoHistory = recibo.refazer;
+    reporOrdem(recibo.foto);
+    return true;
+}
+
+// A primeira rotação do punho que muda o desenho (do rato, ou do R a meio)
+// guarda o passo.
+function guardarPassoDoPunho() {
+    var recibo = guardarPassoComRecibo(snapshotAntesDoPunho);
+    if (!recibo) return;
+    snapshotAntesDoPunho = null;
+    passoDoPunho = recibo;
+}
+
+// Rodar com o punho e voltar ao início, ou meia volta numa peça que fica igual:
+// ao largar, o desenho ficou igual e o gesto não foi um passo.
+function devolverPassoDoPunho() {
+    devolverPasso(passoDoPunho);
+    passoDoPunho = null;
+}
+
 function flipCompositionHorizontal() {
     if (telaPorEscolher) return;   // o que está em placedObjects não se vê (também para o H)
     if (placedObjects.length === 0) return;
@@ -8621,16 +10359,21 @@ function flipCompositionHorizontal() {
         // Posicionar por ela, em vez de por fórmulas por família, faz a conta
         // funcionar para qualquer peça — foi assim que as diagonais deixaram
         // de mudar de tamanho ao virar.
-        newObjects.push({
+        var virada = {
             type: esp.tipo,
             x: (localW - caixaOrig.maxX) - caixaNova.minX,
             y: caixaOrig.minY - caixaNova.minY,
             rot: rotM
-        });
+        };
+        definirGrupos(virada, gruposDe(o));   // virar não desfaz grupos
+        newObjects.push(virada);
     }
 
+    // Onde está, na lista, cada peça escolhida: as peças vão ser trocadas pelas
+    // viradas (ou, se não couber, pela cópia de segurança), no mesmo lugar.
+    var lugaresDaSelecao = selectedObjects.map(function (o) { return placedObjects.indexOf(o); });
+
     // 3. Testar a Colocação (Garante que não sai do Artboard)
-    saveHistory(); // Guarda o estado para o Undo
     var backup = JSON.parse(JSON.stringify(placedObjects));
     placedObjects = [];
     rebuildCollisionMap();
@@ -8653,13 +10396,26 @@ function flipCompositionHorizontal() {
         }
     }
 
-    // 4. Reverte tudo se a composição espelhada não couber
-    if (!allValid) {
-        storedCharacters[currentChar].history.pop(); // Remove o Undo que criámos
+    // 4. Reverte tudo se a composição espelhada não couber. O passo do histórico
+    // só entra aqui, com o Flip já feito: guardado antes de se saber se cabia,
+    // um Flip recusado esvaziava o Refazer e, com o histórico cheio, levava o
+    // passo mais antigo — sem o desenho ter mudado. Pela mesma razão, uma
+    // composição simétrica, que vira sobre si própria, também não gasta um passo.
+    if (!allValid || mesmasPecas(newObjects, backup)) {
         placedObjects = backup;
         rebuildCollisionMap();
-        avisar('This composition cannot be flipped: ' + motivo + '.');
+    } else {
+        empurrarHistorico(backup);
     }
+    // A selecção passa para as peças que ficaram no tabuleiro no mesmo lugar
+    // da lista — as viradas, ou as repostas. Apontava para as de antes, que já
+    // lá não estão: uma seta a seguir tirava «essas» (não estavam) e pousava
+    // cópias movidas delas, e as peças de antes do Flip voltavam a juntar-se
+    // às viradas (3 peças passavam a 5). A base de rotação recomeça.
+    selectedObjects = lugaresDaSelecao.filter(function (i) { return i > -1; })
+                                      .map(function (i) { return placedObjects[i]; });
+    resetRotationBase();
+    if (!allValid) avisar('This composition cannot be flipped: ' + motivo + '.');
 }
 
 function updateSliderFromMouse() {
@@ -8777,7 +10533,7 @@ var VERSAO_CONSENTIMENTO_DESENHOS = '2026-10-19';
 // se vê na `coorte`. Cada versão fica registada no COLUNAS-BASE-DE-DADOS.md, em
 // "Histórico de versões da ferramenta". Numeração simples: v1, v2, v3… (tudo o
 // que foi recolhido antes de existir esta coluna é a v0).
-var VERSAO_FERRAMENTA = 'v1';
+var VERSAO_FERRAMENTA = 'v2';
 
 var CONSENTIMENTOS = [
     { id: 'rgpd', obrigatorio: true,
@@ -8871,10 +10627,14 @@ function enfileirarResposta(resposta) {
 
 // Tudo ou nada, numa escrita só: uma parte de um envio de desenhos sem as
 // outras deixava o desenho incompleto na folha.
-function enfileirarVarias(respostas) {
+// `substitui` (opcional) diz que registos da fila os novos tornam obsoletos:
+// saem na MESMA escrita em que os novos entram. Em duas, uma falha a meio
+// deixava a fila sem nenhum — ou com dois pontos da mesma sessão.
+function enfileirarVarias(respostas, substitui) {
     if (MODO_CONSULTA) return false;   // a fila é a da ferramenta verdadeira (mesma origem)
     var fila = [];
     try { fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]'); } catch (e) {}
+    if (substitui) fila = fila.filter(function (r) { return !substitui(r); });
     for (var i = 0; i < respostas.length; i++) fila.push(respostas[i]);
     try { localStorage.setItem(CHAVE_POR_ENVIAR, JSON.stringify(fila)); return true; } catch (e) { return false; }
 }
@@ -8885,6 +10645,12 @@ function enfileirarVarias(respostas) {
 // (o GET não escreve nada na folha); até haver resposta, ficam na fila.
 var VERSAO_APPS_SCRIPT_DESENHOS = '2026-10-19';
 var appsScriptAceitaDesenhos = null;   // null: ainda não se sabe
+// O mesmo para o fecho (ver PONTOS DA SESSÃO), que só um Apps Script de
+// 2026-11-05 em diante conhece. Um anterior mete o fecho na primeira folha (a
+// das inscrições) e pode tomar a inscrição verdadeira por duplicada — por isso
+// um fecho nunca sai antes de o GET o confirmar. Os dois são postos juntos.
+var VERSAO_APPS_SCRIPT_FECHO = '2026-11-05';
+var appsScriptAceitaFecho = null;   // null: ainda não se sabe
 var aVerificarAppsScript = false;
 
 function verificarAppsScript() {
@@ -8896,13 +10662,15 @@ function verificarAppsScript() {
             var m = /Vers\u00e3o (\d{4}-\d{2}-\d{2})|Versao (\d{4}-\d{2}-\d{2})|Versão (\d{4}-\d{2}-\d{2})/.exec(texto || '');
             var v = m ? (m[1] || m[2] || m[3]) : '';
             appsScriptAceitaDesenhos = !!v && v >= VERSAO_APPS_SCRIPT_DESENHOS;
-            if (appsScriptAceitaDesenhos) escoarFila();
+            appsScriptAceitaFecho = !!v && v >= VERSAO_APPS_SCRIPT_FECHO;
+            if (appsScriptAceitaDesenhos || appsScriptAceitaFecho) escoarFila();
         })
         .catch(function () { })          // sem rede: tenta-se na próxima vez
         .then(function () { aVerificarAppsScript = false; });
 }
 
 function podeSair(r) {
+    if (r && r.tipo === 'fecho') return appsScriptAceitaFecho === true;
     return !r || r.tipo !== 'desenhos' || appsScriptAceitaDesenhos === true;
 }
 
@@ -8931,7 +10699,7 @@ function escoarFila() {
     escoarDeNovo = false;
     var fila = [];
     try { fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]'); } catch (e) { return; }
-    if (fila.some(function (r) { return r && r.tipo === 'desenhos'; })) verificarAppsScript();
+    if (fila.some(function (r) { return r && (r.tipo === 'desenhos' || r.tipo === 'fecho'); })) verificarAppsScript();
     fila = fila.filter(podeSair);
     if (fila.length === 0) return;
 
@@ -8971,6 +10739,8 @@ function escoarFila() {
             // Um desenho só sai da fila confirmado pela folha Desenhos — um
             // Apps Script antigo responde ok sem a dizer.
             if (r.tipo === 'desenhos' && d.folha !== 'Desenhos') throw new Error('Apps Script antigo');
+            // O mesmo para o fecho, confirmado pela folha Sessoes.
+            if (r.tipo === 'fecho' && d.folha !== 'Sessoes') throw new Error('Apps Script antigo');
             removerDaFila(r);            // chegou: agora sim, sai da fila
         })
         .catch(function () { })          // falhou: fica onde está, tenta-se depois
@@ -9493,6 +11263,7 @@ function concluirPortaoPar(grupo, respostasA, respostasB, alcunhaA, alcunhaB) {
 function recomecarDaPessoa() {
     usosAcumulados = {}; usosPorLetra = {}; primeiroCaractere = null;
     avaliacaoVistaNestaSessao = false;
+    adiamentos = { n: 0, em: 0 };
     try {
         localStorage.setItem(CHAVE_N_SESSOES, '0');
         localStorage.setItem(CHAVE_USOS, '{}');
@@ -9761,6 +11532,8 @@ function iniciarPortao() {
 // O resumo vai sendo gravado no browser enquanto se trabalha, e é despachado
 // no fim (sendBeacon) ou, se o separador morrer sem aviso, no arranque
 // seguinte. Assim um crash custa os últimos segundos, não a sessão inteira.
+// Desde a v2 sai também a meio, de 5 em 5 minutos (ver PONTOS DA SESSÃO): uma
+// sessão cujo browser nunca mais volta já não se perde por inteiro.
 
 // Três medidas distintas do uso dos módulos. Todas derivadas de comparar
 // fotografias do alfabeto, e não de apanhar cada colocação à mão: os módulos
@@ -9822,10 +11595,11 @@ function contarTrabalho() {
     // desenho), e etiquetados nas linhas, para se poder filtrar na análise.
     // O eCartaz e não uma comparação com '@CARTAZ': '@' vem depois do '9', e o
     // segundo cartaz caía no ramo das letras.
+    // A tela aberta pelo pecasDoDesenho: a meio de um arrasto, o desenho de antes dele.
     var telas = listaDeTelas();
     for (var i = 0; i < telas.length; i++) {
         var c = telas[i];
-        var objs = (c === currentChar) ? placedObjects
+        var objs = (c === currentChar) ? pecasDoDesenho()
                  : (storedCharacters[c] ? storedCharacters[c].objects : []);
         if (!objs || !objs.length) continue;
         if (eCartaz(c)) { cartaz += objs.length; cartazes++; }
@@ -9938,6 +11712,8 @@ function iniciarSessao() {
     importacaoPendente = false;
     escolhaPendente = false;
     aSair = false;
+    ultimoPonto = 0;
+    fimDoUltimoPonto = '';
 
     sessao = {
         tipo: 'sessao',
@@ -9953,6 +11729,7 @@ function iniciarSessao() {
         fim: null, segundos: 0,
         desenhou: false, letras: 0, numeros: 0, cartaz: 0, cartazes: 0, modulos: 0
     };
+    acertarRelogioDaAvaliacao();
     // Quem acabou de se separar de um par: o desenho que trouxe sai já, todo,
     // como ponto de partida (origem 'do-par'), para a folha Desenhos desta
     // pessoa se ler sozinha. Sem número de sessão — ainda não desenhou nada.
@@ -9973,7 +11750,10 @@ function iniciarSessao() {
     }
 
     escoarFila();
-    if (podeRecolherDesenhos()) verificarAppsScript();   // cedo: uma sessão curta também tem de poder mandar os desenhos ao fechar
+    // Para todas as sessões, e não só para as que recolhem desenhos: os pontos
+    // da sessão também são para quem aceitou um consentimento antigo. (O GET
+    // não escreve nada na folha.)
+    verificarAppsScript();   // cedo: uma sessão curta também tem de poder mandar os desenhos ao fechar
 }
 
 // Os ponteiros passam para a sessão também fora das mudanças de trabalho: um
@@ -10227,7 +12007,6 @@ function registarActividade() {
         sessao['usos_' + ficheiro] = usosAcumulados[ficheiro] || 0;
         sessao['dif_' + ficheiro] = (t.porModulo[ficheiro] || 0) - (baseSessao[ficheiro] || 0);
     }
-    ultimaActividade = Date.now();
     guardarSessao();
 }
 
@@ -10248,7 +12027,7 @@ function linhasPorCaractere(t) {
     }
     for (var i = 0; i < telas.length; i++) {
         var c = telas[i];
-        var objs = (c === currentChar) ? placedObjects
+        var objs = (c === currentChar) ? pecasDoDesenho()   // como no contarTrabalho
                  : (storedCharacters[c] ? storedCharacters[c].objects : []);
         var total = (objs && objs.length) ? objs.length : 0;
 
@@ -10289,27 +12068,64 @@ function linhasPorModulo(t) {
     return linhas;
 }
 
-// Separa a sessão das linhas por caractere: são folhas diferentes, e um array
-// dentro de um registo chegava à folha como "[object Object]".
-function despacharSessao(s) {
-    if (!s || !s.desenhou) return;
+// --- PONTOS DA SESSÃO ------------------------------------------------------
+// A sessão (a linha da folha Sessoes, com as dela nas Letras e nos Modulos) só
+// saía quando fechava: no pagehide, por sendBeacon e sem confirmação, ou na
+// visita seguinte no mesmo browser. No FMAD (5/Nov/2026), em cinco dos sete
+// computadores fechou-se a tampa ou ficou o separador aberto, e essas sessões
+// não chegaram — ainda estão nos portáteis. Os desenhos chegaram, porque saem
+// a meio da sessão.
+//
+// Por isso a sessão passa a sair também a meio, num «ponto»: a sessão inteira
+// até ali, num registo só (o fecho), de INTERVALO_PONTO em INTERVALO_PONTO se
+// o trabalho mudou, e quando a página sai de vista. Cada ponto leva um número
+// (revisao) e o Apps Script troca a cópia que tem pela mais recente; o último,
+// ao fechar, vai marcado como fechada. Os Desenhos continuam como estavam.
+//
+// Só há pontos com um Apps Script que conheça o fecho, confirmado nesta visita
+// (ver VERSAO_APPS_SCRIPT_FECHO). Sem isso, e sem pontos já enviados, a sessão
+// fecha pelo caminho antigo, exactamente como antes.
+var INTERVALO_PONTO = 5 * 60 * 1000;    // 5 min entre envios da sessão a meio (pedido do Ângelo)
+var PONTO_AO_SAIR = 60 * 1000;          // ao sair de vista, só se o último foi há 1 min ou mais
+var ultimoPonto = 0;                    // quando saiu (entrou na fila) o último ponto desta sessão
+var fimDoUltimoPonto = '';              // sessao.fim nesse momento: igual = nada de novo para enviar
+var REPETIR_PONTO = 60 * 1000;          // um ponto que não chegou volta a ser tentado de minuto a minuto
+var ultimaRepeticao = 0;
+
+// Há na fila um fecho desta sessão por entregar?
+function fechoPorEntregar(id) {
+    try {
+        var fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]');
+        return fila.some(function (r) { return r && r.tipo === 'fecho' && r.sessaoId === id; });
+    } catch (e) { return false; }
+}
+
+// Separa a sessão das linhas por caractere e por módulo: são folhas
+// diferentes, e um array dentro de um registo chegava à folha como
+// "[object Object]". Devolve [resumo, modulos, letras], tal como sempre foram
+// para a folha; um bloco sem linhas é null, a não ser com `vazios` — o fecho
+// leva-os sempre, porque um bloco que ficou vazio tem de limpar na folha as
+// linhas do ponto anterior. A revisao e o fechada não entram aqui: no fecho,
+// quem os põe no resumo é o enfileirarFecho; no caminho antigo, não vão.
+function registosDaSessao(s, vazios) {
     var linhas = s.linhas || [];
     var detalhe = s.modulosDetalhe || [];
     var resumo = {};
-    for (var k in s) if (k !== 'linhas' && k !== 'modulosDetalhe' && k !== 'desenhos' && k !== 'envioDesenhos') resumo[k] = s[k];
-    enfileirarResposta(resumo);
-    if (detalhe.length) {
-        enfileirarResposta({
+    for (var k in s) if (k !== 'linhas' && k !== 'modulosDetalhe' && k !== 'desenhos' && k !== 'envioDesenhos' &&
+                         k !== 'revisao' && k !== 'fechada') resumo[k] = s[k];
+    var modulos = null, letras = null;
+    if (detalhe.length || vazios) {
+        modulos = {
             tipo: 'modulos',
             sessaoId: s.sessaoId, participante: s.participante,
             coorte: s.coorte, numero: s.numero,
             versaoFerramenta: s.versaoFerramenta || '',
             quando: s.fim || new Date().toISOString(),
             linhas: detalhe
-        });
+        };
     }
-    if (linhas.length) {
-        enfileirarResposta({
+    if (linhas.length || vazios) {
+        letras = {
             tipo: 'letras',
             sessaoId: s.sessaoId,
             participante: s.participante,
@@ -10318,9 +12134,96 @@ function despacharSessao(s) {
             versaoFerramenta: s.versaoFerramenta || '',
             quando: s.fim || new Date().toISOString(),
             linhas: linhas
-        });
+        };
+    }
+    return [resumo, modulos, letras];
+}
+
+// A sessão inteira num registo só, que tira da fila o anterior da mesma sessão:
+// fica sempre um, o mais recente. A revisao conta os envios (1, 2, 3…) e fica
+// guardada na própria sessão — também na que fica pendente no browser —, para
+// o Apps Script nunca trocar uma cópia por outra mais velha.
+function enfileirarFecho(s, fechada) {
+    var antes = s.revisao;
+    s.revisao = (antes || 0) + 1;
+    var regs = registosDaSessao(s, true);
+    // São colunas da Sessoes; as Letras e os Modulos não as levam.
+    regs[0].revisao = s.revisao;
+    regs[0].fechada = !!fechada;
+    var registo = {
+        tipo: 'fecho',
+        sessaoId: s.sessaoId,
+        participante: s.participante,
+        coorte: s.coorte,
+        revisao: s.revisao,
+        fechada: !!fechada,
+        registos: regs
+    };
+    var ok = enfileirarVarias([registo], function (r) {
+        return !!r && r.tipo === 'fecho' && r.sessaoId === s.sessaoId;
+    });
+    if (!ok) {
+        // Não entrou: o número não foi usado, e a sessão volta a ser o que era.
+        if (antes) s.revisao = antes; else delete s.revisao;
+        return false;
+    }
+    return true;
+}
+
+// Um ponto a meio da sessão. Só o TRABALHO (sessao.fim) dispara um ponto: os
+// contadores que mudam sem ele (exportações, ponteiros…) vão dentro do ponto
+// seguinte, ou do fecho, mas sozinhos não justificam um envio.
+function enfileirarPonto() {
+    if (!sessao || !sessao.desenhou || aSair || escolhaPendente || MODO_CONSULTA ||
+        appsScriptAceitaFecho !== true || sessao.fim === fimDoUltimoPonto) return false;
+    copiarEntradaParaSessao();
+    if (!enfileirarFecho(sessao, false)) return false;
+    ultimoPonto = Date.now();
+    fimDoUltimoPonto = sessao.fim;
+    guardarSessao();
+    return true;
+}
+
+// Um relógio próprio, fora do ciclo de desenho do p5. Como o ultimoPonto
+// começa a 0, o primeiro ponto sai até 30 s depois da primeira mudança: a linha
+// da sessão aparece logo na folha.
+setInterval(function () {
+    if (!sessao) return;
+    if (Date.now() - ultimoPonto >= INTERVALO_PONTO && enfileirarPonto()) escoarFila();
+    // Um ponto que entrou na fila mas não chegou (o POST falhou: uma página de
+    // erro do Google, a rede a falhar sem dar o evento online) não esperava por
+    // mais nada: sem trabalho novo não há ponto novo, e sem desenhos novos
+    // ninguém chamava o escoarFila — a tampa fechava com ele no browser, como
+    // no FMAD. Volta a ser tentado de minuto a minuto.
+    else if (appsScriptAceitaFecho === true && Date.now() - ultimaRepeticao >= REPETIR_PONTO &&
+             fechoPorEntregar(sessao.sessaoId)) {
+        ultimaRepeticao = Date.now();
+        escoarFila();
+    }
+    // Se o GET da visita falhou (sem rede), mais ninguém o repetia quando a fila
+    // não tem desenhos nem fecho — e a visita ficava sem pontos.
+    if (sessao.desenhou && appsScriptAceitaFecho === null) verificarAppsScript();
+}, 30000);
+
+// Ao voltar a rede, tenta-se logo o que ficou na fila.
+window.addEventListener('online', function () { escoarFila(); });
+
+// Devolve se a sessão ficou na fila. Com pontos já enviados, ou sendo a sessão
+// desta página com o Apps Script novo confirmado nesta visita, vai o fecho
+// final (fechada). Senão vai pelo caminho de antes, com os mesmos registos de
+// sempre, agora numa escrita só (tudo ou nada). É sempre por aqui que chegam as
+// sessões pendentes da v1 (as do FMAD): sem revisao e sem ser a desta página,
+// mesmo que o GET já tenha respondido — chegam à folha como sempre chegaram.
+function despacharSessao(s) {
+    if (!s || !s.desenhou) return false;
+    var ok;
+    if (s.revisao || (appsScriptAceitaFecho === true && s === sessao)) {
+        ok = enfileirarFecho(s, true);
+    } else {
+        ok = enfileirarVarias(registosDaSessao(s).filter(function (r) { return r; }));
     }
     enfileirarDesenhos(s);   // o que mudou desde o último envio a meio da sessão
+    return ok;
 }
 
 // --- DESENHOS ---------------------------------------------------------------
@@ -10366,9 +12269,11 @@ function folhaDaTela(c) {
 // As peças de uma tela: [ficheiro do módulo, x, y, rotação], com x e y em
 // quadrículas a contar do canto superior esquerdo da folha dela. Ordenadas,
 // para a mesma forma dar sempre o mesmo texto: desfazer e refazer, ou mover e
-// voltar, mudam a ordem no array sem mudar o desenho.
+// voltar, mudam a ordem no array sem mudar o desenho. A tela aberta é a do
+// pecasDoDesenho: a página que sai de vista a meio de um arrasto fotografa o
+// desenho de antes dele, com as peças arrastadas no sítio de onde saíram.
 function pecasDaTela(c, f) {
-    var objs = (c === currentChar) ? placedObjects
+    var objs = (c === currentChar) ? pecasDoDesenho()
              : (storedCharacters[c] ? storedCharacters[c].objects : []);
     if (!objs || !objs.length) return [];
     var folha = dimensoesDaFolha(f.idx, f.landscape);
@@ -10487,9 +12392,17 @@ function despacharDesenhos(origem, importadoDe) {
 }
 
 // Sair de vista (outro separador, minimizar, o iPad a bloquear) é a última
-// ocasião para um envio normal; ao fechar já só sobra o sendBeacon.
+// ocasião para um envio normal; ao fechar já só sobra o sendBeacon. Vai também
+// um ponto da sessão (ver PONTOS DA SESSÃO), se o último foi há um minuto ou
+// mais: quem fecha a tampa a seguir já deixou a sessão na folha.
 document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'hidden') despacharDesenhos();
+    if (document.visibilityState === 'hidden') {
+        despacharDesenhos();
+        if (Date.now() - ultimoPonto >= PONTO_AO_SAIR && enfileirarPonto()) escoarFila();
+        // Um ponto anterior que ainda não chegou: é a última ocasião de um envio
+        // normal antes de a tampa fechar.
+        else if (sessao && appsScriptAceitaFecho === true && fechoPorEntregar(sessao.sessaoId)) escoarFila();
+    }
 });
 
 // Na consulta, uma nota fixa: o que se abre aqui não é de quem está a ver.
@@ -10522,15 +12435,29 @@ window.addEventListener('pagehide', function () {
 
     // Grava primeiro na fila — localStorage é síncrono e sobrevive ao fecho.
     // Só depois se tenta entregar. Se a entrega falhar, fica para a visita
-    // seguinte em vez de se perder.
-    despacharSessao(sessao);
-    try { localStorage.removeItem(CHAVE_SESSAO); } catch (e) {}
+    // seguinte em vez de se perder. E se nem a fila gravar (localStorage
+    // cheio), a sessão fica pendente no browser, para a visita seguinte —
+    // regravada, porque os desenhos podem ter entrado na fila sem ela: sem
+    // isso, a visita seguinte voltava a pô-los lá, repetidos.
+    if (despacharSessao(sessao)) {
+        try { localStorage.removeItem(CHAVE_SESSAO); } catch (e) {}
+        // O fecho conta como o último envio: se a página voltar do bfcache
+        // (botão Recuar) e ninguém mexer, não sai um ponto igual a dizer que
+        // a sessão afinal não fechou.
+        ultimoPonto = Date.now();
+        fimDoUltimoPonto = sessao.fim;
+    } else guardarSessao();
 
     if (!ENDPOINT_RESPOSTAS) return;
 
     // O fetch não sobrevive ao unload; o sendBeacon foi feito para isto. Os
-    // beacons de uma página partilham uns 64 KB: primeiro a sessão, as letras e
-    // os módulos, só depois os desenhos (e só se o Apps Script os conhecer).
+    // beacons de uma página partilham uns 64 KB: primeiro o que vai solto (a
+    // sessão, as letras e os módulos pelo caminho antigo), depois o fecho e só
+    // depois os desenhos — estes dois só se o Apps Script os conhecer. Um
+    // fecho nunca sai por beacon sem o GET confirmado.
+    //
+    // Com pontos, o beacon deixa de ser a única cópia: a folha já tem a sessão
+    // até ao último ponto, e se o beacon se perder falta só o que veio depois.
     //
     // A fila NÃO se esvazia aqui: um beacon aceite pelo browser não quer dizer
     // que a folha o escreveu (numa oficina, com toda a gente a sair ao mesmo
@@ -10539,7 +12466,8 @@ window.addEventListener('pagehide', function () {
     // regra do resto da fila.
     var fila = [];
     try { fila = JSON.parse(localStorage.getItem(CHAVE_POR_ENVIAR) || '[]'); } catch (e) { return; }
-    var ordem = fila.filter(function (r) { return !r || r.tipo !== 'desenhos'; })
+    var ordem = fila.filter(function (r) { return !r || (r.tipo !== 'desenhos' && r.tipo !== 'fecho'); })
+                    .concat(fila.filter(function (r) { return r && r.tipo === 'fecho' && podeSair(r); }))
                     .concat(fila.filter(function (r) { return r && r.tipo === 'desenhos' && podeSair(r); }));
     for (var i = 0; i < ordem.length; i++) {
         try {
@@ -10550,21 +12478,24 @@ window.addEventListener('pagehide', function () {
 });
 
 // ===========================================================================
-// AVALIAÇÃO NO FIM DA SESSÃO
+// AVALIAÇÃO DA FERRAMENTA («How did it go?»)
 // ===========================================================================
 // Caracterizar quem usa a ferramenta é metade; a outra metade é saber se ela
-// funcionou. Isto pergunta-o uma vez, depois de a pessoa ter mesmo trabalhado.
+// funcionou. Isto pergunta-o a cada pessoa até ela responder (ou adiar demasiadas
+// vezes numa sessão: ver verificarAvaliacao).
 //
-// Nunca interrompe a meio: só aparece com a pessoa parada, ou quando ela
-// própria decide sair. Um questionário no meio de um traço estraga
-// precisamente a experiência que se quer medir.
+// Desde a v2 (decisão do Ângelo, 11/Nov/2026), aparece 20 minutos depois da
+// primeira sessão da pessoa neste browser (recarregar não recomeça a conta),
+// esteja ela a fazer o que estiver: só espera que largue
+// o rato (ver verificarAvaliacao). Até à v1 esperava por uma pausa, depois de
+// trabalho feito. Também aparece quando a pessoa decide sair pelo ← (goToSite).
 
 // --- O QUE VAIS QUERER EDITAR ---------------------------------------------
 
-var AVALIACAO_MIN_LETRAS = 2;            // trabalho mínimo: letras, números ou cartazes com desenho
-var AVALIACAO_MIN_PECAS_CARTAZ = 15;     // ou um cartaz só, com estas peças (somadas, se houver vários)
-var AVALIACAO_MIN_SEGUNDOS = 180;        // e tempo mínimo na sessão
-var AVALIACAO_PARADO_SEGUNDOS = 45;      // quanto tempo sem mexer conta como "parou"
+var AVALIACAO_MINUTOS = 20;              // abre 20 minutos depois da primeira sessão da pessoa (ver relogioAvaliacao)
+var AVALIACAO_ADIAR_MINUTOS = 5;         // depois de um Not now, volta ao fim destes minutos…
+var AVALIACAO_MAX_REPETICOES = 5;        // …no máximo mais estas vezes por sessão; depois, só ao sair pelo ←
+var AVALIACAO_MIN_PECAS_CARTAZ = 15;     // ao sair pelo ←: um cartaz só, com estas peças, chega
 
 var PERGUNTAS_SAIDA = [
     { id: 'facilidade', tipo: 'escala',
@@ -10585,7 +12516,27 @@ var PERGUNTAS_SAIDA = [
 var CHAVE_AVALIACAO = 'pragmatipo-avaliacao';
 var avaliacaoAberta = false;
 var avaliacaoVistaNestaSessao = false;
-var ultimaActividade = Date.now();
+var adiamentos = { n: 0, em: 0 };   // quantos Not now nesta sessão, e quando foi o último
+
+// O relógio dos 20 minutos (decisão do Ângelo, 11/Nov/2026): conta desde a
+// primeira sessão desta pessoa neste browser, e não recomeça ao recarregar a
+// página. Recomeça só com outra pessoa, isto é, outro código: quem se separa
+// de um par, um projecto adoptado, uma inscrição nova. Sem localStorage, fica
+// o início da sessão.
+var CHAVE_RELOGIO_AVALIACAO = 'pragmatipo-avaliacao-relogio';
+var relogioAvaliacao = null;   // { id, inicio }: o da pessoa desta sessão
+
+function acertarRelogioDaAvaliacao() {
+    relogioAvaliacao = null;
+    if (!participante || !sessao) return;
+    var r = null;
+    try { r = JSON.parse(localStorage.getItem(CHAVE_RELOGIO_AVALIACAO) || 'null'); } catch (e) {}
+    if (!(r && r.id === participante.id && r.inicio && !isNaN(Date.parse(r.inicio)))) {
+        r = { id: participante.id, inicio: sessao.inicio };
+        try { localStorage.setItem(CHAVE_RELOGIO_AVALIACAO, JSON.stringify(r)); } catch (e) {}
+    }
+    relogioAvaliacao = r;
+}
 var overlayAvaliacao = null;
 var sairDepoisDeAvaliar = false;
 
@@ -10597,28 +12548,50 @@ function jaAvaliou() {
 }
 
 function podePerguntarAvaliacao() {
-    if (avaliacaoAberta || avaliacaoVistaNestaSessao) return false;
+    // Ao sair pelo ←: se ainda não apareceu nesta sessão, ou se a pessoa a
+    // adiou (Not now), mesmo depois das repetições todas.
+    if (avaliacaoAberta || (avaliacaoVistaNestaSessao && adiamentos.n === 0)) return false;
     if (!portaoAberto || showShortcutsModal || showWordPreview) return false;
     if (!sessao || !sessao.desenhou) return false;
     return !jaAvaliou();
 }
 
-// Trabalho suficiente para perguntar, o mesmo nos dois modos: um cartaz com
-// desenho conta como uma letra. Um cartaz sozinho também chega, se já tiver
-// peças a sério — um exercício de cartaz pode ser feito todo num só.
+// Trabalho suficiente para perguntar ao sair pelo ← (ver goToSite), o mesmo
+// nos dois modos: um cartaz com desenho conta como uma letra. Um cartaz
+// sozinho também chega, se já tiver peças a sério — um exercício de cartaz
+// pode ser feito todo num só.
 function trabalhoParaAvaliar(minimo) {
     if ((sessao.letras + sessao.numeros + sessao.cartazes) >= minimo) return true;
     return sessao.cartaz >= AVALIACAO_MIN_PECAS_CARTAZ;
 }
 
-// Corre a cada segundo. Espera por trabalho suficiente e por uma pausa.
+// Corre a cada segundo. Abre AVALIACAO_MINUTOS depois do início do relógio
+// desta pessoa (a primeira sessão dela neste browser: recarregar a página não
+// o recomeça), e é só isso (decisão do Ângelo, 11/Nov/2026): não espera por trabalho feito,
+// por uma pausa, nem que se fechem menus, a Print list, o Guide ou a faixa da
+// palavra — fica por cima deles, e continuam lá ao fechar. Nunca a quem já
+// respondeu neste browser. Depois de um Not now, volta ao fim de
+// AVALIACAO_ADIAR_MINUTOS, no máximo mais AVALIACAO_MAX_REPETICOES vezes nesta
+// sessão (decisão do Ângelo, 11/Nov/2026); depois disso, só ao sair pelo ←. Numa
+// sessão nova (a página aberta outra vez), tudo de novo.
+// Só espera que se largue o rato (ou o dedo): a meio de um arrasto, do punho,
+// de uma caixa ou de uma guia, as peças ficavam presas ao ponteiro por trás
+// da janela. São segundos.
 function verificarAvaliacao() {
     if (frameCount % 60 !== 0) return;
-    if (!podePerguntarAvaliacao()) return;
-    if (!trabalhoParaAvaliar(AVALIACAO_MIN_LETRAS)) return;
-    var decorridos = (Date.now() - Date.parse(sessao.inicio)) / 1000;
-    if (decorridos < AVALIACAO_MIN_SEGUNDOS) return;
-    if ((Date.now() - ultimaActividade) / 1000 < AVALIACAO_PARADO_SEGUNDOS) return;
+    if (avaliacaoAberta || !portaoAberto || !sessao) return;
+    if (avaliacaoVistaNestaSessao) {
+        if (adiamentos.n < 1 || adiamentos.n > AVALIACAO_MAX_REPETICOES) return;
+        if ((Date.now() - adiamentos.em) / 60000 < AVALIACAO_ADIAR_MINUTOS) return;
+    }
+    var inicio = (relogioAvaliacao && participante && relogioAvaliacao.id === participante.id)
+        ? relogioAvaliacao.inicio : sessao.inicio;
+    if ((Date.now() - Date.parse(inicio)) / 60000 < AVALIACAO_MINUTOS) return;
+    if (jaAvaliou()) return;
+    if (mouseIsPressed || toque.ativo || isDraggingSelection || outroGestoEmCurso()) return;
+    // A janela não tira o foco: a escrever na faixa da palavra, as letras
+    // continuavam a ir para a caixa de texto, por trás dela.
+    if (previewInputTemFoco()) previewInput.blur();
     mostrarAvaliacao(false);
 }
 
@@ -10707,6 +12680,7 @@ function mostrarAvaliacao(aoSair) {
     // avaliacaoId deixa a mesma pessoa ter as duas.
     function registoDe(membro, respostas) {
         var id = membro ? membro.id : (participante ? participante.id : null);
+        var trabalhoAgora = contarTrabalho();
         var contexto = membro ? 'par' : 'sozinho';
         var registo = {
             tipo: 'avaliacao',
@@ -10719,11 +12693,15 @@ function mostrarAvaliacao(aoSair) {
             sessao: sessao ? sessao.numero : null,
             quando: new Date().toISOString(),
             minutos: sessao ? Math.round((Date.now() - Date.parse(sessao.inicio)) / 60000) : null,
-            letras: sessao ? sessao.letras : null,
-            numeros: sessao ? sessao.numeros : null,
-            cartaz: sessao ? sessao.cartaz : null,
-            cartazes: sessao ? sessao.cartazes : null,
-            modulos: sessao ? sessao.modulos : null
+            // O trabalho de agora, contado na hora. Os totais da sessão só se
+            // actualizam quando o desenho muda: desde que a pergunta pode abrir
+            // logo a seguir a recarregar a página, sairiam a 0 com o alfabeto
+            // cheio.
+            letras: trabalhoAgora.letras,
+            numeros: trabalhoAgora.numeros,
+            cartaz: trabalhoAgora.cartaz,
+            cartazes: trabalhoAgora.cartazes,
+            modulos: trabalhoAgora.modulos
         };
         PERGUNTAS_SAIDA.forEach(function (p) {
             registo[p.id] = (p.tipo === 'escala')
@@ -10764,8 +12742,9 @@ function mostrarAvaliacao(aoSair) {
         var b = botao('Send');
         caixa.appendChild(b);
 
-        // Adiar não é recusar: sem resposta nenhuma, volta noutra sessão. O
-        // colega pode saltar a dele — a primeira já ficou.
+        // Adiar não é recusar: sem resposta nenhuma, volta de 5 em 5 minutos
+        // (no máximo mais 5 vezes), ao sair pelo ← e noutra sessão (ver
+        // verificarAvaliacao). O colega pode saltar a dele — a primeira já ficou.
         var depois = document.createElement('div');
         depois.textContent = i === 0 ? 'Not now' : 'Skip';
         estilo(depois, { 'font': '400 12px \'Marist Variable\', Helvetica, Arial, sans-serif', 'color': '#999',
@@ -10779,7 +12758,7 @@ function mostrarAvaliacao(aoSair) {
             if (i + 1 < ordem.length) passarAoColega(i + 1);
             else mostrarAgradecimento(caixa);
         });
-        depois.addEventListener('click', i === 0 ? fecharAvaliacao : function () { mostrarAgradecimento(caixa); });
+        depois.addEventListener('click', i === 0 ? adiarAvaliacao : function () { mostrarAgradecimento(caixa); });
     }
 
     // Entre as duas: o computador passa de mão, e a resposta anterior já não
@@ -10795,6 +12774,13 @@ function mostrarAvaliacao(aoSair) {
     }
 
     passo(0);
+}
+
+// «Not now»: conta o adiamento (ver verificarAvaliacao) e fecha.
+function adiarAvaliacao() {
+    adiamentos.n++;
+    adiamentos.em = Date.now();
+    fecharAvaliacao();
 }
 
 function fecharAvaliacao() {
@@ -10887,6 +12873,18 @@ var btnImport = { x: 0, y: 0, w: 0, h: 0 };
 var menuAberto = null;
 var menuDeQuem = null;
 
+// A última posição do rato na janela, em px do ecrã, e se o rato está em cima
+// do menu aberto (ver o draw). Pela caixa do menu, e não pelo :hover, que não
+// muda com eventos simulados.
+var ratoNaJanela = { x: -1, y: -1 };
+window.addEventListener('mousemove', function (e) { ratoNaJanela.x = e.clientX; ratoNaJanela.y = e.clientY; }, true);
+function ratoSobreMenu() {
+    if (!menuAberto) return false;
+    var r = menuAberto.getBoundingClientRect();
+    return ratoNaJanela.x >= r.left && ratoNaJanela.x <= r.right &&
+           ratoNaJanela.y >= r.top && ratoNaJanela.y <= r.bottom;
+}
+
 // Largura do Clear, do Export e do Import, à escala 1. Era 100; com o texto
 // encostado à esquerda chega menos. Entra também na largura ideal do
 // calculateLayout, para a escala só encolher quando deixa mesmo de caber.
@@ -10942,14 +12940,21 @@ function fecharMenu() {
     menuDeQuem = null;
 }
 
-function abrirMenu(quem, itens, direita, topo) {
+// O menu em si — aspecto, itens e comportamento —, sem a posição: o do Clear e
+// do Export abre alinhado com o botão (abrirMenu), o do botão direito no
+// ponteiro (abrirMenuNoPonto). Fica já no documento, em (0, 0), para se poder
+// medir. Cada item é { texto, accao } e, se for preciso, `icone` (um SVG da
+// pasta data), `perigo` (a vermelho), `atalho` (o do teclado, à direita, em
+// cinzento) e `desligado` (esmaecido e sem reagir — fica no lugar, para o
+// menu não mudar de forma); ou { separador: true }.
+function criarMenu(quem, itens) {
     fecharMenu();
     var m = document.createElement('div');
     m.id = 'pragmatipo-menu';
     // Sem largura mínima: em position:fixed o bloco encolhe ao conteúdo, e o
     // nowrap das linhas garante que nada parte. Assim não sobra espaço à direita.
     estilo(m, {
-        'position': 'fixed', 'top': Math.round(topo) + 'px', 'left': '0px',
+        'position': 'fixed', 'top': '0px', 'left': '0px',
         'background': '#fff', 'border': '0.75px solid #ddd',
         'border-radius': '8px', 'padding': '5px', 'box-sizing': 'border-box',
         'box-shadow': '0 8px 28px rgba(0,0,0,0.13)', 'z-index': '2147482000',
@@ -10970,8 +12975,8 @@ function abrirMenu(quem, itens, direita, topo) {
         var linha = document.createElement('div');
         estilo(linha, {
             'display': 'flex', 'align-items': 'center', 'gap': '10px',
-            'padding': '8px 10px', 'border-radius': '5px', 'cursor': 'pointer',
-            'color': it.perigo ? '#c00' : '#111', 'white-space': 'nowrap'
+            'padding': '8px 10px', 'border-radius': '5px', 'cursor': it.desligado ? 'default' : 'pointer',
+            'color': it.desligado ? '#bbb' : (it.perigo ? '#c00' : '#111'), 'white-space': 'nowrap'
         });
         // Os SVG vêm da pasta data, os mesmos que a barra usa. Nos destrutivos
         // ficam avermelhados por filtro, para acompanharem o texto.
@@ -10991,13 +12996,24 @@ function abrirMenu(quem, itens, direita, topo) {
         var rotulo = document.createElement('span');
         rotulo.textContent = it.texto;
         linha.appendChild(rotulo);
-        linha.addEventListener('mouseenter', function () {
-            estilo(linha, { 'background': it.perigo ? '#ffeaea' : '#f2fff2' });
-        });
-        linha.addEventListener('mouseleave', function () {
-            estilo(linha, { 'background': 'transparent' });
-        });
-        linha.addEventListener('click', function () { fecharMenu(); it.accao(); });
+        // O atalho de teclado encostado à direita, como nos menus do sistema.
+        if (it.atalho) {
+            var atalho = document.createElement('span');
+            atalho.textContent = it.atalho;
+            estilo(atalho, { 'margin-left': 'auto', 'padding-left': '24px',
+                             'color': it.desligado ? '#bbb' : '#888' });
+            linha.appendChild(atalho);
+        }
+        // Esmaecido: nem realce, nem clique.
+        if (!it.desligado) {
+            linha.addEventListener('mouseenter', function () {
+                estilo(linha, { 'background': it.perigo ? '#ffeaea' : '#f2fff2' });
+            });
+            linha.addEventListener('mouseleave', function () {
+                estilo(linha, { 'background': 'transparent' });
+            });
+            linha.addEventListener('click', function () { fecharMenu(); it.accao(); });
+        }
         m.appendChild(linha);
     });
 
@@ -11005,11 +13021,17 @@ function abrirMenu(quem, itens, direita, topo) {
     // menu e marcava mouseIsPressed antes de o clique chegar ao item — o menu
     // não reagia e a peça ia parar ao artboard por baixo.
     m.addEventListener('mousedown', function (e) { e.stopPropagation(); e.preventDefault(); });
+    // Um clique direito no próprio menu abria o do browser por cima dele.
+    m.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
     document.body.appendChild(m);
     menuAberto = m;
     menuDeQuem = quem;
+    return m;
+}
 
+function abrirMenu(quem, itens, direita, topo) {
+    var m = criarMenu(quem, itens);
     // Alinhado pela DIREITA com o botão. O gatilho está encostado à margem
     // direita: alinhar pela esquerda mandava o menu para fora do ecrã e o
     // travão de segurança desencostava-o do botão. Só se pode medir depois de
@@ -11017,7 +13039,21 @@ function abrirMenu(quem, itens, direita, topo) {
     var largura = m.getBoundingClientRect().width;
     var esquerda = direita - largura;
     esquerda = max(6, min(esquerda, window.innerWidth - largura - 6));
-    estilo(m, { 'left': Math.round(esquerda) + 'px' });
+    estilo(m, { 'left': Math.round(esquerda) + 'px', 'top': Math.round(topo) + 'px' });
+}
+
+// O do botão direito abre como os menus do sistema: o canto de cima à
+// esquerda no ponteiro (x, y, em px da janela). Se não couber à direita abre
+// para a esquerda, se não couber em baixo abre para cima — e nunca sai da
+// janela, com a mesma folga de 6 px do Export.
+function abrirMenuNoPonto(quem, itens, x, y) {
+    var m = criarMenu(quem, itens);
+    var r = m.getBoundingClientRect();
+    var esquerda = (x + r.width + 6 <= window.innerWidth) ? x : x - r.width;
+    var topo = (y + r.height + 6 <= window.innerHeight) ? y : y - r.height;
+    esquerda = max(6, min(esquerda, window.innerWidth - r.width - 6));
+    topo = max(6, min(topo, window.innerHeight - r.height - 6));
+    estilo(m, { 'left': Math.round(esquerda) + 'px', 'top': Math.round(topo) + 'px' });
 }
 
 function itensExportar() {
@@ -11040,6 +13076,7 @@ function itensLimpar() {
         texto: modoCartaz ? 'Clear poster' : 'Clear this artboard',
         perigo: true, icone: 'limpar-letra.svg',
         accao: function () {
+            if (placedObjects.length === 0) return;   // já vazio: não gasta um passo, como o clearEntireAlphabet
             saveHistory(); placedObjects = []; selectedObjects = []; rebuildCollisionMap();
         }
     }];
@@ -11056,3 +13093,110 @@ function itensLimpar() {
     }
     return itens;
 }
+
+// ===========================================================================
+// MENU DO BOTÃO DIREITO
+// ===========================================================================
+// Cortar, copiar, colar, agrupar, centrar na folha… com um clique direito na
+// prancheta, como nos programas de desenho. Cada item chama a mesma função que
+// o atalho de teclado. Decide-se tudo aqui, no contextmenu do canvas, e não no
+// mousePressed: o Mac e o Linux mandam-no ao carregar, o Windows ao largar.
+function aoMenuDeContexto(e) {
+    // O menu do browser nunca abre por cima da ferramenta, nem onde o nosso
+    // não abre (barras, notas do canto): ali só servia para recarregar a
+    // página ou sair dela sem querer.
+    e.preventDefault();
+    // O mesmo gesto acabou de fechar a faixa da palavra ou o manual (o
+    // Ctrl+clique do Mac chega ao p5 como clique esquerdo, e fecha-os como
+    // ele): serviu para isso, e o menu não abre onde eles estavam.
+    if (cliqueFechouSobreposicao) return;
+    // Só com rato ou caneta. No Android, segurar o dedo também dá um
+    // contextmenu, e no toque segurar não é pedir um menu. O Safari não diz o
+    // tipo de ponteiro neste evento: vale o do último que carregou.
+    var tipo = e.pointerType || ultimoPonteiro;
+    if (tipo === 'touch' || toque.ativo || toque.gesto ||
+        (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents)) return;
+    // Nem com a ferramenta trancada ou tapada, nem a meio de outro gesto.
+    if (interfaceBloqueada() || telaPorEscolher || showShortcutsModal) return;
+    if (isDraggingSelection || selectionBox.active || isRotatingSelection || draggedGuide || isDraggingSlider) return;
+    // O ponto do clique, em coordenadas do canvas — as mesmas do mouseX.
+    var el = e.currentTarget || e.target;
+    var r = el.getBoundingClientRect();
+    var p = { x: (e.clientX - r.left) * (r.width ? width / r.width : 1),
+              y: (e.clientY - r.top) * (r.height ? height / r.height : 1) };
+    // Só sobre a prancheta: nem as barras, nem a faixa da palavra, nem a barra
+    // de toque, nem a régua, a contagem ou a lista para impressão.
+    if (p.x <= sidebarWidth || p.y <= topBarHeight) return;
+    if (showWordPreview && p.y >= getPreviewBounds().y) return;
+    if (sobreBarraDeToqueEm(p.x, p.y) || sobreNotasDoCanto(p.x, p.y)) return;
+
+    // Sobre uma peça fora da selecção, escolhe-a como o clique: com o grupo de
+    // topo, ou só ela com Cmd (Ctrl no PC; no Mac o Ctrl é o próprio clique
+    // direito). Sobre o vazio, ou sobre uma peça já escolhida, a selecção fica:
+    // é sobre ela que o menu age.
+    var gX = floor((p.x - centerX) / tileSize) + GRID_CX;
+    var gY = floor((p.y - centerY) / tileSize) + GRID_CY;
+    var idx = findObjectAt(gX, gY);
+    if (idx !== -1 && selectedObjects.indexOf(placedObjects[idx]) < 0) {
+        selectedObjects = alvoDoClique(placedObjects[idx], EM_MAC ? !!e.metaKey : !!e.ctrlKey);
+        resetRotationBase();
+    }
+    // Havendo selecção, a ferramenta passa a Move/select, como no Select all:
+    // vê-se o que está escolhido, que é o que os itens vão mexer.
+    if (selecaoNoTabuleiro().length > 0) selectedModule = -2;
+    abrirMenuNoPonto('contexto', itensDoMenuDeContexto(p), e.clientX, e.clientY);
+}
+
+// Os itens, com o estado do momento em que o menu abre. O que não se aplica
+// fica esmaecido em vez de desaparecer: o menu tem sempre a mesma forma.
+// `ponto` é onde se carregou, em coordenadas do canvas: o Paste cola aí.
+function itensDoMenuDeContexto(ponto) {
+    // A selecção que está mesmo no tabuleiro (ver selecaoNoTabuleiro): uma
+    // selecção obsoleta não acende os itens que agem sobre ela.
+    var semSelecao = selecaoNoTabuleiro().length === 0;
+    var semCopia = areaTransferencia.length === 0;
+    var cmd = TECLA_CMD + '+';
+    return [
+        { texto: 'Cut', atalho: cmd + 'X', desligado: semSelecao, accao: cortarSelecao },
+        { texto: 'Copy', atalho: cmd + 'C', desligado: semSelecao, accao: copiarSelecao },
+        { texto: 'Paste', atalho: cmd + 'V', desligado: semCopia,
+          accao: function () { colarAreaTransferencia(false, false, ponto); } },
+        { texto: 'Paste in place', atalho: cmd + 'Shift+V', desligado: semCopia,
+          accao: function () { colarAreaTransferencia(true); } },
+        { texto: 'Duplicate', atalho: cmd + 'D', desligado: semSelecao, accao: duplicarSelecao },
+        // No Mac, a tecla de apagar é a ⌫.
+        { texto: 'Delete', atalho: EM_MAC ? '⌫' : 'Del', desligado: semSelecao, accao: apagarSelecao },
+        { separador: true },
+        { texto: 'Group', atalho: cmd + 'G', desligado: !podeAgrupar(), accao: agruparSelecao },
+        { texto: 'Ungroup', atalho: cmd + 'Shift+G', desligado: !podeDesagrupar(), accao: desagruparSelecao },
+        { separador: true },
+        { texto: 'Center horizontally on artboard', desligado: semSelecao,
+          accao: function () { centrarSelecao('h'); } },
+        { texto: 'Center vertically on artboard', desligado: semSelecao,
+          accao: function () { centrarSelecao('v'); } },
+        { separador: true },
+        { texto: 'Select all', atalho: cmd + 'A', desligado: placedObjects.length === 0, accao: selecionarTudo }
+    ];
+}
+
+// Com o menu do botão direito aberto, o teclado fecha-o. O Escape só o fecha:
+// não chega à caixa de texto nem à faixa da palavra, que fechavam também.
+// Qualquer outra tecla — menos as modificadoras sozinhas — fecha-o e segue o
+// seu caminho: aberto, o menu ficava com itens de antes da tecla, e depois do
+// C ou do F (a vista muda) o Paste colava noutra quadrícula. Em captura, na
+// janela, para correr antes da caixa de texto, do p5 e do ouvinte do Cmd.
+// O Clear e o Export também fecham com o Escape, que só os fecha; com eles
+// abertos, as outras teclas fazem o que sempre fizeram.
+function teclaComMenuDeContexto(e) {
+    var k = e.key || '';
+    if ((menuDeQuem === 'clear' || menuDeQuem === 'export') && (k === 'Escape' || k === 'Esc')) {
+        fecharMenu(); e.preventDefault(); e.stopPropagation();
+        return;
+    }
+    if (menuDeQuem !== 'contexto') return;
+    if (k === 'Shift' || k === 'Control' || k === 'Alt' || k === 'Meta' ||
+        k === 'AltGraph' || k === 'CapsLock' || k === 'Fn') return;
+    fecharMenu();
+    if (k === 'Escape' || k === 'Esc') { e.preventDefault(); e.stopPropagation(); }
+}
+window.addEventListener('keydown', teclaComMenuDeContexto, true);
